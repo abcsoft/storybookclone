@@ -1,19 +1,8 @@
-import {
-  products,
-  bestsellers,
-  newReleases,
-  byGender,
-  careers,
-  booksOnly,
-  stickersOnly,
-  byAge,
-  faqs,
-  blogPosts,
-  languages,
-  money,
-  type Product
-} from './data'
+import type { Product } from './db'
+import { languages, faqs, blogPosts, money } from './data'
 import { esc, stars } from './layout'
+
+export { languages }
 
 export function productCard(p: Product) {
   const sale = p.compareAt ? `<span class="badge">-${Math.round((1 - p.price / p.compareAt) * 100)}%</span>` : ''
@@ -21,7 +10,7 @@ export function productCard(p: Product) {
   return `<article class="product-card">
     <a href="${href}">
       ${sale}
-      <div class="cover"><img src="${p.image}" alt="${esc(p.title)} cover"></div>
+      <div class="cover"><img src="${esc(p.image)}" alt="${esc(p.title)} cover"></div>
       <div class="meta">
         <h3>${esc(p.title)}</h3>
         <p class="tagline">${esc(p.tagline)}</p>
@@ -31,7 +20,15 @@ export function productCard(p: Product) {
   </article>`
 }
 
-export function homePage() {
+type HomeData = {
+  bestsellers: Product[]
+  newReleases: Product[]
+  girls: Product[]
+  boys: Product[]
+  careers: Product[]
+}
+
+export function homePage(d: HomeData) {
   return `
   <section class="hero" id="hero-section">
     <img class="hero-photo" src="/static/img/hero.webp" alt="Children reading personalised WonderWraps storybooks">
@@ -52,7 +49,7 @@ export function homePage() {
         </div>
         <a class="link" href="/books">View All</a>
       </div>
-      <div class="grid-4">${bestsellers().map(productCard).join('')}</div>
+      <div class="grid-4">${d.bestsellers.map(productCard).join('')}</div>
     </div>
   </section>
 
@@ -101,7 +98,7 @@ export function homePage() {
         <p>Princesses, glowing flowers, Christmas trains and zoo days — each tale stars her face and her name.</p>
         <a class="btn" href="/books?gender=girl">View All</a>
       </div>
-      <div class="grid-2">${byGender('girl').slice(0, 4).map(productCard).join('')}</div>
+      <div class="grid-2">${d.girls.slice(0, 4).map(productCard).join('')}</div>
     </div>
   </section>
 
@@ -129,7 +126,7 @@ export function homePage() {
         <p>Dragons, dinosaurs, cosmic journeys and championship finals — written so he is the hero.</p>
         <a class="btn" href="/books?gender=boy">View All</a>
       </div>
-      <div class="grid-2">${byGender('boy').slice(0, 4).map(productCard).join('')}</div>
+      <div class="grid-2">${d.boys.slice(0, 4).map(productCard).join('')}</div>
     </div>
   </section>
 
@@ -143,9 +140,9 @@ export function homePage() {
         <a class="link" href="/books?career=1">Explore</a>
       </div>
       <div class="career-grid">
-        ${careers().slice(0, 4).map(p => `
+        ${d.careers.slice(0, 4).map(p => `
           <a class="career-card" href="/books/${p.slug}">
-            <img src="${p.image}" alt="${esc(p.title)}">
+            <img src="${esc(p.image)}" alt="${esc(p.title)}">
             <h3>${esc(p.title.replace('Little ', ''))}</h3>
           </a>`).join('')}
       </div>
@@ -181,7 +178,7 @@ export function homePage() {
         </div>
         <a class="link" href="/books">View All</a>
       </div>
-      <div class="grid-4">${newReleases().map(productCard).join('')}</div>
+      <div class="grid-4">${d.newReleases.map(productCard).join('')}</div>
     </div>
   </section>
 
@@ -246,16 +243,11 @@ export function catalogPage(opts: {
   `
 }
 
-export function booksCatalog(q: Record<string, string | undefined>) {
-  let items = booksOnly()
+export function booksCatalog(q: Record<string, string | undefined>, items: Product[]) {
   let filter = ''
-  if (q.gender === 'girl') { items = byGender('girl'); filter = 'girl' }
-  if (q.gender === 'boy') { items = byGender('boy'); filter = 'boy' }
-  if (q.career) { items = careers(); filter = 'career' }
-  if (q.q) {
-    const s = q.q.toLowerCase()
-    items = items.filter(p => (p.title + p.tagline + p.description).toLowerCase().includes(s))
-  }
+  if (q.gender === 'girl') filter = 'girl'
+  if (q.gender === 'boy') filter = 'boy'
+  if (q.career) filter = 'career'
   return catalogPage({
     title: 'Personalised Storybooks for Kids',
     subtitle: 'Crafted to spark imagination and lasting memories.',
@@ -265,31 +257,31 @@ export function booksCatalog(q: Record<string, string | undefined>) {
   })
 }
 
-export function stickersCatalog() {
+export function stickersCatalog(items: Product[]) {
   return catalogPage({
     title: 'Personalised Sticker Packs',
     subtitle: 'Stickers that celebrate your child’s big dreams.',
-    items: stickersOnly(),
+    items,
     image: '/static/img/stickers-header.webp'
   })
 }
 
-export function ageCatalog(min: number, max: number, label: string) {
+export function ageCatalog(min: number, max: number, label: string, items: Product[]) {
   return catalogPage({
     title: `Stories for ages ${label}`,
     subtitle: 'Crafted to spark imagination and lasting memories.',
-    items: byAge(min, max),
+    items,
     filter: label
   })
 }
 
-export function productPage(p: Product, pathPrefix: string) {
+export function productPage(p: Product, pathPrefix: string, related: Product[] = []) {
   return `
   <section class="section">
     <div class="wrap pdp">
       <div class="pdp-cover">
         ${p.compareAt ? `<span class="badge">-${Math.round((1 - p.price / p.compareAt) * 100)}%</span>` : ''}
-        <img src="${p.image}" alt="${esc(p.title)} cover">
+        <img src="${esc(p.image)}" alt="${esc(p.title)} cover">
       </div>
       <div>
         <p class="eyebrow">${p.category === 'sticker' ? 'Sticker pack' : 'Personalised storybook'}</p>
@@ -301,7 +293,7 @@ export function productPage(p: Product, pathPrefix: string) {
         <p class="trait"><i class="fas fa-child"></i><span>Perfect for kids ages <strong>${esc(p.ages)}</strong></span></p>
         <p class="trait"><i class="fas fa-book-open"></i><span>${p.pages} beautifully illustrated pages</span></p>
         <p class="price" style="font-size:28px;margin:18px 0">From ${money(p.price)} ${p.compareAt ? `<s>${money(p.compareAt)}</s>` : ''}</p>
-        <form class="form" id="personalise-form" data-slug="${p.slug}" data-title="${esc(p.title)}" data-price="${p.price}" data-image="${p.image}" data-kind="${p.category}">
+        <form class="form" id="personalise-form" data-slug="${p.slug}" data-title="${esc(p.title)}" data-image="${esc(p.image)}" data-kind="${p.category}">
           <label for="child-name">Child's name</label>
           <input id="child-name" name="childName" required maxlength="24" placeholder="e.g. Maya">
           <label for="child-age">Age</label>
@@ -309,12 +301,13 @@ export function productPage(p: Product, pathPrefix: string) {
           <label for="lang">Language</label>
           <select id="lang" name="language">${languages.map(l => `<option>${l}</option>`).join('')}</select>
           <label for="dedication">Dedication (optional)</label>
-          <textarea id="dedication" name="dedication" rows="2" placeholder="For Maya, with love from Grandma"></textarea>
+          <textarea id="dedication" name="dedication" rows="2" maxlength="200" placeholder="For Maya, with love from Grandma"></textarea>
           <label for="photo">Child's photo</label>
           <input id="photo" name="photo" type="file" accept="image/*">
-          <p class="tiny">Clear front-facing photo. No eating, accessories, or far-away side angles.</p>
+          <p class="tiny">Clear front-facing photo. No eating, accessories, or far-away side angles. Max 5MB.</p>
+          <p class="tiny" id="upload-status" hidden></p>
           <img id="photo-preview" class="preview-face" alt="Photo preview" hidden>
-          <button class="btn btn-purple" type="submit">Personalise now</button>
+          <button class="btn btn-purple" type="submit" id="personalise-btn">Personalise now</button>
         </form>
       </div>
     </div>
@@ -322,7 +315,7 @@ export function productPage(p: Product, pathPrefix: string) {
   <section class="section how">
     <div class="wrap">
       <h2>You may also like</h2>
-      <div class="grid-4">${products.filter(x => x.slug !== p.slug && x.category === p.category).slice(0, 4).map(productCard).join('')}</div>
+      <div class="grid-4">${related.map(productCard).join('')}</div>
     </div>
   </section>
   ${ctaBlock()}
@@ -449,17 +442,17 @@ export function cartPage() {
   </section>`
 }
 
-export function checkoutPage() {
+export function checkoutPage(user: { name?: string; email?: string } | null = null) {
   return `
-  <section class="page-hero"><h1>Checkout</h1><p>This demo stores your order locally in the sandbox database. No real payment is taken.</p></section>
+  <section class="page-hero"><h1>Checkout</h1><p>Enter your shipping details. Prices are verified securely on our server.</p></section>
   <section class="section">
     <div class="wrap" style="max-width:720px">
       <div id="checkout-summary"></div>
       <form class="form" id="checkout-form">
         <label for="fullName">Full name</label>
-        <input id="fullName" name="fullName" required>
+        <input id="fullName" name="fullName" required value="${esc(user?.name || '')}">
         <label for="email">Email</label>
-        <input id="email" name="email" type="email" required>
+        <input id="email" name="email" type="email" required value="${esc(user?.email || '')}">
         <label for="address">Shipping address</label>
         <input id="address" name="address" required>
         <label for="city">City</label>
@@ -468,20 +461,29 @@ export function checkoutPage() {
         <input id="country" name="country" required placeholder="United States">
         <label for="shipping">Shipping method</label>
         <select id="shipping" name="shipping">
-          <option value="12.00">Standard — $12.00 (10–30 business days)</option>
-          <option value="28.00">Express — $28.00 (7–20 business days)</option>
+          <option value="standard">Standard — $12.00 (10–30 business days)</option>
+          <option value="express">Express — $28.00 (7–20 business days)</option>
         </select>
-        <p class="tiny">Use code <strong>EXTRA20</strong> for 20% off 2+ books (applied automatically when 2 or more books are in the cart).</p>
-        <button class="btn btn-purple" type="submit">Place order</button>
+        <p class="tiny">Code <strong>EXTRA20</strong> applies automatically: 20% off when you order 2 or more books.</p>
+        <button class="btn btn-purple" type="submit" id="place-order-btn">Place order</button>
+        <p class="tiny" id="checkout-error" style="color:#c0392b" hidden></p>
       </form>
     </div>
   </section>`
 }
 
-export function myBooksPage() {
+export function myBooksPage(loggedIn = false) {
   return `
-  <section class="page-hero"><h1>My Books</h1><p>Orders placed from this browser. Sign in to keep them on your account.</p></section>
-  <section class="section"><div class="wrap" id="orders-root"><p>Loading…</p></div></section>`
+  <section class="page-hero">
+    <h1>My Books</h1>
+    <p>${loggedIn ? 'Track your orders, previews and personalisation status.' : 'Sign in to see the orders attached to your account.'}</p>
+  </section>
+  <section class="section">
+    <div class="wrap">
+      <div id="orders-root"><p>Loading…</p></div>
+      ${loggedIn ? `<form method="post" action="/logout" style="margin-top:24px"><button class="btn btn-outline" type="submit">Log out</button></form>` : ''}
+    </div>
+  </section>`
 }
 
 export function blogIndex() {

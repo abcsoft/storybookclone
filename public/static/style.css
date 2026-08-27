@@ -301,3 +301,22 @@ details.faq p { margin: 0 0 16px; color: var(--muted); }
   .grid-2 { grid-template-columns: 1fr; }
   .currency { display: none; }
 }
+
+/* fullstack additions */
+.btn-outline {
+  display: inline-block; background: transparent; color: var(--purple, #6c4bd8);
+  border: 2px solid var(--purple, #6c4bd8); border-radius: 999px; padding: 10px 22px;
+  font: inherit; font-weight: 700; cursor: pointer; text-decoration: none;
+}
+.cart-totals { margin-top: 18px; padding: 18px; background: #faf8ff; border-radius: 14px; }
+.cart-face {
+  width: 56px !important; height: 56px !important; border-radius: 50% !important;
+  object-fit: cover; border: 2px solid var(--gold, #f6c453); margin-top: 8px;
+}
+.order-status { text-transform: capitalize; color: var(--purple, #6c4bd8); }
+.order-item {
+  display: flex; gap: 14px; align-items: center; padding: 12px 0; border-top: 1px solid var(--line, #ece7f6);
+  margin-top: 10px;
+}
+.order-toggle { background: none; border: 0; cursor: pointer; padding: 6px 0; font: inherit; }
+.order-items { margin-top: 6px; }

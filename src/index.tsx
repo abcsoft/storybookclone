@@ -1,6 +1,5 @@
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
-import { getCookie, setCookie } from 'hono/cookie'
 import { page } from './layout'
 import {
   homePage,
@@ -20,165 +19,331 @@ import {
   legalPage,
   notFoundPage
 } from './pages'
-import { getProduct } from './data'
+import {
+  queryProducts,
+  getProductBySlug,
+  quoteCart,
+  shippingFor,
+  round2,
+  type CatalogQuery,
+  type DiscountRow
+} from './db'
+import {
+  attachUser,
+  hashPassword,
+  verifyPassword,
+  createSession,
+  destroySession,
+  setSessionCookie,
+  clearSessionCookie,
+  readSessionToken,
+  requireAuth,
+  requireAdmin,
+  type AuthUser
+} from './auth'
+import {
+  adminLogin,
+  adminDashboard,
+  adminOrders,
+  adminOrderDetail,
+  adminProducts,
+  adminProductForm,
+  adminDiscounts,
+  adminUsers,
+  adminMessages
+} from './admin'
 
-type Bindings = { DB: D1Database }
+type Bindings = { DB: D1Database; PHOTOS?: R2Bucket }
+type Vars = { user: AuthUser | null }
 
-const app = new Hono<{ Bindings: Bindings }>()
+const app = new Hono<{ Bindings: Bindings; Variables: Vars }>()
 
 app.use('/api/*', cors())
 
+// ---------- bootstrap (idempotent, local-dev friendly) ----------
+let booted = false
 async function ensureSchema(db?: D1Database) {
-  if (!db) return
-  await db.batch([
-    db.prepare(`CREATE TABLE IF NOT EXISTS users (
+  if (!db || booted) return
+  booted = true
+  const stmts = [
+    `CREATE TABLE IF NOT EXISTS users (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
       email TEXT UNIQUE NOT NULL,
       password_hash TEXT NOT NULL,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )`),
-    db.prepare(`CREATE TABLE IF NOT EXISTS newsletter (
+      role TEXT NOT NULL DEFAULT 'customer',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`,
+    `CREATE TABLE IF NOT EXISTS sessions (
+      token TEXT PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      expires_at INTEGER NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`,
+    `CREATE TABLE IF NOT EXISTS products (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      email TEXT UNIQUE NOT NULL,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )`),
-    db.prepare(`CREATE TABLE IF NOT EXISTS contacts (
+      slug TEXT UNIQUE NOT NULL,
+      title TEXT NOT NULL,
+      tagline TEXT DEFAULT '',
+      description TEXT DEFAULT '',
+      story TEXT DEFAULT '',
+      price REAL NOT NULL,
+      compare_at REAL,
+      image TEXT DEFAULT '',
+      gender TEXT NOT NULL DEFAULT 'unisex',
+      category TEXT NOT NULL DEFAULT 'book',
+      ages TEXT DEFAULT '',
+      age_min INTEGER DEFAULT 2,
+      age_max INTEGER DEFAULT 10,
+      pages INTEGER DEFAULT 32,
+      reviews INTEGER DEFAULT 0,
+      rating REAL DEFAULT 4.8,
+      bestseller INTEGER DEFAULT 0,
+      new_release INTEGER DEFAULT 0,
+      career INTEGER DEFAULT 0,
+      traits_json TEXT DEFAULT '[]',
+      active INTEGER DEFAULT 1,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`,
+    `CREATE TABLE IF NOT EXISTS discounts (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL,
-      email TEXT NOT NULL,
-      topic TEXT,
-      message TEXT NOT NULL,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )`),
-    db.prepare(`CREATE TABLE IF NOT EXISTS orders (
+      code TEXT UNIQUE NOT NULL,
+      percent REAL NOT NULL,
+      min_books INTEGER DEFAULT 0,
+      applies_to TEXT DEFAULT 'books',
+      auto_apply INTEGER DEFAULT 0,
+      active INTEGER DEFAULT 1,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`,
+    `CREATE TABLE IF NOT EXISTS orders (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
       full_name TEXT NOT NULL,
       email TEXT NOT NULL,
       address TEXT NOT NULL,
       city TEXT NOT NULL,
       country TEXT NOT NULL,
-      shipping REAL NOT NULL,
+      shipping_method TEXT NOT NULL DEFAULT 'standard',
+      shipping REAL NOT NULL DEFAULT 0,
       subtotal REAL NOT NULL,
-      discount REAL NOT NULL,
+      discount REAL NOT NULL DEFAULT 0,
+      discount_code TEXT,
       total REAL NOT NULL,
-      items_json TEXT NOT NULL,
-      status TEXT DEFAULT 'processing',
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )`)
-  ])
+      status TEXT NOT NULL DEFAULT 'pending_preview',
+      admin_notes TEXT DEFAULT '',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP)`,
+    `CREATE TABLE IF NOT EXISTS order_items (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      order_id INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+      product_id INTEGER,
+      slug TEXT NOT NULL,
+      title TEXT NOT NULL,
+      kind TEXT NOT NULL DEFAULT 'book',
+      unit_price REAL NOT NULL,
+      qty INTEGER NOT NULL DEFAULT 1,
+      child_name TEXT DEFAULT '',
+      child_age INTEGER,
+      language TEXT DEFAULT 'English',
+      dedication TEXT DEFAULT '',
+      photo_key TEXT DEFAULT '',
+      preview_status TEXT NOT NULL DEFAULT 'pending',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`,
+    `CREATE TABLE IF NOT EXISTS contacts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      email TEXT NOT NULL,
+      topic TEXT,
+      message TEXT NOT NULL,
+      resolved INTEGER DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`,
+    `CREATE TABLE IF NOT EXISTS newsletter (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      email TEXT UNIQUE NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`
+  ]
+  await db.batch(stmts.map((s) => db.prepare(s)))
+
+  // Seed admin + default discount if missing (idempotent)
+  const admin = await db.prepare("SELECT id FROM users WHERE role = 'admin' LIMIT 1").first()
+  if (!admin) {
+    await db
+      .prepare("INSERT OR IGNORE INTO users (name, email, password_hash, role) VALUES (?, ?, ?, 'admin')")
+      .bind('WonderWraps Admin', 'admin@wonderwraps.com', await hashPassword('admin123'))
+      .run()
+  }
+  await db
+    .prepare(
+      "INSERT OR IGNORE INTO discounts (code, percent, min_books, applies_to, auto_apply, active) VALUES ('EXTRA20', 20, 2, 'books', 1, 1)"
+    )
+    .run()
+  // Fallback catalog seed if products table is empty (mirrors seed.sql)
+  const count = await db.prepare('SELECT COUNT(*) AS n FROM products').first<{ n: number }>()
+  if (!count || count.n === 0) {
+    const { products } = await import('./data')
+    const batch = products.map((p) =>
+      db
+        .prepare(
+          `INSERT OR IGNORE INTO products (slug, title, tagline, description, story, price, compare_at, image, gender, category, ages, age_min, age_max, pages, reviews, rating, bestseller, new_release, career, traits_json, active)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`
+        )
+        .bind(
+          p.slug, p.title, p.tagline, p.description, p.story, p.price, p.compareAt ?? null,
+          p.image, p.gender, p.category, p.ages, p.ageMin, p.ageMax, p.pages, p.reviews, p.rating,
+          p.bestseller ? 1 : 0, p.newRelease ? 1 : 0, p.career ? 1 : 0, JSON.stringify(p.traits)
+        )
+    )
+    if (batch.length) await db.batch(batch)
+  }
 }
+
+// attach user on every request (after schema ready)
+app.use('*', async (c, next) => {
+  await ensureSchema(c.env.DB)
+  await next()
+})
+app.use('*', attachUser)
 
 function html(c: any, title: string, body: string, active?: string, description?: string) {
   return c.html(page({ title, body, active, description }))
 }
 
-app.get('/', (c) =>
-  html(c, 'Personalized Books for Kids | Custom Storybooks - Wonder Wraps', homePage(), 'home')
-)
+// ================= STOREFRONT =================
 
-app.get('/books', (c) => {
+app.get('/', async (c) => {
+  const db = c.env.DB
+  const [best, fresh, girls, boys, careersList] = await Promise.all([
+    queryProducts(db, { bestseller: true }),
+    queryProducts(db, { newRelease: true }),
+    queryProducts(db, { category: 'book', gender: 'girl' }),
+    queryProducts(db, { category: 'book', gender: 'boy' }),
+    queryProducts(db, { career: true })
+  ])
+  return html(
+    c,
+    'Personalized Books for Kids | Custom Storybooks - Wonder Wraps',
+    homePage({ bestsellers: best, newReleases: fresh, girls, boys, careers: careersList }),
+    'home'
+  )
+})
+
+app.get('/books', async (c) => {
   const q = c.req.query()
-  return html(c, 'Books - Wonder Wraps', booksCatalog(q), 'books')
+  const filter: CatalogQuery = { category: 'book' }
+  if (q.gender === 'girl' || q.gender === 'boy') filter.gender = q.gender
+  if (q.career) filter.career = true
+  if (q.q) filter.q = q.q
+  const items = await queryProducts(c.env.DB, filter)
+  return html(c, 'Books - Wonder Wraps', booksCatalog(q, items), 'books')
 })
 
-app.get('/books/age/2-4', (c) =>
-  html(c, 'Books ages 2–4 - Wonder Wraps', ageCatalog(2, 4, '2-4'), 'books')
+app.get('/books/age/2-4', async (c) =>
+  html(c, 'Books ages 2–4 - Wonder Wraps', ageCatalog(2, 4, '2-4', await queryProducts(c.env.DB, { category: 'book', ageMin: 2, ageMax: 4 })), 'books')
 )
-app.get('/books/age/4-6', (c) =>
-  html(c, 'Books ages 4–6 - Wonder Wraps', ageCatalog(4, 6, '4-6'), 'books')
+app.get('/books/age/4-6', async (c) =>
+  html(c, 'Books ages 4–6 - Wonder Wraps', ageCatalog(4, 6, '4-6', await queryProducts(c.env.DB, { category: 'book', ageMin: 4, ageMax: 6 })), 'books')
 )
-app.get('/books/age/6-8', (c) =>
-  html(c, 'Books ages 6–8 - Wonder Wraps', ageCatalog(6, 8, '6-8'), 'books')
+app.get('/books/age/6-8', async (c) =>
+  html(c, 'Books ages 6–8 - Wonder Wraps', ageCatalog(6, 8, '6-8', await queryProducts(c.env.DB, { category: 'book', ageMin: 6, ageMax: 8 })), 'books')
 )
-app.get('/books/age/8-100', (c) =>
-  html(c, 'Books ages 8+ - Wonder Wraps', ageCatalog(8, 100, '6-8'), 'books')
-)
-
-app.get('/stickers', (c) =>
-  html(c, 'Personalised Sticker Packs - Wonder Wraps', stickersCatalog(), 'stickers')
+app.get('/books/age/8-100', async (c) =>
+  html(c, 'Books ages 8+ - Wonder Wraps', ageCatalog(8, 100, '6-8', await queryProducts(c.env.DB, { category: 'book', ageMin: 8, ageMax: 100 })), 'books')
 )
 
-app.get('/books/:slug', (c) => {
-  const p = getProduct(c.req.param('slug'))
-  if (!p) return html(c, 'Not found - Wonder Wraps', notFoundPage())
-  return html(c, `${p.title} - Wonder Wraps`, productPage(p, '/books'), 'books', p.description)
+app.get('/stickers', async (c) =>
+  html(c, 'Personalised Sticker Packs - Wonder Wraps', stickersCatalog(await queryProducts(c.env.DB, { category: 'sticker' })), 'stickers')
+)
+
+app.get('/books/:slug', async (c) => {
+  const p = await getProductBySlug(c.env.DB, c.req.param('slug'))
+  if (!p || p.category !== 'book') return html(c, 'Not found - Wonder Wraps', notFoundPage())
+  const related = (await queryProducts(c.env.DB, { category: 'book' })).filter((x) => x.slug !== p.slug).slice(0, 4)
+  return html(c, `${p.title} - Wonder Wraps`, productPage(p, '/books', related), 'books', p.description)
 })
 
-app.get('/stickers/:slug', (c) => {
-  const p = getProduct(c.req.param('slug'))
-  if (!p) return html(c, 'Not found - Wonder Wraps', notFoundPage())
-  return html(c, `${p.title} - Wonder Wraps`, productPage(p, '/stickers'), 'stickers', p.description)
+app.get('/stickers/:slug', async (c) => {
+  const p = await getProductBySlug(c.env.DB, c.req.param('slug'))
+  if (!p || p.category !== 'sticker') return html(c, 'Not found - Wonder Wraps', notFoundPage())
+  const related = (await queryProducts(c.env.DB, { category: 'sticker' })).filter((x) => x.slug !== p.slug).slice(0, 4)
+  return html(c, `${p.title} - Wonder Wraps`, productPage(p, '/stickers', related), 'stickers', p.description)
 })
 
 app.get('/faqs', (c) => html(c, 'FAQ - Wonder Wraps', faqsPage(), 'support'))
 app.get('/support', (c) => html(c, 'Support - Wonder Wraps', supportPage(), 'support'))
+
 app.get('/contact', (c) => html(c, 'Contact Us - Wonder Wraps', contactPage(), 'support'))
 app.post('/contact', async (c) => {
-  await ensureSchema(c.env.DB)
   const body = await c.req.parseBody()
   try {
-    await c.env.DB.prepare(
-      'INSERT INTO contacts (name, email, topic, message) VALUES (?, ?, ?, ?)'
-    )
+    await c.env.DB.prepare('INSERT INTO contacts (name, email, topic, message) VALUES (?, ?, ?, ?)')
       .bind(String(body.name || ''), String(body.email || ''), String(body.topic || ''), String(body.message || ''))
       .run()
   } catch {}
   return html(c, 'Contact Us - Wonder Wraps', contactPage(true), 'support')
 })
 
-app.get('/login', (c) => html(c, 'Login - Wonder Wraps', authPage('login'), 'my-books'))
-app.get('/register', (c) => html(c, 'Create Account - Wonder Wraps', authPage('register'), 'my-books'))
+// ---------- auth pages ----------
+app.get('/login', (c) => {
+  if (c.get('user')) return c.redirect('/my-books')
+  return html(c, 'Login - Wonder Wraps', authPage('login'), 'my-books')
+})
+app.get('/register', (c) => {
+  if (c.get('user')) return c.redirect('/my-books')
+  return html(c, 'Create Account - Wonder Wraps', authPage('register'), 'my-books')
+})
 app.get('/forgot-password', (c) => html(c, 'Forgot Password - Wonder Wraps', authPage('forgot'), 'my-books'))
 
 app.post('/login', async (c) => {
-  await ensureSchema(c.env.DB)
   const body = await c.req.parseBody()
-  const email = String(body.email || '').toLowerCase()
+  const email = String(body.email || '').toLowerCase().trim()
   const password = String(body.password || '')
-  const user = await c.env.DB.prepare('SELECT * FROM users WHERE email = ?').bind(email).first<{
-    id: number
-    name: string
-    password_hash: string
-  }>()
-  if (!user || user.password_hash !== simpleHash(password)) {
+  const user = await c.env.DB.prepare('SELECT id, name, email, role, password_hash FROM users WHERE email = ?')
+    .bind(email)
+    .first<AuthUser & { password_hash: string }>()
+  if (!user || !(await verifyPassword(password, user.password_hash))) {
     return html(c, 'Login - Wonder Wraps', authPage('login', 'Invalid email or password.'), 'my-books')
   }
-  setCookie(c, 'ww_uid', String(user.id), { path: '/', httpOnly: false })
-  return c.redirect('/my-books')
+  const token = await createSession(c.env.DB, user.id)
+  setSessionCookie(c, token)
+  return c.redirect(user.role === 'admin' ? '/admin' : '/my-books')
 })
 
 app.post('/register', async (c) => {
-  await ensureSchema(c.env.DB)
   const body = await c.req.parseBody()
   const name = String(body.name || '').trim()
-  const email = String(body.email || '').toLowerCase()
+  const email = String(body.email || '').toLowerCase().trim()
   const password = String(body.password || '')
+  if (!name || !email || password.length < 6) {
+    return html(c, 'Create Account - Wonder Wraps', authPage('register', 'Please fill all fields (password 6+ characters).'), 'my-books')
+  }
   try {
-    const r = await c.env.DB.prepare(
-      'INSERT INTO users (name, email, password_hash) VALUES (?, ?, ?)'
-    )
-      .bind(name, email, simpleHash(password))
+    const r = await c.env.DB.prepare('INSERT INTO users (name, email, password_hash) VALUES (?, ?, ?)')
+      .bind(name, email, await hashPassword(password))
       .run()
-    setCookie(c, 'ww_uid', String(r.meta.last_row_id), { path: '/', httpOnly: false })
+    const token = await createSession(c.env.DB, Number(r.meta.last_row_id))
+    setSessionCookie(c, token)
     return c.redirect('/my-books')
   } catch {
     return html(c, 'Create Account - Wonder Wraps', authPage('register', 'That email is already registered.'), 'my-books')
   }
 })
 
-app.post('/forgot-password', async (c) => {
-  return html(
-    c,
-    'Forgot Password - Wonder Wraps',
-    authPage('forgot', 'If that email exists, reset instructions have been sent.'),
-    'my-books'
-  )
+app.post('/logout', async (c) => {
+  const token = readSessionToken(c)
+  if (token) await destroySession(c.env.DB, token)
+  clearSessionCookie(c)
+  return c.redirect('/')
+})
+app.get('/logout', async (c) => {
+  const token = readSessionToken(c)
+  if (token) await destroySession(c.env.DB, token)
+  clearSessionCookie(c)
+  return c.redirect('/')
 })
 
+app.post('/forgot-password', async (c) =>
+  html(c, 'Forgot Password - Wonder Wraps', authPage('forgot', 'If that email exists, reset instructions have been sent.'), 'my-books')
+)
+
 app.get('/cart', (c) => html(c, 'Cart - Wonder Wraps', cartPage()))
-app.get('/checkout', (c) => html(c, 'Checkout - Wonder Wraps', checkoutPage()))
-app.get('/my-books', (c) => html(c, 'My Books - Wonder Wraps', myBooksPage(), 'my-books'))
+app.get('/checkout', (c) => html(c, 'Checkout - Wonder Wraps', checkoutPage(c.get('user'))))
+app.get('/my-books', (c) => html(c, 'My Books - Wonder Wraps', myBooksPage(!!c.get('user')), 'my-books'))
 app.get('/my/books', (c) => c.redirect('/my-books'))
 app.get('/profile', (c) => c.redirect('/my-books'))
 
@@ -203,64 +368,415 @@ app.get('/blog/:slug', (c) => {
 })
 
 app.get('/support/privacy-policy', (c) => html(c, 'Privacy Policy - Wonder Wraps', legalPage('privacy')))
-app.get('/support/terms-and-conditions', (c) =>
-  html(c, 'Terms and Conditions - Wonder Wraps', legalPage('terms'))
-)
+app.get('/support/terms-and-conditions', (c) => html(c, 'Terms and Conditions - Wonder Wraps', legalPage('terms')))
 app.get('/privacy', (c) => c.redirect('/support/privacy-policy'))
 app.get('/terms', (c) => c.redirect('/support/terms-and-conditions'))
 
+// ---------- photos (R2) ----------
+app.get('/photos/:key{.+}', async (c) => {
+  if (!c.env.PHOTOS) return c.notFound()
+  const key = c.req.param('key')
+  const obj = await c.env.PHOTOS.get(key)
+  if (!obj) return c.notFound()
+  const headers = new Headers()
+  obj.writeHttpMetadata(headers)
+  headers.set('Cache-Control', 'private, max-age=3600')
+  return new Response(obj.body, { headers })
+})
+
+// ================= PUBLIC API =================
+
+app.get('/api/me', (c) => {
+  const u = c.get('user')
+  return c.json({ user: u ? { id: u.id, name: u.name, email: u.email, role: u.role } : null })
+})
+
 app.post('/api/newsletter', async (c) => {
-  await ensureSchema(c.env.DB)
   const { email } = await c.req.json<{ email: string }>()
   if (!email) return c.json({ error: 'Email required' }, 400)
   try {
-    await c.env.DB.prepare('INSERT OR IGNORE INTO newsletter (email) VALUES (?)').bind(email).run()
+    await c.env.DB.prepare('INSERT OR IGNORE INTO newsletter (email) VALUES (?)').bind(String(email).toLowerCase().trim()).run()
   } catch {}
   return c.json({ ok: true })
 })
 
+// Photo upload → R2 (5MB max, images only)
+app.post('/api/upload-photo', async (c) => {
+  const body = await c.req.parseBody()
+  const file = body.photo
+  if (!(file instanceof File)) return c.json({ error: 'No photo received' }, 400)
+  if (!file.type.startsWith('image/')) return c.json({ error: 'Only image files are allowed' }, 400)
+  if (file.size > 5 * 1024 * 1024) return c.json({ error: 'Photo must be under 5MB' }, 400)
+  if (!c.env.PHOTOS) return c.json({ error: 'Photo storage unavailable' }, 503)
+  const ext = (file.type.split('/')[1] || 'jpg').replace('jpeg', 'jpg')
+  const key = `uploads/${crypto.randomUUID()}.${ext}`
+  await c.env.PHOTOS.put(key, await file.arrayBuffer(), { httpMetadata: { contentType: file.type } })
+  return c.json({ ok: true, key, url: `/photos/${key}` })
+})
+
+// Live quote for the cart page / checkout (server-side pricing)
+app.post('/api/quote', async (c) => {
+  const body = await c.req.json<{ items?: any[]; code?: string; shipping?: string }>()
+  const items = Array.isArray(body.items) ? body.items : []
+  if (!items.length) return c.json({ subtotal: 0, discount: 0, shipping: 0, total: 0, bookCount: 0 })
+  const quote = await quoteCart(c.env.DB, items, body.code)
+  const ship = body.shipping ? shippingFor(String(body.shipping)).price : 0
+  const total = round2(quote.subtotal - quote.discount + ship)
+  return c.json({
+    subtotal: quote.subtotal,
+    discount: quote.discount,
+    code: quote.appliedCode,
+    bookCount: quote.bookCount,
+    shipping: ship,
+    total,
+    invalid: quote.invalid
+  })
+})
+
+// Place an order (guest or logged-in). Server recomputes ALL prices.
 app.post('/api/orders', async (c) => {
-  await ensureSchema(c.env.DB)
   const body = await c.req.json<any>()
+  const items = Array.isArray(body.items) ? body.items : []
+  if (!items.length) return c.json({ error: 'Cart is empty' }, 400)
+  const fullName = String(body.fullName || '').trim()
+  const email = String(body.email || '').toLowerCase().trim()
+  const address = String(body.address || '').trim()
+  const city = String(body.city || '').trim()
+  const country = String(body.country || '').trim()
+  if (!fullName || !email.includes('@') || !address || !city || !country) {
+    return c.json({ error: 'Please complete all shipping fields' }, 400)
+  }
+  const shipMethod = String(body.shippingMethod || 'standard')
+  const ship = shippingFor(shipMethod)
+  const quote = await quoteCart(c.env.DB, items, body.code)
+  if (quote.invalid.length) return c.json({ error: `Unknown product(s): ${quote.invalid.join(', ')}` }, 400)
+  const total = round2(quote.subtotal - quote.discount + ship.price)
+  const user = c.get('user')
+
   const r = await c.env.DB.prepare(
-    `INSERT INTO orders (full_name, email, address, city, country, shipping, subtotal, discount, total, items_json)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO orders (user_id, full_name, email, address, city, country, shipping_method, shipping, subtotal, discount, discount_code, total, status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending_preview')`
+  )
+    .bind(user?.id ?? null, fullName, email, address, city, country, shipMethod, ship.price, quote.subtotal, quote.discount, quote.appliedCode, total)
+    .run()
+  const orderId = Number(r.meta.last_row_id)
+
+  const itemStmts = items.map((it: any) => {
+    const meta = quote.priceMap.get(String(it.slug))!
+    return c.env.DB.prepare(
+      `INSERT INTO order_items (order_id, product_id, slug, title, kind, unit_price, qty, child_name, child_age, language, dedication, photo_key)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(
+      orderId,
+      meta.id,
+      String(it.slug),
+      meta.title,
+      meta.kind,
+      meta.price,
+      Math.max(1, Math.min(10, Number(it.qty) || 1)),
+      String(it.childName || '').slice(0, 24),
+      it.childAge ? Number(it.childAge) : null,
+      String(it.language || 'English').slice(0, 40),
+      String(it.dedication || '').slice(0, 200),
+      String(it.photoKey || '').startsWith('uploads/') ? String(it.photoKey) : ''
+    )
+  })
+  if (itemStmts.length) await c.env.DB.batch(itemStmts)
+  return c.json({ ok: true, id: orderId })
+})
+
+// Logged-in customer's own orders
+app.get('/api/my/orders', async (c) => {
+  const auth = requireAuth(c)
+  if (auth instanceof Response) return auth
+  const orders = (
+    await c.env.DB.prepare(
+      `SELECT o.id, o.full_name, o.email, o.city, o.country, o.subtotal, o.discount, o.shipping, o.total, o.status, o.created_at,
+              (SELECT COUNT(*) FROM order_items i WHERE i.order_id = o.id) AS item_count
+       FROM orders o WHERE o.user_id = ? ORDER BY o.id DESC LIMIT 100`
+    )
+      .bind(auth.id)
+      .all()
+  ).results || []
+  return c.json({ orders })
+})
+
+app.get('/api/my/orders/:id', async (c) => {
+  const auth = requireAuth(c)
+  if (auth instanceof Response) return auth
+  const id = Number(c.req.param('id'))
+  const order = await c.env.DB.prepare('SELECT * FROM orders WHERE id = ? AND user_id = ?').bind(id, auth.id).first()
+  if (!order) return c.json({ error: 'Order not found' }, 404)
+  const items = (
+    await c.env.DB.prepare('SELECT * FROM order_items WHERE order_id = ?').bind(id).all()
+  ).results || []
+  return c.json({ order, items })
+})
+
+// Legacy endpoint kept for the demo: latest orders by email (no auth). Removed for privacy.
+app.get('/api/orders', (c) => c.json({ error: 'Login and use /api/my/orders' }, 401))
+
+// ================= ADMIN =================
+
+app.get('/admin/login', (c) => {
+  const u = c.get('user')
+  if (u?.role === 'admin') return c.redirect('/admin')
+  return c.html(adminLogin())
+})
+app.post('/admin/login', async (c) => {
+  const body = await c.req.parseBody()
+  const email = String(body.email || '').toLowerCase().trim()
+  const password = String(body.password || '')
+  const user = await c.env.DB.prepare("SELECT id, name, email, role, password_hash FROM users WHERE email = ? AND role = 'admin'")
+    .bind(email)
+    .first<AuthUser & { password_hash: string }>()
+  if (!user || !(await verifyPassword(password, user.password_hash))) {
+    return c.html(adminLogin('Invalid admin credentials.'))
+  }
+  const token = await createSession(c.env.DB, user.id)
+  setSessionCookie(c, token)
+  return c.redirect('/admin')
+})
+
+// Admin guard for everything below
+app.use('/admin/*', async (c, next) => {
+  const u = c.get('user')
+  if (!u || u.role !== 'admin') return c.redirect('/admin/login')
+  await next()
+})
+app.use('/admin', async (c, next) => {
+  const u = c.get('user')
+  if (!u || u.role !== 'admin') return c.redirect('/admin/login')
+  await next()
+})
+
+app.get('/admin', async (c) => {
+  const db = c.env.DB
+  const one = async (sql: string) => (await db.prepare(sql).first<{ n: number }>())?.n ?? 0
+  const [orders, users, productsN, pending, messages] = await Promise.all([
+    one('SELECT COUNT(*) n FROM orders'),
+    one("SELECT COUNT(*) n FROM users WHERE role = 'customer'"),
+    one('SELECT COUNT(*) n FROM products WHERE active = 1'),
+    one("SELECT COUNT(*) n FROM orders WHERE status IN ('pending_preview','preview_sent')"),
+    one('SELECT COUNT(*) n FROM contacts WHERE resolved = 0')
+  ])
+  const revenue =
+    (await db.prepare("SELECT COALESCE(SUM(total),0) n FROM orders WHERE status NOT IN ('cancelled')").first<{ n: number }>())?.n ?? 0
+  const recent =
+    (
+      await db
+        .prepare(
+          `SELECT o.*, (SELECT COUNT(*) FROM order_items i WHERE i.order_id = o.id) AS item_count
+           FROM orders o ORDER BY o.id DESC LIMIT 8`
+        )
+        .all()
+    ).results || []
+  return c.html(adminDashboard({ orders, revenue, users, products: productsN, pending, messages, recentOrders: recent }))
+})
+
+app.get('/admin/orders', async (c) => {
+  const status = c.req.query('status') || ''
+  const where = status ? 'WHERE o.status = ?' : ''
+  const stmt = c.env.DB.prepare(
+    `SELECT o.*, (SELECT COUNT(*) FROM order_items i WHERE i.order_id = o.id) AS item_count
+     FROM orders o ${where} ORDER BY o.id DESC LIMIT 200`
+  )
+  const rows = (await (status ? stmt.bind(status) : stmt).all()).results || []
+  return c.html(adminOrders(rows, status))
+})
+
+app.get('/admin/orders/:id', async (c) => {
+  const id = Number(c.req.param('id'))
+  const order = await c.env.DB.prepare('SELECT * FROM orders WHERE id = ?').bind(id).first()
+  if (!order) return c.html(adminPage404())
+  const items = (await c.env.DB.prepare('SELECT * FROM order_items WHERE order_id = ?').bind(id).all()).results || []
+  return c.html(adminOrderDetail(order, items, c.req.query('saved') ? 'Saved.' : undefined))
+})
+
+app.post('/admin/orders/:id/status', async (c) => {
+  const id = Number(c.req.param('id'))
+  const body = await c.req.parseBody()
+  const status = String(body.status || '')
+  await c.env.DB.prepare("UPDATE orders SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(status, id).run()
+  return c.redirect(`/admin/orders/${id}?saved=1`)
+})
+
+app.post('/admin/orders/:id/notes', async (c) => {
+  const id = Number(c.req.param('id'))
+  const body = await c.req.parseBody()
+  await c.env.DB.prepare('UPDATE orders SET admin_notes = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+    .bind(String(body.notes || ''), id)
+    .run()
+  return c.redirect(`/admin/orders/${id}?saved=1`)
+})
+
+app.post('/admin/items/:id/preview', async (c) => {
+  const id = Number(c.req.param('id'))
+  const body = await c.req.parseBody()
+  const status = String(body.preview_status || 'pending')
+  const item = await c.env.DB.prepare('SELECT order_id FROM order_items WHERE id = ?').bind(id).first<{ order_id: number }>()
+  if (!item) return c.redirect('/admin/orders')
+  await c.env.DB.prepare('UPDATE order_items SET preview_status = ? WHERE id = ?').bind(status, id).run()
+  return c.redirect(`/admin/orders/${item.order_id}?saved=1`)
+})
+
+// ---- products CRUD ----
+app.get('/admin/products', async (c) => {
+  const rows = await queryProducts(c.env.DB, { includeInactive: true })
+  return c.html(adminProducts(rows, c.req.query('saved') ? 'Saved.' : undefined))
+})
+
+app.get('/admin/products/new', (c) => c.html(adminProductForm(null)))
+
+app.post('/admin/products/new', async (c) => {
+  const b = await c.req.parseBody()
+  const slug = slugify(String(b.slug || b.title || ''))
+  try {
+    await c.env.DB.prepare(
+      `INSERT INTO products (slug, title, tagline, description, story, price, compare_at, image, gender, category, ages, age_min, age_max, pages, reviews, rating, bestseller, new_release, career, traits_json, active)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+      .bind(
+        slug,
+        String(b.title || ''),
+        String(b.tagline || ''),
+        String(b.description || ''),
+        String(b.story || ''),
+        Number(b.price || 0),
+        b.compare_at ? Number(b.compare_at) : null,
+        String(b.image || ''),
+        String(b.gender || 'unisex'),
+        String(b.category || 'book'),
+        String(b.ages || ''),
+        Number(b.age_min || 2),
+        Number(b.age_max || 10),
+        Number(b.pages || 32),
+        Number(b.reviews || 0),
+        Number(b.rating || 4.8),
+        b.bestseller ? 1 : 0,
+        b.new_release ? 1 : 0,
+        b.career ? 1 : 0,
+        JSON.stringify(String(b.traits || '').split('\n').map((s) => s.trim()).filter(Boolean)),
+        b.active ? 1 : 0
+      )
+      .run()
+  } catch {
+    return c.html(adminProductForm(null, 'Could not create: slug already exists or invalid data.'))
+  }
+  return c.redirect('/admin/products?saved=1')
+})
+
+app.get('/admin/products/:id', async (c) => {
+  const id = Number(c.req.param('id'))
+  const row = await c.env.DB.prepare('SELECT * FROM products WHERE id = ?').bind(id).first<any>()
+  if (!row) return c.html(adminPage404())
+  const { toProduct } = await import('./db')
+  const p = { ...toProduct(row), active: row.active } as any
+  return c.html(adminProductForm(p, c.req.query('saved') ? 'Saved.' : undefined))
+})
+
+app.post('/admin/products/:id', async (c) => {
+  const id = Number(c.req.param('id'))
+  const b = await c.req.parseBody()
+  await c.env.DB.prepare(
+    `UPDATE products SET title=?, tagline=?, description=?, story=?, price=?, compare_at=?, image=?, gender=?, category=?, ages=?, age_min=?, age_max=?, pages=?, reviews=?, rating=?, bestseller=?, new_release=?, career=?, traits_json=?, active=? WHERE id=?`
   )
     .bind(
-      String(body.fullName || ''),
-      String(body.email || ''),
-      String(body.address || ''),
-      String(body.city || ''),
-      String(body.country || ''),
-      Number(body.shipping || 0),
-      Number(body.subtotal || 0),
-      Number(body.discount || 0),
-      Number(body.total || 0),
-      JSON.stringify(body.items || [])
+      String(b.title || ''),
+      String(b.tagline || ''),
+      String(b.description || ''),
+      String(b.story || ''),
+      Number(b.price || 0),
+      b.compare_at ? Number(b.compare_at) : null,
+      String(b.image || ''),
+      String(b.gender || 'unisex'),
+      String(b.category || 'book'),
+      String(b.ages || ''),
+      Number(b.age_min || 2),
+      Number(b.age_max || 10),
+      Number(b.pages || 32),
+      Number(b.reviews || 0),
+      Number(b.rating || 4.8),
+      b.bestseller ? 1 : 0,
+      b.new_release ? 1 : 0,
+      b.career ? 1 : 0,
+      JSON.stringify(String(b.traits || '').split('\n').map((s) => s.trim()).filter(Boolean)),
+      b.active ? 1 : 0,
+      id
     )
     .run()
-  return c.json({ ok: true, id: r.meta.last_row_id })
+  return c.redirect(`/admin/products/${id}?saved=1`)
 })
 
-app.get('/api/orders', async (c) => {
-  await ensureSchema(c.env.DB)
-  const { results } = await c.env.DB.prepare(
-    'SELECT id, full_name, email, city, country, total, status, created_at FROM orders ORDER BY id DESC LIMIT 50'
-  ).all()
-  return c.json({ orders: results || [] })
+// ---- discounts ----
+app.get('/admin/discounts', async (c) => {
+  const rows = (await c.env.DB.prepare('SELECT * FROM discounts ORDER BY id').all<DiscountRow>()).results || []
+  return c.html(adminDiscounts(rows, c.req.query('saved') ? 'Saved.' : undefined))
 })
 
-app.get('/api/me', (c) => {
-  const uid = getCookie(c, 'ww_uid')
-  return c.json({ uid: uid || null })
+app.post('/admin/discounts', async (c) => {
+  const b = await c.req.parseBody()
+  try {
+    await c.env.DB.prepare('INSERT INTO discounts (code, percent, min_books, applies_to, auto_apply, active) VALUES (?, ?, ?, ?, ?, 1)')
+      .bind(
+        String(b.code || '').toUpperCase().trim(),
+        Number(b.percent || 0),
+        Number(b.min_books || 0),
+        String(b.applies_to || 'books'),
+        b.auto_apply ? 1 : 0
+      )
+      .run()
+  } catch {
+    return c.redirect('/admin/discounts')
+  }
+  return c.redirect('/admin/discounts?saved=1')
 })
+
+app.post('/admin/discounts/:id/toggle', async (c) => {
+  const id = Number(c.req.param('id'))
+  await c.env.DB.prepare('UPDATE discounts SET active = 1 - active WHERE id = ?').bind(id).run()
+  return c.redirect('/admin/discounts?saved=1')
+})
+
+// ---- users ----
+app.get('/admin/users', async (c) => {
+  const rows =
+    (
+      await c.env.DB.prepare(
+        `SELECT u.id, u.name, u.email, u.role, u.created_at,
+                (SELECT COUNT(*) FROM orders o WHERE o.user_id = u.id) AS order_count
+         FROM users u ORDER BY u.id DESC LIMIT 300`
+      ).all()
+    ).results || []
+  return c.html(adminUsers(rows))
+})
+
+// ---- inbox ----
+app.get('/admin/messages', async (c) => {
+  const rows = (await c.env.DB.prepare('SELECT * FROM contacts ORDER BY resolved, id DESC LIMIT 200').all()).results || []
+  return c.html(adminMessages(rows, c.req.query('saved') ? 'Saved.' : undefined))
+})
+
+app.post('/admin/messages/:id/toggle', async (c) => {
+  const id = Number(c.req.param('id'))
+  await c.env.DB.prepare('UPDATE contacts SET resolved = 1 - resolved WHERE id = ?').bind(id).run()
+  return c.redirect('/admin/messages?saved=1')
+})
+
+function adminPage404() {
+  return adminLogin('That admin page does not exist.')
+}
+
+function slugify(s: string) {
+  return (
+    s
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '') || `product-${Date.now()}`
+  )
+}
 
 app.notFound((c) => html(c, 'Not found - Wonder Wraps', notFoundPage()))
-
-function simpleHash(s: string) {
-  let h = 0
-  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0
-  return 'h' + h.toString(16)
-}
 
 export default app

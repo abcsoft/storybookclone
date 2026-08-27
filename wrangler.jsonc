@@ -12,5 +12,11 @@
       "database_name": "webapp-production",
       "database_id": "local-dev-placeholder"
     }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "PHOTOS",
+      "bucket_name": "webapp-photos"
+    }
   ]
 }
