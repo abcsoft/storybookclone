@@ -6,7 +6,6 @@ import {
   booksCatalog,
   stickersCatalog,
   ageCatalog,
-  productPage,
   faqsPage,
   contactPage,
   supportPage,
@@ -19,6 +18,9 @@ import {
   legalPage,
   notFoundPage
 } from './pages'
+import { productDetailPage } from './pages_pdp'
+import { loadPdp, ensurePdpPageRow, savePdpPage, upsertGallery, deleteGallery, upsertAccordion, deleteAccordion, upsertStep, upsertTip, deleteTip, saveMagic, upsertTrust, deleteTrust, upsertReaction, deleteReaction, upsertMedia, deleteMedia, setRelated, upsertFaq, deleteFaq } from './pdp'
+import { adminPdpEditor } from './admin_pdp'
 import {
   queryProducts,
   getProductBySlug,
@@ -253,16 +255,17 @@ app.get('/stickers', async (c) =>
 app.get('/books/:slug', async (c) => {
   const p = await getProductBySlug(c.env.DB, c.req.param('slug'))
   if (!p) return html(c, 'Not found - Wonder Wraps', notFoundPage())
-  const related = (await queryProducts(c.env.DB, { category: p.category })).filter((x) => x.slug !== p.slug).slice(0, 4)
+  const pdp = await loadPdp(c.env.DB, p)
   const active = p.category === 'sticker' ? 'stickers' : 'books'
-  return html(c, `${p.title} - Wonder Wraps`, productPage(p, p.category === 'sticker' ? '/stickers' : '/books', related), active, p.description)
+  const prefix = p.category === 'sticker' ? '/stickers' : '/books'
+  return html(c, `${p.title} - Wonder Wraps`, productDetailPage({ product: p, ...pdp }, prefix), active, p.description)
 })
 
 app.get('/stickers/:slug', async (c) => {
   const p = await getProductBySlug(c.env.DB, c.req.param('slug'))
   if (!p || p.category !== 'sticker') return html(c, 'Not found - Wonder Wraps', notFoundPage())
-  const related = (await queryProducts(c.env.DB, { category: 'sticker' })).filter((x) => x.slug !== p.slug).slice(0, 4)
-  return html(c, `${p.title} - Wonder Wraps`, productPage(p, '/stickers', related), 'stickers', p.description)
+  const pdp = await loadPdp(c.env.DB, p)
+  return html(c, `${p.title} - Wonder Wraps`, productDetailPage({ product: p, ...pdp }, '/stickers'), 'stickers', p.description)
 })
 
 app.get('/faqs', (c) => html(c, 'FAQ - Wonder Wraps', faqsPage(), 'support'))
@@ -709,6 +712,170 @@ app.post('/admin/products/:id', async (c) => {
     )
     .run()
   return c.redirect(`/admin/products/${id}?saved=1`)
+})
+
+// ================= PDP EDITOR =================
+// Mounted under the same /admin guard used above. Admin goes to /admin/products/:id and clicks "Edit page".
+app.get('/admin/products/:id/pdp', async (c) => {
+  const id = Number(c.req.param('id'))
+  const row = await c.env.DB.prepare('SELECT * FROM products WHERE id = ?').bind(id).first<any>()
+  if (!row) return c.html(adminLogin('Product not found.'))
+  const { toProduct } = await import('./db')
+  const p = { ...toProduct(row), active: row.active } as any
+  ;(globalThis as any).__pdpAllProducts = (await queryProducts(c.env.DB, { includeInactive: true })).map((x) => ({ id: x.id, title: x.title, image: x.image, slug: x.slug }))
+  return adminPdpEditor(c, p)
+})
+
+// Helpers — small handlers that the editor posts to.
+async function loadPdpProduct(c: any) {
+  const id = Number(c.req.param('id'))
+  const row = await c.env.DB.prepare('SELECT * FROM products WHERE id = ?').bind(id).first<any>()
+  if (!row) return null
+  const { toProduct } = await import('./db')
+  return { ...toProduct(row), active: row.active } as any
+}
+
+function num(v: any, fallback: number) { const n = Number(v); return Number.isFinite(n) ? n : fallback }
+function int(v: any, fallback: number) { return Math.trunc(num(v, fallback)) }
+
+app.post('/admin/products/:id/pdp/banner', async (c) => {
+  const p = await loadPdpProduct(c); if (!p) return c.text('Not found', 404)
+  const b = await c.req.parseBody()
+  await savePdpPage(c.env.DB, p.id, {
+    banner_text: String(b.banner_text || ''),
+    banner_code: String(b.banner_code || '').toUpperCase().trim(),
+    banner_badge: String(b.banner_badge || ''),
+    preorder_note: String(b.preorder_note || '')
+  })
+  return c.redirect(`/admin/products/${p.id}/pdp?#banner`)
+})
+
+app.post('/admin/products/:id/pdp/gallery', async (c) => {
+  const p = await loadPdpProduct(c); if (!p) return c.text('Not found', 404)
+  const b = await c.req.parseBody()
+  const id = b.id ? Number(b.id) : null
+  await upsertGallery(c.env.DB, p.id, id, String(b.image_url || ''), String(b.alt || ''), int(b.sort_order, 0), b.active ? 1 : 0)
+  return c.redirect(`/admin/products/${p.id}/pdp?#gallery`)
+})
+app.post('/admin/products/:id/pdp/gallery/delete', async (c) => {
+  const p = await loadPdpProduct(c); if (!p) return c.text('Not found', 404)
+  const b = await c.req.parseBody()
+  await deleteGallery(c.env.DB, p.id, int(b.id, 0))
+  return c.redirect(`/admin/products/${p.id}/pdp?#gallery`)
+})
+
+app.post('/admin/products/:id/pdp/accordion', async (c) => {
+  const p = await loadPdpProduct(c); if (!p) return c.text('Not found', 404)
+  const b = await c.req.parseBody()
+  const id = b.id ? Number(b.id) : null
+  await upsertAccordion(c.env.DB, p.id, id, String(b.title || ''), String(b.body || ''), int(b.sort_order, 0), b.active ? 1 : 0)
+  return c.redirect(`/admin/products/${p.id}/pdp?#accordions`)
+})
+app.post('/admin/products/:id/pdp/accordion/delete', async (c) => {
+  const p = await loadPdpProduct(c); if (!p) return c.text('Not found', 404)
+  const b = await c.req.parseBody()
+  await deleteAccordion(c.env.DB, p.id, int(b.id, 0))
+  return c.redirect(`/admin/products/${p.id}/pdp?#accordions`)
+})
+
+app.post('/admin/products/:id/pdp/step', async (c) => {
+  const p = await loadPdpProduct(c); if (!p) return c.text('Not found', 404)
+  const b = await c.req.parseBody()
+  await upsertStep(c.env.DB, p.id, int(b.step_no, 1), String(b.title || ''), String(b.body || ''))
+  return c.redirect(`/admin/products/${p.id}/pdp?#steps`)
+})
+
+app.post('/admin/products/:id/pdp/tip', async (c) => {
+  const p = await loadPdpProduct(c); if (!p) return c.text('Not found', 404)
+  const b = await c.req.parseBody()
+  const id = b.id ? Number(b.id) : null
+  const kind = String(b.kind || 'good') === 'bad' ? 'bad' : 'good'
+  await upsertTip(c.env.DB, p.id, id, kind, String(b.label || ''), String(b.image_url || ''), int(b.sort_order, 0))
+  return c.redirect(`/admin/products/${p.id}/pdp?#tips`)
+})
+app.post('/admin/products/:id/pdp/tip/delete', async (c) => {
+  const p = await loadPdpProduct(c); if (!p) return c.text('Not found', 404)
+  const b = await c.req.parseBody()
+  await deleteTip(c.env.DB, p.id, int(b.id, 0))
+  return c.redirect(`/admin/products/${p.id}/pdp?#tips`)
+})
+
+app.post('/admin/products/:id/pdp/magic', async (c) => {
+  const p = await loadPdpProduct(c); if (!p) return c.text('Not found', 404)
+  const b = await c.req.parseBody()
+  await saveMagic(c.env.DB, p.id, {
+    heading: String(b.heading || ''),
+    left_image: String(b.left_image || ''),
+    left_caption: String(b.left_caption || ''),
+    right_image: String(b.right_image || ''),
+    right_caption: String(b.right_caption || ''),
+    body: String(b.body || '')
+  })
+  return c.redirect(`/admin/products/${p.id}/pdp?#magic`)
+})
+
+app.post('/admin/products/:id/pdp/trust', async (c) => {
+  const p = await loadPdpProduct(c); if (!p) return c.text('Not found', 404)
+  const b = await c.req.parseBody()
+  const id = b.id ? Number(b.id) : null
+  await upsertTrust(c.env.DB, p.id, id, String(b.title || ''), String(b.body || ''), String(b.icon || 'sparkle'), int(b.sort_order, 0))
+  return c.redirect(`/admin/products/${p.id}/pdp?#trust`)
+})
+app.post('/admin/products/:id/pdp/trust/delete', async (c) => {
+  const p = await loadPdpProduct(c); if (!p) return c.text('Not found', 404)
+  const b = await c.req.parseBody()
+  await deleteTrust(c.env.DB, p.id, int(b.id, 0))
+  return c.redirect(`/admin/products/${p.id}/pdp?#trust`)
+})
+
+app.post('/admin/products/:id/pdp/reaction', async (c) => {
+  const p = await loadPdpProduct(c); if (!p) return c.text('Not found', 404)
+  const b = await c.req.parseBody()
+  const id = b.id ? Number(b.id) : null
+  await upsertReaction(c.env.DB, p.id, id, String(b.name || ''), int(b.rating, 5), String(b.review || ''), String(b.image_url || ''), int(b.sort_order, 0), b.active ? 1 : 0)
+  return c.redirect(`/admin/products/${p.id}/pdp?#reactions`)
+})
+app.post('/admin/products/:id/pdp/reaction/delete', async (c) => {
+  const p = await loadPdpProduct(c); if (!p) return c.text('Not found', 404)
+  const b = await c.req.parseBody()
+  await deleteReaction(c.env.DB, p.id, int(b.id, 0))
+  return c.redirect(`/admin/products/${p.id}/pdp?#reactions`)
+})
+
+app.post('/admin/products/:id/pdp/media', async (c) => {
+  const p = await loadPdpProduct(c); if (!p) return c.text('Not found', 404)
+  const b = await c.req.parseBody()
+  const id = b.id ? Number(b.id) : null
+  await upsertMedia(c.env.DB, p.id, id, String(b.name || ''), String(b.image_url || ''), String(b.href || ''), int(b.sort_order, 0))
+  return c.redirect(`/admin/products/${p.id}/pdp?#media`)
+})
+app.post('/admin/products/:id/pdp/media/delete', async (c) => {
+  const p = await loadPdpProduct(c); if (!p) return c.text('Not found', 404)
+  const b = await c.req.parseBody()
+  await deleteMedia(c.env.DB, p.id, int(b.id, 0))
+  return c.redirect(`/admin/products/${p.id}/pdp?#media`)
+})
+
+app.post('/admin/products/:id/pdp/related', async (c) => {
+  const p = await loadPdpProduct(c); if (!p) return c.text('Not found', 404)
+  const b = await c.req.parseBody()
+  const raw = String(b.related_ids || '').split(',').map((x) => Number(x)).filter((n) => Number.isFinite(n) && n > 0 && n !== p.id)
+  await setRelated(c.env.DB, p.id, raw)
+  return c.redirect(`/admin/products/${p.id}/pdp?#related`)
+})
+
+app.post('/admin/products/:id/pdp/faq', async (c) => {
+  const p = await loadPdpProduct(c); if (!p) return c.text('Not found', 404)
+  const b = await c.req.parseBody()
+  const id = b.id ? Number(b.id) : null
+  await upsertFaq(c.env.DB, p.id, id, String(b.question || ''), String(b.answer || ''), int(b.sort_order, 0), b.active ? 1 : 0)
+  return c.redirect(`/admin/products/${p.id}/pdp?#faqs`)
+})
+app.post('/admin/products/:id/pdp/faq/delete', async (c) => {
+  const p = await loadPdpProduct(c); if (!p) return c.text('Not found', 404)
+  const b = await c.req.parseBody()
+  await deleteFaq(c.env.DB, p.id, int(b.id, 0))
+  return c.redirect(`/admin/products/${p.id}/pdp?#faqs`)
 })
 
 // ---- discounts ----

@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 250" width="400" height="250">
+  <rect width="400" height="250" fill="#f3eaff"/>
+  <circle cx="200" cy="100" r="60" fill="#ffe2c8"/>
+  <rect x="120" y="160" width="160" height="80" rx="30" fill="#a855f7"/>
+  <text x="200" y="245" text-anchor="middle" font-family="Figtree" font-size="14" fill="#5b16b3" font-weight="700">Sarah K. (placeholder)</text>
+</svg>

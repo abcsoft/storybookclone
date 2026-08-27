@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 800" width="800" height="800">
+  <defs>
+    <linearGradient id="g1" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#fbe6ff"/>
+      <stop offset="1" stop-color="#e7d6ff"/>
+    </linearGradient>
+  </defs>
+  <rect width="800" height="800" fill="url(#g1)"/>
+  <circle cx="400" cy="370" r="200" fill="#a855f7"/>
+  <circle cx="400" cy="330" r="80" fill="#ffe2c8"/>
+  <text x="400" y="600" text-anchor="middle" font-family="Figtree, sans-serif" font-size="44" font-weight="800" fill="#5b16b3">Personalised Sticker</text>
+  <text x="400" y="650" text-anchor="middle" font-family="Figtree, sans-serif" font-size="22" fill="#7424d8">Sticker sheet preview</text>
+</svg>

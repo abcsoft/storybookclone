@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+  <rect width="200" height="200" fill="#fff"/>
+  <circle cx="100" cy="80" r="50" fill="#ffe2c8"/>
+  <rect x="40" y="130" width="120" height="60" fill="#ddd"/>
+  <path d="M50 130 L50 190 L170 190 L170 130 Z" fill="rgba(0,0,0,0.55)"/>
+  <text x="100" y="190" text-anchor="middle" font-family="Figtree" font-size="14" fill="#5b16b3" font-weight="700">Harsh shadow</text>
+</svg>

@@ -28,6 +28,7 @@ A full-stack clone of [wonderwraps.com](https://wonderwraps.com/) — personaliz
 - `/admin` dashboard (revenue, orders, customers, pending previews, unread messages, latest orders)
 - `/admin/orders` (+`?status=`) — pipeline management, `/admin/orders/:id` — status, notes, per-item preview status, child photo review
 - `/admin/products` — full catalog CRUD (`/admin/products/new`, `/admin/products/:id`), flags: bestseller/new/career/active
+- **📝 `/admin/products/:id/pdp`** — WonderWraps PDP editor (tabbed): **Banner & Hero** · **Gallery** (thumb + main slider) · **Hero accordions** · **Start-Personalising** steps · **Photo tips** (Bad/Good) · **Magic slider** (before/after) · **Why-trust** cards · **Reactions** · **Featured-on** logos · **Also-like** picker · **FAQs** — every label/image/text is editable.
 - `/admin/discounts` — discount codes (create, activate/deactivate); `EXTRA20` = 20% off 2+ books, auto-applied
 - `/admin/users` — customers with order counts
 - `/admin/messages` — support inbox (resolve/reopen)
@@ -64,6 +65,6 @@ A full-stack clone of [wonderwraps.com](https://wonderwraps.com/) — personaliz
 
 ## Deployment
 - **Platform**: Cloudflare Pages + D1 + R2
-- **Local**: `npm run db:migrate:local` → `npx wrangler d1 execute webapp-production --local --file=./seed.sql` → `npm run build` → `pm2 start ecosystem.config.cjs`
+- **Local**: `npm run db:migrate:local` → `npx wrangler d1 execute webapp-production --local --file=./seed.sql` → `npx wrangler d1 execute webapp-production --local --file=./seed_pdp.sql` → `npm run build` → `pm2 start ecosystem.config.cjs`
 - **Reset local DB**: `npm run db:reset`
 - **Last Updated**: 2026-08-27

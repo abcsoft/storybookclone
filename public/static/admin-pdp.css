@@ -1,0 +1,66 @@
+/* PDP editor (admin/products/:id/pdp) — tabbed editor with inline row forms.
+   Re-uses /static/admin.css tokens and just adds PDP-specific styles. */
+
+.admin-pdp-edit { background: #f7f3fc; }
+.a-pdp-top {
+  background: #fff; border-bottom: 1px solid var(--line, #ece4f5);
+  padding: 14px 24px;
+  display: flex; align-items: center; gap: 16px;
+  position: sticky; top: 0; z-index: 30;
+}
+.a-pdp-top h1 { font-size: 18px; margin: 0; flex: 1; }
+
+.pdp-editor-main {
+  padding: 22px 24px 56px;
+  max-width: 1080px;
+  margin: 0 auto;
+}
+.pdp-editor-main h2 { font-size: 20px; margin: 0 0 14px; }
+.pdp-editor-main .a-card { padding: 18px 20px; margin-bottom: 24px; }
+
+.pdp-tabs {
+  display: flex; flex-wrap: wrap; gap: 6px;
+  background: #fff; border: 1px solid var(--line, #ece4f5);
+  padding: 6px; border-radius: 14px;
+  position: sticky; top: 60px; z-index: 20;
+  margin-bottom: 18px;
+}
+.pdp-tabs a {
+  padding: 8px 12px; border-radius: 8px;
+  text-decoration: none; color: var(--a-muted, #6c6377); font-weight: 600; font-size: 13.5px;
+}
+.pdp-tabs a.active { background: var(--a-purple, #a855f7); color: #fff; }
+
+.pdp-tab[hidden] { display: none !important; }
+
+.a-row-form {
+  background: #faf7ff; border: 1px dashed var(--line, #ece4f5);
+  border-radius: 12px; padding: 14px 16px;
+  margin-bottom: 10px;
+}
+.a-form-actions {
+  display: flex; gap: 8px; align-items: center; margin-top: 8px; flex-wrap: wrap;
+}
+.a-form label.check {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-weight: 600; font-size: 13px;
+}
+
+.pdp-rel-list {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px; margin: 8px 0 14px;
+}
+.pdp-rel-item {
+  display: flex; align-items: center; gap: 10px;
+  background: #fff; border: 1px solid var(--line, #ece4f5); border-radius: 10px;
+  padding: 8px; cursor: pointer;
+}
+.pdp-rel-item input { accent-color: var(--a-purple, #a855f7); }
+.pdp-rel-item img { width: 44px; height: 44px; object-fit: cover; border-radius: 8px; }
+.pdp-rel-item span { font-size: 13px; font-weight: 600; }
+
+:root {
+  --a-purple: #a855f7;
+  --a-muted: #6c6377;
+  --line: #ece4f5;
+}

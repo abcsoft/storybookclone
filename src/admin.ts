@@ -227,12 +227,16 @@ export function adminProducts(products: Product[], flash?: string) {
           <td>${money(p.price)}${p.compareAt ? ` <s class="muted">${money(p.compareAt)}</s>` : ''}</td>
           <td>${[p.bestseller && 'bestseller', p.newRelease && 'new', p.career && 'career'].filter(Boolean).join(', ') || '<span class="muted">—</span>'}</td>
           <td>${(p as any).active ? '<span class="badge-status st-approved">Active</span>' : '<span class="badge-status st-cancelled">Hidden</span>'}</td>
-          <td><a class="a-link" href="/admin/products/${p.id}">Edit</a></td>
+          <td>
+            <a class="a-link" href="/admin/products/${p.id}">Edit</a>
+            <a class="a-link" href="/admin/products/${p.id}/pdp" title="Edit product page (banner, gallery, accordions, steps, tips, magic, trust, reactions, media, related, FAQs)">📝 Page</a>
+          </td>
         </tr>`
           )
           .join('')}
       </tbody>
-    </table>`
+    </table>
+    <p class="muted">📝 opens the WonderWraps PDP editor for that product (banner, gallery, accordions, tips, magic slider, trust cards, reactions, media logos, related products and FAQs).</p>`
   })
 }
 

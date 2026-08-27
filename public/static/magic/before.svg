@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 600" width="800" height="600">
+  <rect width="800" height="600" fill="#fff8d6"/>
+  <circle cx="400" cy="240" r="160" fill="#ffe2c8"/>
+  <circle cx="350" cy="220" r="12" fill="#222"/>
+  <circle cx="450" cy="220" r="12" fill="#222"/>
+  <path d="M340 280 Q400 320 460 280" stroke="#222" stroke-width="6" fill="none" stroke-linecap="round"/>
+  <rect x="200" y="380" width="400" height="220" rx="40" fill="#88c46d"/>
+  <text x="400" y="540" text-anchor="middle" font-family="Figtree" font-size="22" fill="#fff" font-weight="700">Real photo (placeholder)</text>
+</svg>

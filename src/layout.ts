@@ -20,6 +20,8 @@ export function page(opts: {
   <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700;800;900&family=Just+Me+Again+Down+Here&family=Kalam:wght@400;700&display=swap" rel="stylesheet">
   <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.5.2/css/all.min.css" rel="stylesheet">
   <link href="/static/style.css" rel="stylesheet">
+  <link href="/static/pdp.css" rel="stylesheet">
+  <link rel="preload" href="/static/pdp.js" as="script">
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
@@ -122,6 +124,7 @@ export function page(opts: {
     </div>
   </footer>
   <script src="/static/app.js"></script>
+  <script src="/static/pdp.js" defer></script>
 </body>
 </html>`
 }

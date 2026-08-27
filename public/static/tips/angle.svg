@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+  <rect width="200" height="200" fill="#a06464"/>
+  <circle cx="60" cy="120" r="50" fill="#ffe2c8"/>
+  <ellipse cx="60" cy="180" rx="80" ry="20" fill="#c08484"/>
+  <path d="M70 100 L160 60 L165 100 Z" fill="#fff" stroke="#888" stroke-width="2"/>
+  <line x1="120" y1="80" x2="175" y2="100" stroke="#fff" stroke-width="4"/>
+  <text x="100" y="190" text-anchor="middle" font-family="Figtree" font-size="14" fill="#fff" font-weight="700">Bad angle</text>
+</svg>

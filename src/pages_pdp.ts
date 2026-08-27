@@ -1,0 +1,326 @@
+// WonderWraps PDP clone — `books/:slug` and `stickers/:slug` rendered as a single
+// long-scrolling product page that mirrors wonderwraps.com/books/girls-sticker-pack.
+// All sections are data-driven from the per-product PDP rows so admins can edit them.
+import type { Product } from './db'
+import { money, languages } from './data'
+import { esc, stars } from './layout'
+import type {
+  GalleryItem,
+  AccordionItem,
+  StepItem,
+  TipItem,
+  MagicBlock,
+  TrustItem,
+  ReactionItem,
+  MediaItem,
+  RelatedItem,
+  FaqItem,
+  PdpPageRow
+} from './pdp'
+
+type PdpData = {
+  product: Product
+  page: PdpPageRow
+  gallery: GalleryItem[]
+  accordions: AccordionItem[]
+  steps: StepItem[]
+  tips: TipItem[]
+  magic: MagicBlock
+  trust: TrustItem[]
+  reactions: ReactionItem[]
+  media: MediaItem[]
+  related: RelatedItem[]
+  faqs: FaqItem[]
+}
+
+// Default copy is used when the PDP DB rows are missing for a product.
+function defaultPdp(product: Product): Omit<PdpData, 'product'> {
+  const isBook = product.category === 'book'
+  const defaultSteps: StepItem[] = [
+    { step_no: 1, title: 'Upload Child\u2019s Photo', body: 'Pick a clear, front-facing photo showing their face. A bright, well-lit picture works best.' },
+    { step_no: 2, title: isBook ? 'Choose Book style' : 'Choose Sticker Pack style', body: isBook ? 'Pick their favourite story — princess, adventure, sports and more.' : 'Pick their favourite sticker style — unicorns, superheroes, dinosaurs and more.' },
+    { step_no: 3, title: 'Preview & Add to Cart', body: 'Review every page, request tweaks, and checkout securely.' }
+  ]
+  return {
+    page: { banner_text: 'Save 20% on 3+ items using code: RATRI20', banner_code: 'RATRI20', banner_badge: product.compareAt ? `SAVE ${Math.round((1 - product.price / product.compareAt) * 100)}%` : 'BEST PRICE', preorder_note: '' },
+    gallery: [{ id: 0, image_url: product.image, alt: product.title, sort_order: 1, active: 1 }],
+    accordions: [
+      { id: 1, title: 'How is the book personalised for my child?', body: `Creating ${product.title} is quick: upload a clear front-facing photo, enter their name and age, then choose the style. Our artists use the photo to place their face across the story so they truly feel like the hero.`, sort_order: 1, active: 1 },
+      { id: 2, title: 'What if I need to make changes after personalising?', body: 'After you place your order we send a preview link. You can request free revisions to the layout, style or photo placement before we send it to print. Our support team replies within one business day.', sort_order: 2, active: 1 },
+      { id: 3, title: 'Size & Quality', body: isBook ? 'Premium hardcover, large square format, 30+ beautifully illustrated pages. Designed to feel like a keepsake — sturdy, vibrant, and made to last.' : 'Six glossy vinyl sheets (40+ stickers) on premium self-adhesive vinyl. Water-resistant and built for kid hands.', sort_order: 3, active: 1 }
+    ],
+    steps: defaultSteps,
+    tips: [
+      { id: 0, kind: 'bad', label: 'Blurry photo',  image_url: '', sort_order: 1 },
+      { id: 0, kind: 'bad', label: 'Bad angle',    image_url: '', sort_order: 2 },
+      { id: 0, kind: 'bad', label: 'Harsh shadow', image_url: '', sort_order: 3 },
+      { id: 0, kind: 'good', label: 'Clear front face',     image_url: '', sort_order: 1 },
+      { id: 0, kind: 'good', label: 'Bright natural light', image_url: '', sort_order: 2 }
+    ],
+    magic: { heading: 'See How a Simple Photo Becomes a Beautiful Story', left_image: '', left_caption: 'Your real photo', right_image: '', right_caption: 'Personalised illustrated version', body: 'From a single photo, our artists craft a unique illustrated persona that appears on every page.' },
+    trust: [
+      { id: 1, title: 'Years of Experience in Personalized Books', body: 'A team of illustrators and storytellers dedicated to crafting personalised keepsakes one child at a time.', icon: 'sparkle', sort_order: 1 },
+      { id: 2, title: 'Thousands of Happy Stories Families Worldwide', body: 'Over 100K families in 200+ countries celebrate bedtime, birthdays and big days with WonderWraps.', icon: 'globe', sort_order: 2 },
+      { id: 3, title: 'Highest Personalization Standards', body: 'Multiple artistic checks, secure uploads, and obsessive attention to detail on every page.', icon: 'shield', sort_order: 3 }
+    ],
+    reactions: [],
+    media: [
+      { id: 1, name: 'NBC',                  image_url: '', href: '#', sort_order: 1 },
+      { id: 2, name: 'ABC News',             image_url: '', href: '#', sort_order: 2 },
+      { id: 3, name: 'FOX News',             image_url: '', href: '#', sort_order: 3 },
+      { id: 4, name: 'AP',                   image_url: '', href: '#', sort_order: 4 },
+      { id: 5, name: 'Sports Illustrated',   image_url: '', href: '#', sort_order: 5 },
+      { id: 6, name: 'International Business Times', image_url: '', href: '#', sort_order: 6 },
+      { id: 7, name: 'Morning News',         image_url: '', href: '#', sort_order: 7 },
+      { id: 8, name: 'CBS',                  image_url: '', href: '#', sort_order: 8 }
+    ],
+    related: [],
+    faqs: [
+      { id: 1, question: 'How do I place an order?', answer: 'Choose your personalised story, upload a clear photo, enter name & age, and we send a preview before printing.', sort_order: 1, active: 1 },
+      { id: 2, question: 'Do you ship to my location?', answer: 'Yes — we ship to 200+ countries and regions.', sort_order: 2, active: 1 },
+      { id: 3, question: 'Can I get a refund for my order?', answer: 'Full refund before printing; partial refund after printing but before shipping; no refund once shipped. Email support@wonderwraps.com.', sort_order: 3, active: 1 },
+      { id: 4, question: 'How long does shipping take?', answer: 'Standard: 10–30 business days. Express: 7–20 business days. Business days only.', sort_order: 4, active: 1 },
+      { id: 5, question: 'Will I have to pay duties or sales tax?', answer: 'Prices exclude local taxes, customs duties or import fees. The recipient is responsible for any charges.', sort_order: 5, active: 1 },
+      { id: 6, question: 'What if I have issues with my order?', answer: 'After payment you’ll review and approve your order. We accept free revisions before printing.', sort_order: 6, active: 1 },
+      { id: 7, question: 'How can I reach customer support?', answer: 'Email support@wonderwraps.com or use the contact form. We reply within one business day.', sort_order: 7, active: 1 },
+      { id: 8, question: 'What languages are your books available in?', answer: 'English, Spanish, Portuguese (Brazil), Arabic, French, Turkish, German, Italian, Dutch and Albanian.', sort_order: 8, active: 1 }
+    ]
+  }
+}
+
+export function productDetailPage(d: PdpData, pathPrefix: string) {
+  const p = d.product
+  const fallback = defaultPdp(p)
+  // Merge defaults so missing rows still render
+  const page       = d.page.banner_text ? d.page : fallback.page
+  const gallery    = d.gallery.length ? d.gallery : fallback.gallery
+  const accordions = d.accordions.length ? d.accordions : fallback.accordions
+  const steps      = d.steps.length ? d.steps : fallback.steps
+  const tips       = d.tips.length ? d.tips : fallback.tips
+  const magic      = d.magic.heading ? d.magic : fallback.magic
+  const trust      = d.trust.length ? d.trust : fallback.trust
+  const reactions  = d.reactions.length ? d.reactions : fallback.reactions
+  const media      = d.media.length ? d.media : fallback.media
+  const faqs       = d.faqs.length ? d.faqs : fallback.faqs
+  const related    = d.related.length ? d.related : fallback.related
+
+  const isBook = p.category === 'book'
+  const isSticker = p.category === 'sticker'
+  const sale = p.compareAt ? `-${Math.round((1 - p.price / p.compareAt) * 100)}%` : ''
+  const salePercent = sale || page.banner_badge
+
+  return `<section class="pdp-banner">
+    <p><strong>${esc(page.banner_text || 'Save 20% on 3+ items using code: RATRI20')}</strong></p>
+  </section>
+
+  <section class="pdp-hero">
+    <div class="pdp-hero-inner">
+      <div class="pdp-gallery">
+        <div class="pdp-thumbs">
+          ${gallery.map((g, i) => `<button class="pdp-thumb ${i === 0 ? 'active' : ''}" data-idx="${i}" aria-label="View image ${i + 1}"><img src="${esc(g.image_url)}" alt="${esc(g.alt)}"></button>`).join('')}
+        </div>
+        <div class="pdp-main-img" id="pdp-main-img">
+          <img id="pdp-main-image" src="${esc(gallery[0]?.image_url || p.image)}" alt="${esc(p.title)}" data-count="${gallery.length}">
+          ${gallery.length > 1 ? `<button class="pdp-arrow pdp-prev" aria-label="Previous image">‹</button><button class="pdp-arrow pdp-next" aria-label="Next image">›</button><div class="pdp-dots">${gallery.map((_, i) => `<button class="pdp-dot ${i === 0 ? 'active' : ''}" data-idx="${i}" aria-label="Slide ${i + 1}"></button>`).join('')}</div>` : ''}
+        </div>
+      </div>
+      <div class="pdp-hero-info">
+        <h1>${esc(p.title)}</h1>
+        <div class="pdp-rating">
+          ${stars(p.rating)}
+          <span class="pdp-reviews-count"><strong>(${p.reviews.toLocaleString()})</strong> Reviews</span>
+        </div>
+        <p class="pdp-tagline">${esc(p.tagline || (isSticker ? 'Personalized sticker packs that celebrate their big dreams' : 'A personalised adventure, starring your little one'))}</p>
+
+        <div class="pdp-price-row">
+          <div class="pdp-price">
+            <span class="pdp-price-now">${money(p.price)}</span>
+            ${p.compareAt ? `<span class="pdp-price-was"><s>${money(p.compareAt)}</s></span><span class="pdp-save-badge">${esc(page.banner_badge || salePercent || '')}</span>` : ''}
+          </div>
+        </div>
+
+        <div class="pdp-pay-methods" aria-label="Accepted payments">
+          <i class="fab fa-cc-paypal"></i>
+          <i class="fab fa-cc-mastercard"></i>
+          <i class="fab fa-cc-visa"></i>
+        </div>
+
+        <div class="pdp-acc">
+          ${accordions.map(a => `<details class="pdp-acc-item"><summary>${esc(a.title)}<span class="pdp-acc-toggle">+</span></summary><p>${esc(a.body)}</p></details>`).join('')}
+        </div>
+
+        <a href="#personalise" class="btn btn-purple pdp-cta"><i class="fas fa-wand-magic-sparkles"></i> Personalise ${isSticker ? 'my sticker pack' : 'now'}</a>
+        ${page.preorder_note ? `<p class="pdp-preorder">${esc(page.preorder_note)}</p>` : ''}
+      </div>
+    </div>
+  </section>
+
+  <section class="pdp-personalise" id="personalise">
+    <div class="pdp-personalise-inner">
+      <div class="pdp-personalise-copy">
+        <h2>Start Personalising</h2>
+        <p>${esc(isSticker ? 'Personalise your sticker pack by uploading your child\'s photo. Review the order, name, and the Sticker Pack style. Once you’re ready, just add it to your cart.' : 'Personalise your storybook by uploading your child\'s photo. Review the order, name, and language. Once you’re ready, just add it to your cart.')}</p>
+        <div class="pdp-step-row">
+          ${steps.map(s => `
+            <div class="pdp-step">
+              <div class="pdp-step-num">${s.step_no}</div>
+              <div>
+                <h4>${esc(s.title)}</h4>
+                <p>${esc(s.body)}</p>
+              </div>
+            </div>`).join('')}
+        </div>
+
+        <form class="pdp-form" id="personalise-form" data-slug="${p.slug}" data-title="${esc(p.title)}" data-image="${esc(p.image)}" data-kind="${p.category}" data-price="${p.price}">
+          <h3>Child's Photo</h3>
+          <label class="pdp-upload" for="photo">
+            <i class="fas fa-cloud-arrow-up"></i>
+            <span><strong>${isSticker ? 'Child\'s Photo' : 'Upload'}</strong><em>Drag photo or click to upload</em></span>
+            <input id="photo" name="photo" type="file" accept="image/jpeg,image/png,image/webp" required>
+          </label>
+          <img id="photo-preview" class="pdp-photo-preview" alt="Photo preview" hidden>
+          <p class="pdp-photo-status" id="upload-status" hidden></p>
+
+          <div class="pdp-form-grid">
+            <div>
+              <label for="child-name">Child's name</label>
+              <input id="child-name" name="childName" required maxlength="24" placeholder="e.g. Maya">
+            </div>
+            <div>
+              <label for="child-age">Age</label>
+              <input id="child-age" name="childAge" type="number" min="1" max="14" required value="6">
+            </div>
+            <div>
+              <label for="lang">Language</label>
+              <select id="lang" name="language">${languages.map(l => `<option>${esc(l)}</option>`).join('')}</select>
+            </div>
+          </div>
+
+          <label for="dedication">Dedication (optional)</label>
+          <textarea id="dedication" name="dedication" rows="2" maxlength="200" placeholder="For Maya, with love from Grandma"></textarea>
+
+          <p class="pdp-secure"><i class="fas fa-lock"></i> Private and secure. No third-party data use. All images are processed securely and deleted.</p>
+          <a class="pdp-manual" href="#manual"><i class="fas fa-pen"></i> or continue with manual creation</a>
+
+          <button class="btn btn-purple pdp-personalise-submit" type="submit" id="personalise-btn">Personalise Now</button>
+        </form>
+      </div>
+
+      <aside class="pdp-tips-card">
+        <header><span class="pdp-tips-sparkle">✨</span><h3>TIPS</h3></header>
+        <div class="pdp-tips-grid">
+          ${tips.filter(t => t.kind === 'bad').map(t => `<figure class="pdp-tip pdp-tip-bad"><span class="pdp-tip-img pdp-tip-bad-img" aria-hidden="true">${esc(t.label)}</span><figcaption>${esc(t.label)}</figcaption></figure>`).join('')}
+          <div class="pdp-tip-spacer"></div>
+          ${tips.filter(t => t.kind === 'good').map(t => `<figure class="pdp-tip pdp-tip-good"><span class="pdp-tip-img pdp-tip-good-img" aria-hidden="true">${esc(t.label)}</span><figcaption>${esc(t.label)}</figcaption></figure>`).join('')}
+        </div>
+        <p class="pdp-tips-foot"><i class="fas fa-shield-halved"></i> Private and secure. No third-party data use. All images are processed securely and deleted.</p>
+      </aside>
+    </div>
+  </section>
+
+  ${magic.heading ? `
+  <section class="pdp-magic">
+    <div class="pdp-magic-inner">
+      <h2>${esc(magic.heading)}</h2>
+      <div class="pdp-magic-slider">
+        <div class="pdp-magic-frame pdp-magic-left">
+          ${magic.left_image ? `<img src="${esc(magic.left_image)}" alt="${esc(magic.left_caption)}">` : `<div class="pdp-magic-placeholder"><i class="fas fa-camera-retro"></i><span>Before</span></div>`}
+          <span class="pdp-magic-cap">${esc(magic.left_caption || 'Your real photo')}</span>
+        </div>
+        <div class="pdp-magic-arrow" aria-hidden="true">➜</div>
+        <div class="pdp-magic-frame pdp-magic-right">
+          ${magic.right_image ? `<img src="${esc(magic.right_image)}" alt="${esc(magic.right_caption)}">` : `<div class="pdp-magic-placeholder"><i class="fas fa-palette"></i><span>After</span></div>`}
+          <span class="pdp-magic-cap">${esc(magic.right_caption || 'Personalised version')}</span>
+        </div>
+      </div>
+      ${magic.body ? `<p class="pdp-magic-body">${esc(magic.body)}</p>` : ''}
+    </div>
+  </section>` : ''}
+
+  ${trust.length ? `
+  <section class="pdp-trust">
+    <div class="pdp-trust-inner">
+      <h2>Why 100K+ parents trust WonderWraps</h2>
+      <div class="pdp-trust-grid">
+        ${trust.map(t => `
+          <div class="pdp-trust-card">
+            <div class="pdp-trust-icon">${trustIcon(t.icon)}</div>
+            <h3>${esc(t.title)}</h3>
+            <p>${esc(t.body)}</p>
+          </div>`).join('')}
+      </div>
+    </div>
+  </section>` : ''}
+
+  ${reactions.length ? `
+  <section class="pdp-reactions">
+    <div class="pdp-reactions-inner">
+      <h2>Reactions You Can Count On</h2>
+      <div class="pdp-reactions-grid">
+        ${reactions.map(r => `
+          <article class="pdp-reaction">
+            ${r.image_url ? `<img src="${esc(r.image_url)}" alt="${esc(r.name)} reaction photo">` : `<div class="pdp-reaction-emoji">${'⭐'.repeat(Math.min(5, r.rating))}</div>`}
+            <h4>${esc(r.name)}</h4>
+            <div class="pdp-reaction-stars">${stars(r.rating)}</div>
+            <p>${esc(r.review)}</p>
+          </article>`).join('')}
+      </div>
+    </div>
+  </section>` : `
+  <section class="pdp-reactions pdp-reactions-empty">
+    <div class="pdp-reactions-inner">
+      <h2>Reactions You Can Count On</h2>
+      <p>Customer reviews placeholder — admins can add reactions for this product in the admin panel.</p>
+    </div>
+  </section>`}
+
+  ${media.length ? `
+  <section class="pdp-media">
+    <div class="pdp-media-inner">
+      <h2>Featured on</h2>
+      <div class="pdp-media-grid">
+        ${media.map(m => `<a class="pdp-media-item" href="${esc(m.href || '#')}" target="_blank" rel="noopener">${m.image_url ? `<img src="${esc(m.image_url)}" alt="${esc(m.name)}">` : `<span class="pdp-media-name">${esc(m.name)}</span>`}</a>`).join('')}
+      </div>
+    </div>
+  </section>` : ''}
+
+  <section class="pdp-related">
+    <div class="pdp-related-inner">
+      <h2>You may also like</h2>
+      ${related.length ? `
+        <div class="pdp-related-grid">
+          ${related.map(r => {
+            const href = r.slug.includes('sticker') ? `/stickers/${r.slug}` : `/books/${r.slug}`
+            const sBadge = r.compareAt ? `<span class="pdp-related-badge">-${Math.round((1 - r.price / r.compareAt) * 100)}%</span>` : ''
+            return `<a class="pdp-related-card" href="${href}">
+              ${sBadge}
+              <div class="pdp-related-cover"><img src="${esc(r.image)}" alt="${esc(r.title)}"></div>
+              <h4>${esc(r.title)}</h4>
+              <p class="pdp-related-price">From ${money(r.price)}${r.compareAt ? ` <s class="pdp-related-was">${money(r.compareAt)}</s>` : ''}</p>
+            </a>`
+          }).join('')}
+        </div>` : `<p class="pdp-related-empty">No related products yet — admins can pick any 3 from the editor.</p>`}
+    </div>
+  </section>
+
+  <section class="pdp-faqs">
+    <div class="pdp-faqs-inner">
+      <h2>Frequently Asked Questions</h2>
+      <div class="pdp-faqs-list">
+        ${faqs.map(f => `<details class="pdp-faq"><summary>${esc(f.question)}<span class="pdp-faq-chev">›</span></summary><p>${esc(f.answer)}</p></details>`).join('')}
+      </div>
+    </div>
+  </section>
+  `
+}
+
+function trustIcon(name: string) {
+  switch (name) {
+    case 'globe':
+      return '<i class="fas fa-globe"></i>'
+    case 'shield':
+      return '<i class="fas fa-shield-halved"></i>'
+    default:
+      return '<i class="fas fa-wand-magic-sparkles"></i>'
+  }
+}

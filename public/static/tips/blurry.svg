@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+  <rect width="200" height="200" fill="#888"/>
+  <g filter="blur(8px)">
+    <circle cx="100" cy="80" r="40" fill="#ddd"/>
+    <rect x="40" y="120" width="120" height="80" rx="20" fill="#bbb"/>
+  </g>
+  <text x="100" y="185" text-anchor="middle" font-family="Figtree" font-size="14" fill="#fff" font-weight="700">Blurry</text>
+</svg>
