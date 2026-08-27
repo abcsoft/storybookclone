@@ -173,11 +173,19 @@ h1, h2, h3 { letter-spacing: -.03em; line-height: 1.08; }
   padding: 6px 10px; border-radius: 8px; z-index: 1;
 }
 .badge.gold { background: var(--gold); color: #111; }
-.product-card .meta { padding: 14px 16px 18px; }
+.product-card .product-link { display: block; }
+.product-card .meta { padding: 14px 16px 8px; }
 .product-card h3 { margin: 0 0 6px; font-size: 18px; }
 .product-card .tagline { color: var(--muted); font-size: 14px; margin: 0 0 10px; min-height: 40px; }
 .price { font-weight: 800; }
 .price s { color: #9a90a6; font-weight: 600; margin-right: 6px; }
+.product-actions { padding: 0 16px 18px; }
+.product-actions .personalise-link {
+  width: 100%; border-radius: 8px; padding: 11px 14px; text-align: center;
+  font-size: 14px; box-shadow: 0 6px 14px rgba(155, 61, 224, .16);
+}
+.product-actions .personalise-link:hover { transform: translateY(-1px); }
+
 .how { background: var(--soft); }
 .steps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 24px; }
 .step { text-align: center; padding: 10px; }

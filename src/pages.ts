@@ -8,7 +8,7 @@ export function productCard(p: Product) {
   const sale = p.compareAt ? `<span class="badge">-${Math.round((1 - p.price / p.compareAt) * 100)}%</span>` : ''
   const href = p.category === 'sticker' ? `/stickers/${p.slug}` : `/books/${p.slug}`
   return `<article class="product-card">
-    <a href="${href}">
+    <a class="product-link" href="${href}">
       ${sale}
       <div class="cover"><img src="${esc(p.image)}" alt="${esc(p.title)} cover"></div>
       <div class="meta">
@@ -17,6 +17,9 @@ export function productCard(p: Product) {
         <p class="price">${p.compareAt ? `<s>${money(p.compareAt)}</s>` : ''} From ${money(p.price)}</p>
       </div>
     </a>
+    <div class="product-actions">
+      <a class="btn btn-purple personalise-link" href="${href}" aria-label="Personalise ${esc(p.title)}">Personalise Now</a>
+    </div>
   </article>`
 }
 
