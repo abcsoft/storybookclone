@@ -239,26 +239,29 @@ function tabMagic(p: Product, d: any) {
 
 // ---------- Trust ----------
 function tabTrust(p: Product, d: any) {
-  const rows = d.trust.map((t: any) => `
+  const ICON_OPTS = [
+    ['sparkle', 'Sparkle'],
+    ['globe',   'Globe'],
+    ['shield',  'Shield']
+  ]
+  const makeIconSelect = (current: string) =>
+    ICON_OPTS.map(([val, lab]) => `<option value="${val}" ${current === val ? 'selected' : ''}>${lab}</option>`).join('')
+  const rows = d.trust.map((tr: any) => `
     <form class="a-form a-row-form" method="post" action="/admin/products/${p.id}/pdp/trust">
-      <input type="hidden" name="id" value="${t.id}">
-      ${row('Title', 'title', 'text', t.title)}
-      ${area('Body', 'body', t.body, 3)}
-      <label>Icon<select name="icon">{ICON_OPTIONS}</select></label>
-      ${row('Sort', 'sort_order', 'number', t.sort_order)}
+      <input type="hidden" name="id" value="${tr.id}">
+      ${row('Title', 'title', 'text', tr.title)}
+      ${area('Body', 'body', tr.body, 3)}
+      <label>Icon<select name="icon">${makeIconSelect(tr.icon)}</select></label>
+      ${row('Sort', 'sort_order', 'number', tr.sort_order)}
       <div class="a-form-actions">
         <button class="a-btn ghost" type="submit">Save</button>
     </form>
     <form class="a-inline-form" method="post" action="/admin/products/${p.id}/pdp/trust/delete" onsubmit="return confirm('Delete?')">
-      <input type="hidden" name="id" value="${t.id}">
+      <input type="hidden" name="id" value="${tr.id}">
       <button class="a-btn danger" type="submit">Delete</button>
     </form>
     </div>
-  `).join('').replace(/\{ICON_OPTIONS\}/g, [
-    ['sparkle', 'Sparkle'],
-    ['globe', 'Globe'],
-    ['shield', 'Shield']
-  ].map(([k, l]) => `<option value="${k}" ${t.icon === k ? 'selected' : ''}>${l}</option>`).join(''))
+  `).join('')
 
   return `<section class="a-card pdp-tab" data-tab="trust" hidden>
     <h2>"Why 100K+ parents trust WonderWraps" cards</h2>
