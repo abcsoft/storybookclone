@@ -156,67 +156,223 @@ export function productDetailPage(d: PdpData, pathPrefix: string) {
   </section>
 
   <section class="pdp-personalise" id="personalise">
-    <div class="pdp-personalise-inner">
-      <div class="pdp-personalise-copy">
-        <h2>Start Personalising</h2>
-        <p>${esc(isSticker ? 'Personalise your sticker pack by uploading your child\'s photo. Review the order, name, and the Sticker Pack style. Once you’re ready, just add it to your cart.' : 'Personalise your storybook by uploading your child\'s photo. Review the order, name, and language. Once you’re ready, just add it to your cart.')}</p>
-        <div class="pdp-step-row">
-          ${steps.map(s => `
-            <div class="pdp-step">
-              <div class="pdp-step-num">${s.step_no}</div>
-              <div>
-                <h4>${esc(s.title)}</h4>
-                <p>${esc(s.body)}</p>
+    <div class="pdp-personalise-card">
+      <div class="pdp-personalise-grid">
+        <!-- Left Column: Instructions & 3 Horizontal Steps -->
+        <div class="pdp-personalise-left">
+          <h2 class="pdp-personalise-title">Start Personalising</h2>
+          <p class="pdp-personalise-desc">
+            Personalise your ${isSticker ? 'sticker pack' : 'storybook'} by uploading your child’s photo. Preview the ${isSticker ? 'stickers' : 'book'}, place your order, we’ll print and deliver it to your home.
+          </p>
+
+          <div class="pdp-steps-horizontal">
+            <!-- Step 1 -->
+            <div class="pdp-step-col">
+              <div class="pdp-step-visual">
+                <div class="pdp-icon-circle dashed" title="Upload">
+                  <i class="fas fa-arrow-up-from-bracket"></i>
+                </div>
+                <div class="pdp-step-avatar">
+                  <img src="/static/img/step-child-redhair.png" alt="Upload Child's Picture" class="pdp-step-img step-img-1">
+                </div>
               </div>
-            </div>`).join('')}
+              <div class="pdp-step-label">
+                <span class="pdp-step-pill">1</span>
+                <span class="pdp-step-text">Upload Child's Picture</span>
+              </div>
+            </div>
+
+            <div class="pdp-step-divider"></div>
+
+            <!-- Step 2 -->
+            <div class="pdp-step-col">
+              <div class="pdp-step-visual">
+                <div class="pdp-icon-circle dashed" title="Checkmark">
+                  <i class="fas fa-check"></i>
+                </div>
+                <div class="pdp-step-avatar book-thumb">
+                  <img src="${p.slug.includes('portugal') ? '/static/img/cover-portugal.webp' : (gallery[0]?.image_url || '/static/img/step-book-preview.png')}" alt="Preview Book and Order" class="pdp-step-img step-img-2">
+                </div>
+              </div>
+              <div class="pdp-step-label">
+                <span class="pdp-step-pill">2</span>
+                <span class="pdp-step-text">${isSticker ? 'Preview Stickers and Order' : 'Preview Book and Order'}</span>
+              </div>
+            </div>
+
+            <div class="pdp-step-divider"></div>
+
+            <!-- Step 3 -->
+            <div class="pdp-step-col">
+              <div class="pdp-step-visual">
+                <div class="pdp-icon-circle dashed" title="Delivery Box">
+                  <i class="fas fa-box"></i>
+                </div>
+                <div class="pdp-step-avatar">
+                  <img src="/static/img/step-delivered.png" alt="Premium Print Delivered" class="pdp-step-img step-img-3">
+                </div>
+              </div>
+              <div class="pdp-step-label">
+                <span class="pdp-step-pill">3</span>
+                <span class="pdp-step-text">Premium Print, Delivered to Your Door</span>
+              </div>
+            </div>
+          </div>
         </div>
 
-        <form class="pdp-form" id="personalise-form" data-slug="${p.slug}" data-title="${esc(p.title)}" data-image="${esc(p.image)}" data-kind="${p.category}" data-price="${p.price}">
-          <h3>Child's Photo</h3>
-          <label class="pdp-upload" for="photo">
-            <i class="fas fa-cloud-arrow-up"></i>
-            <span><strong>${isSticker ? 'Child\'s Photo' : 'Upload'}</strong><em>Drag photo or click to upload</em></span>
-            <input id="photo" name="photo" type="file" accept="image/jpeg,image/png,image/webp" required>
-          </label>
-          <img id="photo-preview" class="pdp-photo-preview" alt="Photo preview" hidden>
-          <p class="pdp-photo-status" id="upload-status" hidden></p>
+        <!-- Right Column: Personalisation Form Card -->
+        <div class="pdp-personalise-right">
+          <form class="pdp-form-card" id="personalise-form" data-slug="${p.slug}" data-title="${esc(p.title)}" data-image="${esc(p.image)}" data-kind="${p.category}" data-price="${p.price}">
+            
+            <!-- Uploaded Avatar Circle with 'X' close/delete button -->
+            <div class="pdp-avatar-wrapper">
+              <div class="pdp-avatar-container" id="avatar-container" title="Click to upload or change photo">
+                <img id="photo-preview" src="/static/img/avatar-sample.png" alt="Child photo preview" class="pdp-avatar-img">
+                <div class="pdp-avatar-empty" id="avatar-empty" style="display: none;">
+                  <i class="fas fa-camera"></i>
+                  <span>Upload Photo</span>
+                </div>
+                <button type="button" class="pdp-avatar-remove-btn" id="photo-remove-btn" aria-label="Remove or change photo" title="Remove photo">
+                  <i class="fas fa-xmark"></i>
+                </button>
+              </div>
+              <input id="photo" name="photo" type="file" accept="image/jpeg,image/png,image/webp" class="sr-only">
+            </div>
 
-          <div class="pdp-form-grid">
-            <div>
-              <label for="child-name">Child's name</label>
-              <input id="child-name" name="childName" required maxlength="24" placeholder="e.g. Maya">
+            <p class="pdp-photo-status" id="upload-status" hidden></p>
+
+            <!-- Book Language Field -->
+            <div class="pdp-field-group">
+              <label for="lang" class="pdp-field-label">Book Language</label>
+              <div class="pdp-select-wrapper">
+                <select id="lang" name="language" class="pdp-input pdp-select">
+                  ${languages.map(l => `<option value="${esc(l)}" ${l === 'English' ? 'selected' : ''}>${esc(l)}</option>`).join('')}
+                </select>
+                <i class="fas fa-chevron-down pdp-select-arrow" aria-hidden="true"></i>
+              </div>
             </div>
-            <div>
-              <label for="child-age">Age</label>
-              <input id="child-age" name="childAge" type="number" min="1" max="14" required value="6">
+
+            <!-- 2-Col Grid: Child's Name & Child's Age -->
+            <div class="pdp-form-row">
+              <div class="pdp-field-group pdp-name-field">
+                <label for="child-name" class="pdp-field-label">Child's Name</label>
+                <div class="pdp-input-with-counter">
+                  <input id="child-name" name="childName" required maxlength="25" placeholder="e.g. gando" value="gando" class="pdp-input" autocomplete="off">
+                  <span class="pdp-char-count" id="name-counter">5/25</span>
+                </div>
+              </div>
+
+              <div class="pdp-field-group pdp-age-field">
+                <label for="child-age" class="pdp-field-label">Child's Age</label>
+                <div class="pdp-age-input-wrapper">
+                  <input id="child-age" name="childAge" type="number" min="1" max="18" required value="6" class="pdp-input pdp-age-input">
+                  <div class="pdp-age-spinners">
+                    <button type="button" class="pdp-age-btn pdp-age-up" id="age-up" aria-label="Increase age"><i class="fas fa-chevron-up"></i></button>
+                    <button type="button" class="pdp-age-btn pdp-age-down" id="age-down" aria-label="Decrease age"><i class="fas fa-chevron-down"></i></button>
+                  </div>
+                </div>
+              </div>
             </div>
-            <div>
-              <label for="lang">Language</label>
-              <select id="lang" name="language">${languages.map(l => `<option>${esc(l)}</option>`).join('')}</select>
+
+            <!-- Optional dedication (hidden or expandable) -->
+            <input type="hidden" id="dedication" name="dedication" value="">
+
+            <!-- Full-width CTA Button -->
+            <button class="pdp-btn-preview" type="submit" id="personalise-btn">
+              ${isSticker ? 'Preview Stickers' : 'Preview Book'}
+            </button>
+
+            <!-- Privacy & Security Notice -->
+            <div class="pdp-security-badge">
+              <div class="pdp-security-icon">
+                <i class="fas fa-lock"></i>
+              </div>
+              <div class="pdp-security-text">
+                <p class="pdp-sec-main">Private and secure, no third-party data use.</p>
+                <p class="pdp-sec-sub">Your images and information stay protected.</p>
+              </div>
+            </div>
+
+          </form>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Interactive Storybook Live Preview Modal -->
+  <div id="book-preview-modal" class="book-modal-backdrop" hidden>
+    <div class="book-modal-dialog">
+      <header class="book-modal-header">
+        <div class="book-modal-title-wrap">
+          <span class="book-modal-badge">✨ Live Book Preview</span>
+          <h3 id="modal-book-title">${esc(p.title)}</h3>
+          <p class="book-modal-sub">Personalised for <strong id="modal-child-name">gando</strong> (Age <span id="modal-child-age">6</span>) · <span id="modal-book-lang">English</span></p>
+        </div>
+        <button type="button" class="book-modal-close" id="modal-close-btn" aria-label="Close preview">&times;</button>
+      </header>
+
+      <div class="book-modal-body">
+        <div class="book-preview-stage">
+          <div class="book-page-spread" id="book-page-spread">
+            <!-- Left page: Story text -->
+            <div class="book-page book-page-left">
+              <div class="book-page-corner"></div>
+              <div class="book-story-content">
+                <span class="book-chapter-tag" id="preview-chapter">CHAPTER 1</span>
+                <h4 id="preview-page-headline">The Dream of the Final</h4>
+                <p id="preview-story-text">Months of sweat and practice in the wind and rain have led to this single moment. The stadium lights shine bright over Lisbon as <strong>gando</strong> steps onto the pitch wearing the legendary number 7 jersey!</p>
+                <div class="book-quote-box">
+                  <i class="fas fa-quote-left"></i>
+                  <span id="preview-quote-text">“Believe in every pass, because today a new legend is born!”</span>
+                </div>
+              </div>
+              <div class="book-page-num" id="preview-page-num-left">Page 1</div>
+            </div>
+
+            <!-- Right page: Illustrated art with child's face -->
+            <div class="book-page book-page-right">
+              <div class="book-art-wrapper">
+                <img src="${esc(p.image)}" alt="Story page illustration" id="preview-page-art" class="book-art-img">
+                <div class="book-hero-face-overlay" id="preview-face-overlay">
+                  <div class="book-face-halo"></div>
+                  <img src="/static/img/avatar-sample.png" alt="Hero face" id="preview-child-face" class="book-child-face">
+                </div>
+                <div class="book-art-caption">
+                  <i class="fas fa-star"></i> <span id="preview-art-caption">Hero of Portugal: gando</span>
+                </div>
+              </div>
+              <div class="book-page-num" id="preview-page-num-right">Page 2</div>
             </div>
           </div>
 
-          <label for="dedication">Dedication (optional)</label>
-          <textarea id="dedication" name="dedication" rows="2" maxlength="200" placeholder="For Maya, with love from Grandma"></textarea>
-
-          <p class="pdp-secure"><i class="fas fa-lock"></i> Private and secure. No third-party data use. All images are processed securely and deleted.</p>
-          <a class="pdp-manual" href="#manual"><i class="fas fa-pen"></i> or continue with manual creation</a>
-
-          <button class="btn btn-purple pdp-personalise-submit" type="submit" id="personalise-btn">Personalise Now</button>
-        </form>
+          <!-- Page Navigation -->
+          <div class="book-nav-bar">
+            <button type="button" class="btn-book-nav" id="btn-prev-page" disabled><i class="fas fa-arrow-left"></i> Previous</button>
+            <div class="book-nav-dots" id="book-nav-dots">
+              <button class="nav-dot active" data-page="0">1</button>
+              <button class="nav-dot" data-page="1">2</button>
+              <button class="nav-dot" data-page="2">3</button>
+              <button class="nav-dot" data-page="3">4</button>
+            </div>
+            <button type="button" class="btn-book-nav" id="btn-next-page">Next <i class="fas fa-arrow-right"></i></button>
+          </div>
+        </div>
       </div>
 
-      <aside class="pdp-tips-card">
-        <header><span class="pdp-tips-sparkle">✨</span><h3>TIPS</h3></header>
-        <div class="pdp-tips-grid">
-          ${tips.filter(t => t.kind === 'bad').map(t => `<figure class="pdp-tip pdp-tip-bad"><span class="pdp-tip-img pdp-tip-bad-img" aria-hidden="true">${esc(t.label)}</span><figcaption>${esc(t.label)}</figcaption></figure>`).join('')}
-          <div class="pdp-tip-spacer"></div>
-          ${tips.filter(t => t.kind === 'good').map(t => `<figure class="pdp-tip pdp-tip-good"><span class="pdp-tip-img pdp-tip-good-img" aria-hidden="true">${esc(t.label)}</span><figcaption>${esc(t.label)}</figcaption></figure>`).join('')}
+      <footer class="book-modal-footer">
+        <div class="book-modal-price">
+          <span class="price-label">Hardcover Keepsake</span>
+          <span class="price-value">${money(p.price)}</span>
         </div>
-        <p class="pdp-tips-foot"><i class="fas fa-shield-halved"></i> Private and secure. No third-party data use. All images are processed securely and deleted.</p>
-      </aside>
+        <div class="book-modal-actions">
+          <button type="button" class="btn btn-outline" id="btn-edit-personalise">Edit Details</button>
+          <button type="button" class="btn btn-purple btn-add-cart-modal" id="btn-confirm-order">
+            <i class="fas fa-cart-shopping"></i> Add to Cart & Checkout
+          </button>
+        </div>
+      </footer>
     </div>
-  </section>
+  </div>
 
   ${magic.heading ? `
   <section class="pdp-magic">
