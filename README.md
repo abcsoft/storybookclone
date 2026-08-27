@@ -18,7 +18,7 @@ A full-stack clone of [wonderwraps.com](https://wonderwraps.com/) — personaliz
 ## URLs
 ### Storefront
 - **Home**: `/` · **Books**: `/books` (`?gender=girl|boy`, `?career=1`, `?q=`) · **Ages**: `/books/age/2-4|4-6|6-8`
-- **Product**: `/books/:slug`, `/stickers/:slug` · **Stickers**: `/stickers`
+- **Product**: `/books/:slug` (books and legacy sticker URLs), `/stickers/:slug` · **Stickers**: `/stickers`
 - **Commerce**: `/cart`, `/checkout`, `/order-success?id=`
 - **Account**: `/login`, `/register`, `/forgot-password`, `/logout`, `/my-books`
 - **Help/Legal/Blog**: `/faqs`, `/support`, `/contact`, `/support/privacy-policy`, `/support/terms-and-conditions`, `/blog`, `/blog/:slug`
@@ -56,6 +56,11 @@ A full-stack clone of [wonderwraps.com](https://wonderwraps.com/) — personaliz
 2. Cart shows server-verified totals; 2+ books auto-applies EXTRA20 (20% off books).
 3. Checkout (guest or account) → order appears in **My Books** and in **admin → Orders**.
 4. Admin reviews photos, marks previews ready, moves the order through the pipeline.
+
+## Recent UI and flow updates
+- Product pages now mirror the reference flow with a sticky gallery, sale pricing, review summary, benefits, upload dropzone, expandable photo tips, privacy messaging, and a three-step personalisation section.
+- `/books/girls-sticker-pack` now renders the sticker product page directly, matching the reference URL while preserving `/stickers/girls-sticker-pack`.
+- Personalisation requires a child name and successfully uploaded JPG, PNG, or WEBP photo before an item can enter the cart; the order API validates this server-side too.
 
 ## Deployment
 - **Platform**: Cloudflare Pages + D1 + R2

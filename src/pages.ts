@@ -279,48 +279,57 @@ export function ageCatalog(min: number, max: number, label: string, items: Produ
 }
 
 export function productPage(p: Product, pathPrefix: string, related: Product[] = []) {
+  const sale = p.compareAt ? `-${Math.round((1 - p.price / p.compareAt) * 100)}%` : ''
+  const isSticker = p.category === 'sticker'
   return `
-  <section class="section">
+  <section class="product-hero">
     <div class="wrap pdp">
-      <div class="pdp-cover">
-        ${p.compareAt ? `<span class="badge">-${Math.round((1 - p.price / p.compareAt) * 100)}%</span>` : ''}
-        <img src="${esc(p.image)}" alt="${esc(p.title)} cover">
+      <div class="pdp-gallery">
+        <div class="pdp-cover">
+          ${sale ? `<span class="badge sale-badge">${sale}</span>` : ''}
+          <img src="${esc(p.image)}" alt="${esc(p.title)} product preview">
+        </div>
+        <p class="gallery-note"><i class="fas fa-shield-heart"></i> Private and secure. Your photo is only used to personalise your order.</p>
       </div>
-      <div>
-        <p class="eyebrow">${p.category === 'sticker' ? 'Sticker pack' : 'Personalised storybook'}</p>
+      <div class="pdp-details">
+        <p class="eyebrow">${isSticker ? 'Personalised sticker pack' : 'Personalised storybook'}</p>
         <h1>${esc(p.title)}</h1>
-        <p>${stars(p.rating)} (${p.reviews.toLocaleString()} reviews)</p>
-        <p>${esc(p.tagline)}</p>
-        <p>${esc(p.story)}</p>
-        ${p.traits.map(t => `<div class="trait"><i class="fas fa-check-circle"></i><span>${esc(t)}</span></div>`).join('')}
-        <p class="trait"><i class="fas fa-child"></i><span>Perfect for kids ages <strong>${esc(p.ages)}</strong></span></p>
-        <p class="trait"><i class="fas fa-book-open"></i><span>${p.pages} beautifully illustrated pages</span></p>
-        <p class="price" style="font-size:28px;margin:18px 0">From ${money(p.price)} ${p.compareAt ? `<s>${money(p.compareAt)}</s>` : ''}</p>
-        <form class="form" id="personalise-form" data-slug="${p.slug}" data-title="${esc(p.title)}" data-image="${esc(p.image)}" data-kind="${p.category}">
-          <label for="child-name">Child's name</label>
-          <input id="child-name" name="childName" required maxlength="24" placeholder="e.g. Maya">
-          <label for="child-age">Age</label>
-          <input id="child-age" name="childAge" type="number" min="1" max="14" required value="6">
+        <p class="review-line">${stars(p.rating)} <strong>${p.reviews.toLocaleString()}</strong> Reviews</p>
+        <p class="pdp-tagline">${esc(p.tagline)}</p>
+        <p class="pdp-description">${esc(p.description)}</p>
+        <div class="pdp-price"><strong>${money(p.price)}</strong> ${p.compareAt ? `<s>${money(p.compareAt)}</s><span class="limited">Limited Time</span>` : ''}</div>
+        <div class="pdp-benefits">
+          ${p.traits.slice(0, 3).map(t => `<span><i class="fas fa-check-circle"></i>${esc(t)}</span>`).join('')}
+        </div>
+        <form class="personalise-panel" id="personalise-form" data-slug="${p.slug}" data-title="${esc(p.title)}" data-image="${esc(p.image)}" data-kind="${p.category}">
+          <div class="panel-heading"><span class="step-bubble">1</span><div><h2>Start Personalising</h2><p>Upload your child's photo to get started.</p></div></div>
+          <div class="form-grid">
+            <div><label for="child-name">Child's name</label><input id="child-name" name="childName" required maxlength="24" placeholder="e.g. Maya"></div>
+            <div><label for="child-age">Age</label><input id="child-age" name="childAge" type="number" min="1" max="14" required value="6"></div>
+          </div>
+          <label for="photo">Child's Photo</label>
+          <label class="upload-dropzone" for="photo">
+            <i class="fas fa-cloud-arrow-up"></i><strong>Drop a photo or click to upload</strong><span>JPG, PNG or WEBP · Maximum 5MB</span>
+            <input id="photo" name="photo" type="file" accept="image/jpeg,image/png,image/webp" required>
+          </label>
+          <div class="photo-result"><img id="photo-preview" class="preview-face" alt="Photo preview" hidden><p class="tiny" id="upload-status" hidden></p></div>
+          <details class="photo-tips"><summary><i class="fas fa-lightbulb"></i> Photo tips for the best result</summary><ul><li>Use a clear, front-facing photo</li><li>Make sure the face is not covered by food or accessories</li><li>Avoid far-away photos or side angles</li></ul></details>
           <label for="lang">Language</label>
           <select id="lang" name="language">${languages.map(l => `<option>${l}</option>`).join('')}</select>
           <label for="dedication">Dedication (optional)</label>
           <textarea id="dedication" name="dedication" rows="2" maxlength="200" placeholder="For Maya, with love from Grandma"></textarea>
-          <label for="photo">Child's photo</label>
-          <input id="photo" name="photo" type="file" accept="image/*">
-          <p class="tiny">Clear front-facing photo. No eating, accessories, or far-away side angles. Max 5MB.</p>
-          <p class="tiny" id="upload-status" hidden></p>
-          <img id="photo-preview" class="preview-face" alt="Photo preview" hidden>
-          <button class="btn btn-purple" type="submit" id="personalise-btn">Personalise now</button>
+          <button class="btn btn-purple personalise-submit" type="submit" id="personalise-btn"><i class="fas fa-wand-magic-sparkles"></i> Personalise Now</button>
+          <p class="tiny secure-note"><i class="fas fa-lock"></i> Your image and information stay protected. No third-party data use.</p>
         </form>
       </div>
     </div>
   </section>
-  <section class="section how">
-    <div class="wrap">
-      <h2>You may also like</h2>
-      <div class="grid-4">${related.map(productCard).join('')}</div>
+  <section class="section how product-steps">
+    <div class="wrap"><div class="section-head"><div><p class="eyebrow">Simple and magical</p><h2>From photo to personalised joy</h2></div></div>
+      <div class="steps"><article class="step"><div class="num">1</div><h3>Upload Child's Picture</h3><p>Choose a clear photo that looks like them.</p></article><article class="step"><div class="num">2</div><h3>Preview and Order</h3><p>Review your personalisation before checkout.</p></article><article class="step"><div class="num">3</div><h3>Printed with Care</h3><p>We create and deliver your keepsake.</p></article></div>
     </div>
   </section>
+  <section class="section"><div class="wrap"><h2>You may also like</h2><div class="grid-4">${related.map(productCard).join('')}</div></div></section>
   ${ctaBlock()}
   `
 }

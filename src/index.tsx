@@ -252,9 +252,10 @@ app.get('/stickers', async (c) =>
 
 app.get('/books/:slug', async (c) => {
   const p = await getProductBySlug(c.env.DB, c.req.param('slug'))
-  if (!p || p.category !== 'book') return html(c, 'Not found - Wonder Wraps', notFoundPage())
-  const related = (await queryProducts(c.env.DB, { category: 'book' })).filter((x) => x.slug !== p.slug).slice(0, 4)
-  return html(c, `${p.title} - Wonder Wraps`, productPage(p, '/books', related), 'books', p.description)
+  if (!p) return html(c, 'Not found - Wonder Wraps', notFoundPage())
+  const related = (await queryProducts(c.env.DB, { category: p.category })).filter((x) => x.slug !== p.slug).slice(0, 4)
+  const active = p.category === 'sticker' ? 'stickers' : 'books'
+  return html(c, `${p.title} - Wonder Wraps`, productPage(p, p.category === 'sticker' ? '/stickers' : '/books', related), active, p.description)
 })
 
 app.get('/stickers/:slug', async (c) => {
@@ -404,8 +405,8 @@ app.post('/api/newsletter', async (c) => {
 app.post('/api/upload-photo', async (c) => {
   const body = await c.req.parseBody()
   const file = body.photo
-  if (!(file instanceof File)) return c.json({ error: 'No photo received' }, 400)
-  if (!file.type.startsWith('image/')) return c.json({ error: 'Only image files are allowed' }, 400)
+  if (!(file instanceof File) || file.size === 0) return c.json({ error: 'No photo received' }, 400)
+  if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) return c.json({ error: 'Please upload a JPG, PNG, or WEBP image' }, 400)
   if (file.size > 5 * 1024 * 1024) return c.json({ error: 'Photo must be under 5MB' }, 400)
   if (!c.env.PHOTOS) return c.json({ error: 'Photo storage unavailable' }, 503)
   const ext = (file.type.split('/')[1] || 'jpg').replace('jpeg', 'jpg')
@@ -438,6 +439,8 @@ app.post('/api/orders', async (c) => {
   const body = await c.req.json<any>()
   const items = Array.isArray(body.items) ? body.items : []
   if (!items.length) return c.json({ error: 'Cart is empty' }, 400)
+  const invalidPersonalisation = items.find((item: any) => !String(item.childName || '').trim() || !String(item.photoKey || '').startsWith('uploads/'))
+  if (invalidPersonalisation) return c.json({ error: 'Each item needs a child name and uploaded photo.' }, 400)
   const fullName = String(body.fullName || '').trim()
   const email = String(body.email || '').toLowerCase().trim()
   const address = String(body.address || '').trim()

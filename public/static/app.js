@@ -108,21 +108,29 @@ if (form) {
   form.addEventListener('submit', async (e) => {
     e.preventDefault()
     btn.disabled = true
-    btn.textContent = 'Adding…'
+    btn.textContent = 'Uploading…'
     let photoKey = ''
     const file = photo?.files?.[0]
-    if (file) {
-      if (status) { status.hidden = false; status.textContent = 'Uploading photo…' }
-      const fd = new FormData()
-      fd.append('photo', file)
-      try {
-        const up = await fetch('/api/upload-photo', { method: 'POST', body: fd })
-        const upData = await up.json()
-        if (!up.ok) throw new Error(upData.error || 'Upload failed')
-        photoKey = upData.key
-      } catch (err) {
-        if (status) status.textContent = 'Photo upload failed — continuing without it.'
-      }
+    if (!file) {
+      if (status) { status.hidden = false; status.textContent = 'Please upload a photo before continuing.' }
+      btn.disabled = false
+      btn.textContent = 'Personalise Now'
+      photo?.focus()
+      return
+    }
+    if (status) { status.hidden = false; status.textContent = 'Uploading photo…' }
+    const fd = new FormData()
+    fd.append('photo', file)
+    try {
+      const up = await fetch('/api/upload-photo', { method: 'POST', body: fd })
+      const upData = await up.json()
+      if (!up.ok) throw new Error(upData.error || 'Upload failed')
+      photoKey = upData.key
+    } catch (err) {
+      if (status) status.textContent = err.message || 'Photo upload failed. Please try again.'
+      btn.disabled = false
+      btn.textContent = 'Personalise Now'
+      return
     }
     const data = new FormData(form)
     const item = {
