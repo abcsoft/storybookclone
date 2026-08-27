@@ -9,6 +9,7 @@ function adminPage(opts: { title: string; active: string; body: string }) {
     ['orders', '/admin/orders', 'fa-box-open', 'Orders'],
     ['products', '/admin/products', 'fa-book', 'Products'],
     ['discounts', '/admin/discounts', 'fa-tag', 'Discounts'],
+    ['ai-settings', '/admin/ai-settings', 'fa-wand-magic-sparkles', 'AI & Book API'],
     ['users', '/admin/users', 'fa-users', 'Users'],
     ['messages', '/admin/messages', 'fa-envelope', 'Inbox']
   ] as const
@@ -384,5 +385,121 @@ export function adminMessages(rows: any[], flash?: string) {
       </div>`
       )
       .join('') || '<p class="muted">No messages.</p>'}`
+  })
+}
+
+export type AiSettingsRow = {
+  api_provider: string
+  api_endpoint: string
+  api_key: string
+  model: string
+  style_preset: string
+  prompt_template: string
+  face_swap_strength: number
+  hardcover_price: number
+  softcover_price: number
+  enable_ai_preview: number
+}
+
+export function adminAiSettings(settings: AiSettingsRow, flash?: string) {
+  return adminPage({
+    title: 'AI & Book API Settings',
+    active: 'ai-settings',
+    body: `
+    <h1>🤖 AI Book Generator & WonderWraps API Settings</h1>
+    <p class="muted">Configure the external AI storybook generation API (WonderWraps API, OpenAI, Replicate Face-Swap, Fal.ai, or Custom Endpoint) to generate real personalized book covers & story spreads.</p>
+    
+    ${flash ? `<p class="a-notice ok">${esc(flash)}</p>` : ''}
+
+    <form class="a-card a-form" method="post" action="/admin/ai-settings">
+      <h2>API Provider Configuration</h2>
+      <div class="a-grid2">
+        <label>API Provider
+          <select name="api_provider" id="api_provider">
+            <option value="wonderwraps" ${settings.api_provider === 'wonderwraps' ? 'selected' : ''}>WonderWraps API (Official)</option>
+            <option value="openai" ${settings.api_provider === 'openai' ? 'selected' : ''}>OpenAI (DALL-E 3 & GPT-4o)</option>
+            <option value="replicate" ${settings.api_provider === 'replicate' ? 'selected' : ''}>Replicate (InstantID / Face-Swap)</option>
+            <option value="fal" ${settings.api_provider === 'fal' ? 'selected' : ''}>Fal.ai (Flux Fast Storybook)</option>
+            <option value="custom" ${settings.api_provider === 'custom' ? 'selected' : ''}>Custom Webhook / REST Endpoint</option>
+          </select>
+        </label>
+        <label>API Endpoint URL *
+          <input name="api_endpoint" required value="${esc(settings.api_endpoint || 'https://api.wonderwraps.com/v1/generate-book')}" placeholder="https://api.wonderwraps.com/v1/generate-book">
+        </label>
+      </div>
+
+      <div class="a-grid2">
+        <label>API Key / Bearer Secret Token
+          <input name="api_key" type="password" value="${esc(settings.api_key || '')}" placeholder="sk-live-… or ww_sec_…" autocomplete="off">
+        </label>
+        <label>AI Model Identifier
+          <input name="model" value="${esc(settings.model || 'wonderwraps-v2')}" placeholder="e.g. wonderwraps-v2, dall-e-3, instantid-v1">
+        </label>
+      </div>
+
+      <div class="a-grid2">
+        <label>Art Style Preset
+          <select name="style_preset">
+            <option value="fairytale-watercolour" ${settings.style_preset === 'fairytale-watercolour' ? 'selected' : ''}>Fairytale Watercolour (Princess / Magic)</option>
+            <option value="disney-3d" ${settings.style_preset === 'disney-3d' ? 'selected' : ''}>3D Pixar / Disney Style</option>
+            <option value="classic-storybook" ${settings.style_preset === 'classic-storybook' ? 'selected' : ''}>Classic Vintage Storybook</option>
+            <option value="comic-vibrant" ${settings.style_preset === 'comic-vibrant' ? 'selected' : ''}>Vibrant Cartoon & Sports Hero</option>
+          </select>
+        </label>
+        <label>Face Swap / Resemblance Strength (0.1 – 1.0)
+          <input name="face_swap_strength" type="number" step="0.05" min="0.1" max="1.0" value="${settings.face_swap_strength || 0.85}">
+        </label>
+      </div>
+
+      <label>Story Prompt Template (supports: {childName}, {childAge}, {gender}, {bookTheme})
+        <textarea name="prompt_template" rows="3">${esc(settings.prompt_template || 'A magical children storybook illustration of {childName}, age {childAge}, exploring a fairytale castle in royal attire with gentle storybook lighting.')}</textarea>
+      </label>
+
+      <h2>Reader Page Cover Pricing</h2>
+      <div class="a-grid2">
+        <label>Hardcover Price (USD)
+          <input name="hardcover_price" type="number" step="0.01" min="0" value="${settings.hardcover_price || 49.20}">
+        </label>
+        <label>Softcover Price (USD)
+          <input name="softcover_price" type="number" step="0.01" min="0" value="${settings.softcover_price || 34.20}">
+        </label>
+      </div>
+
+      <div class="a-checks">
+        <label><input type="checkbox" name="enable_ai_preview" ${settings.enable_ai_preview ? 'checked' : ''}> Enable Dynamic AI Generation on /my/books/ pages</label>
+      </div>
+
+      <div style="display:flex;gap:12px;margin-top:16px;align-items:center;">
+        <button class="a-btn" type="submit"><i class="fas fa-floppy-disk"></i> Save API Settings</button>
+        <button class="a-btn ghost" type="button" id="btn-test-api"><i class="fas fa-bolt"></i> Test API Connection</button>
+      </div>
+      <div id="api-test-output" style="margin-top:14px;padding:12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;font-family:monospace;font-size:12px;display:none;"></div>
+    </form>
+
+    <script>
+      document.getElementById('btn-test-api')?.addEventListener('click', async () => {
+        const out = document.getElementById('api-test-output');
+        out.style.display = 'block';
+        out.textContent = 'Testing connection to ' + (document.querySelector('input[name="api_endpoint"]')?.value || 'configured API') + '...';
+        try {
+          const res = await fetch('/api/admin/test-ai-connection', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+              endpoint: document.querySelector('input[name="api_endpoint"]')?.value,
+              provider: document.querySelector('select[name="api_provider"]')?.value,
+              apiKey: document.querySelector('input[name="api_key"]')?.value
+            })
+          });
+          const data = await res.json();
+          out.textContent = JSON.stringify(data, null, 2);
+          if (data.ok) out.style.borderColor = '#22c55e';
+          else out.style.borderColor = '#f59e0b';
+        } catch(e) {
+          out.textContent = 'Connection test error: ' + e.message;
+          out.style.borderColor = '#ef4444';
+        }
+      });
+    </script>`
   })
 }

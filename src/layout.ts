@@ -125,6 +125,7 @@ export function page(opts: {
   </footer>
   <script src="/static/app.js"></script>
   <script src="/static/pdp.js" defer></script>
+  <script src="/static/reader.js" defer></script>
 </body>
 </html>`
 }

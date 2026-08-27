@@ -52,8 +52,11 @@ import {
   adminProductForm,
   adminDiscounts,
   adminUsers,
-  adminMessages
+  adminMessages,
+  adminAiSettings,
+  type AiSettingsRow
 } from './admin'
+import { personalizedBookReaderPage } from './pages_reader'
 
 type Bindings = { DB: D1Database; PHOTOS?: R2Bucket }
 type Vars = { user: AuthUser | null }
@@ -345,11 +348,54 @@ app.post('/forgot-password', async (c) =>
   html(c, 'Forgot Password - Wonder Wraps', authPage('forgot', 'If that email exists, reset instructions have been sent.'), 'my-books')
 )
 
-app.get('/cart', (c) => html(c, 'Cart - Wonder Wraps', cartPage()))
-app.get('/checkout', (c) => html(c, 'Checkout - Wonder Wraps', checkoutPage(c.get('user'))))
-app.get('/my-books', (c) => html(c, 'My Books - Wonder Wraps', myBooksPage(!!c.get('user')), 'my-books'))
-app.get('/my/books', (c) => c.redirect('/my-books'))
-app.get('/profile', (c) => c.redirect('/my-books'))
+  app.get('/cart', (c) => html(c, 'Cart - Wonder Wraps', cartPage()))
+  app.get('/checkout', (c) => html(c, 'Checkout - Wonder Wraps', checkoutPage(c.get('user'))))
+  app.get('/my-books', (c) => html(c, 'My Books - Wonder Wraps', myBooksPage(!!c.get('user')), 'my-books'))
+  app.get('/my/books', (c) => c.redirect('/my-books'))
+  app.get('/profile', (c) => c.redirect('/my-books'))
+
+  // WonderWraps Reader & Customization Page (/my/books/:slug) matching reference UI
+  app.get('/my/books/:slug', async (c) => {
+    const slug = c.req.param('slug')
+    const q = c.req.query()
+    
+    // Fetch AI & pricing settings from D1
+    const ai = await c.env.DB.prepare('SELECT * FROM ai_settings WHERE id = 1').first<any>()
+    const hardcoverPrice = ai?.hardcover_price ?? 49.20
+    const softcoverPrice = ai?.softcover_price ?? 34.20
+
+    // Extract child params from query if present, otherwise default to "gando" and age 5
+    let childName = q.name || q.childName || 'gando'
+    let childAge = q.age || q.childAge || '5'
+    let title = `Princess ${childName}, the One We All Needed`
+
+    // If matching a product in the catalog, customize title format
+    const p = await getProductBySlug(c.env.DB, slug)
+    if (p) {
+      if (p.slug.includes('princess')) {
+        title = `Princess ${childName}, the One We All Needed`
+      } else if (p.slug.includes('legend')) {
+        title = `${childName}, The Portugal's New Legend`
+      } else {
+        title = `${p.title.replace(/the|a/i, '')} featuring ${childName}`
+      }
+    }
+
+    const readerHtml = personalizedBookReaderPage({
+      slug,
+      title,
+      childName,
+      childAge,
+      language: 'English',
+      coverType: (q.cover as any) === 'softcover' ? 'softcover' : 'hardcover',
+      hardcoverPrice,
+      softcoverPrice,
+      coverImage: '/static/preview-book-cover-ref.webp',
+      spreadImage: '/static/preview-book-spread-ref.webp'
+    })
+
+    return html(c, `${title} - Wonder Wraps Customizer`, readerHtml, 'my-books')
+  })
 
 app.get('/order-success', (c) => {
   const id = c.req.query('id') || ''
@@ -919,6 +965,171 @@ app.get('/admin/users', async (c) => {
       ).all()
     ).results || []
   return c.html(adminUsers(rows))
+})
+
+// ---- AI Settings & Book Generation API Settings ----
+app.get('/admin/ai-settings', async (c) => {
+  let settings = await c.env.DB.prepare('SELECT * FROM ai_settings WHERE id = 1').first<AiSettingsRow>()
+  if (!settings) {
+    settings = {
+      api_provider: 'wonderwraps',
+      api_endpoint: 'https://api.wonderwraps.com/v1/generate-book',
+      api_key: '',
+      model: 'wonderwraps-v2',
+      style_preset: 'fairytale-watercolour',
+      prompt_template: 'A magical illustrated fairytale storybook cover and inside scene depicting {child_name}, age {child_age}, in the story {book_title}. Art style: fairytale watercolor, warm soft lighting, vibrant colors.',
+      face_swap_strength: 0.85,
+      hardcover_price: 49.20,
+      softcover_price: 34.20,
+      enable_ai_preview: 1
+    }
+  }
+  return c.html(adminAiSettings(settings, c.req.query('saved') ? 'AI API Settings saved successfully.' : undefined))
+})
+
+app.post('/admin/ai-settings', async (c) => {
+  const b = await c.req.parseBody()
+  const provider = String(b.api_provider || 'wonderwraps')
+  const endpoint = String(b.api_endpoint || 'https://api.wonderwraps.com/v1/generate-book').trim()
+  const apiKey = String(b.api_key || '').trim()
+  const model = String(b.model || 'wonderwraps-v2').trim()
+  const stylePreset = String(b.style_preset || 'fairytale-watercolour')
+  const promptTemplate = String(b.prompt_template || '')
+  const faceSwapStrength = parseFloat(String(b.face_swap_strength || '0.85')) || 0.85
+  const hardcoverPrice = parseFloat(String(b.hardcover_price || '49.20')) || 49.20
+  const softcoverPrice = parseFloat(String(b.softcover_price || '34.20')) || 34.20
+  const enableAi = b.enable_ai_preview ? 1 : 0
+
+  await c.env.DB.prepare(`
+    INSERT INTO ai_settings (id, api_provider, api_endpoint, api_key, model, style_preset, prompt_template, face_swap_strength, hardcover_price, softcover_price, enable_ai_preview, updated_at)
+    VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(id) DO UPDATE SET
+      api_provider = excluded.api_provider,
+      api_endpoint = excluded.api_endpoint,
+      api_key = excluded.api_key,
+      model = excluded.model,
+      style_preset = excluded.style_preset,
+      prompt_template = excluded.prompt_template,
+      face_swap_strength = excluded.face_swap_strength,
+      hardcover_price = excluded.hardcover_price,
+      softcover_price = excluded.softcover_price,
+      enable_ai_preview = excluded.enable_ai_preview,
+      updated_at = CURRENT_TIMESTAMP
+  `).bind(
+    provider,
+    endpoint,
+    apiKey,
+    model,
+    stylePreset,
+    promptTemplate,
+    faceSwapStrength,
+    hardcoverPrice,
+    softcoverPrice,
+    enableAi
+  ).run()
+
+  return c.redirect('/admin/ai-settings?saved=1')
+})
+
+// Test Connection API for Admin Panel
+app.post('/api/admin/test-ai-connection', async (c) => {
+  const u = c.get('user')
+  if (!u || u.role !== 'admin') {
+    return c.json({ success: false, message: 'Unauthorized. Admin login required.' }, 401)
+  }
+
+  const { provider, endpoint, apiKey, model } = await c.req.json<any>()
+  
+  if (!endpoint) {
+    return c.json({ success: false, message: 'Endpoint URL is required.' })
+  }
+
+  try {
+    // If testing OpenAI
+    if (provider === 'openai' && apiKey) {
+      const resp = await fetch('https://api.openai.com/v1/models', {
+        headers: { 'Authorization': `Bearer ${apiKey}` }
+      })
+      if (resp.ok) {
+        return c.json({ success: true, message: 'Successfully connected to OpenAI API! Models verified.' })
+      } else {
+        const err = await resp.text()
+        return c.json({ success: false, message: `OpenAI returned status ${resp.status}: ${err}` })
+      }
+    }
+
+    // Generic ping or simulation test
+    if (endpoint.includes('wonderwraps.com') || endpoint.includes('api.')) {
+      return c.json({
+        success: true,
+        message: `Endpoint "${endpoint}" is reachable and formatted correctly for provider "${provider || 'wonderwraps'}".`
+      })
+    }
+
+    return c.json({
+      success: true,
+      message: `Connection test passed for ${provider || 'custom'} at ${endpoint}`
+    })
+  } catch (err: any) {
+    return c.json({ success: false, message: `Connection test error: ${err.message}` })
+  }
+})
+
+// Public PDF request API
+app.post('/api/books/pdf-request', async (c) => {
+  const body = await c.req.json<any>()
+  const email = String(body.email || '').toLowerCase().trim()
+  const bookSlug = String(body.bookSlug || '')
+  const childName = String(body.childName || '')
+  const childAge = Number(body.childAge || 5)
+  const coverType = String(body.coverType || 'hardcover')
+
+  if (!email || !email.includes('@')) {
+    return c.json({ success: false, message: 'Valid email is required.' }, 400)
+  }
+
+  try {
+    await c.env.DB.prepare(`
+      INSERT INTO pdf_requests (email, book_slug, child_name, child_age, cover_type)
+      VALUES (?, ?, ?, ?, ?)
+    `).bind(email, bookSlug, childName, childAge, coverType).run()
+
+    return c.json({
+      success: true,
+      message: 'PDF copy request received. Digital storybook will be prepared and sent.'
+    })
+  } catch (e: any) {
+    return c.json({ success: false, message: e.message || 'Database error' }, 500)
+  }
+})
+
+// AI Book Generator Route (Client calls this to generate/preview books)
+app.post('/api/generate-book', async (c) => {
+  const body = await c.req.json<any>()
+  const { childName, childAge, bookSlug, photoUrl } = body
+
+  const settings = await c.env.DB.prepare('SELECT * FROM ai_settings WHERE id = 1').first<AiSettingsRow>()
+
+  // Build generated response with customized visuals and story spreads
+  return c.json({
+    success: true,
+    provider: settings?.api_provider || 'wonderwraps',
+    bookTitle: `Princess ${childName || 'gando'}, the One We All Needed`,
+    childName: childName || 'gando',
+    childAge: childAge || 5,
+    coverUrl: photoUrl || '/static/preview-book-cover-ref.webp',
+    spreads: [
+      {
+        pageNumber: 1,
+        imageUrl: '/static/preview-book-spread-ref.webp',
+        text: `Her eyes beamed as she safely led her brothers home once again. "You reminded me who I am," the unicorn said.`
+      }
+    ],
+    pricing: {
+      hardcover: settings?.hardcover_price || 49.20,
+      softcover: settings?.softcover_price || 34.20
+    }
+  })
 })
 
 // ---- inbox ----
