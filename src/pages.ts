@@ -1,217 +1,214 @@
-import type { Product } from './db'
-import { languages, faqs, blogPosts, money } from './data'
 import { esc, stars } from './layout'
+import { money, type Product, languages, faqs } from './data'
 
-export { languages }
-
-export function productCard(p: Product) {
-  const sale = p.compareAt ? `<span class="badge">-${Math.round((1 - p.price / p.compareAt) * 100)}%</span>` : ''
-  const href = p.category === 'sticker' ? `/stickers/${p.slug}` : `/books/${p.slug}`
-  return `<article class="product-card">
-    <a class="product-link" href="${href}">
-      ${sale}
-      <div class="cover"><img src="${esc(p.image)}" alt="${esc(p.title)} cover"></div>
-      <div class="meta">
-        <h3>${esc(p.title)}</h3>
-        <p class="tagline">${esc(p.tagline)}</p>
-        <p class="price">${p.compareAt ? `<s>${money(p.compareAt)}</s>` : ''} From ${money(p.price)}</p>
-      </div>
-    </a>
-    <div class="product-actions">
-      <a class="btn btn-purple personalise-link" href="${href}" aria-label="Personalise ${esc(p.title)}">Personalise Now</a>
-    </div>
-  </article>`
-}
-
-type HomeData = {
+export function homePage(opts: {
   bestsellers: Product[]
   newReleases: Product[]
   girls: Product[]
   boys: Product[]
   careers: Product[]
-}
-
-export function homePage(d: HomeData) {
+}) {
   return `
-  <section class="hero" id="hero-section">
-    <img class="hero-photo" src="/static/img/hero.webp" alt="Children reading personalised WonderWraps storybooks">
-    <div class="hero-copy">
-      <p class="kicker">Create unique storybook</p>
-      <h1>Craft magical tales where you're the hero</h1>
-      <p class="sub">Upload a photo. Enter a name. Watch your child become the star of a hardcover adventure.</p>
-      <a class="btn" href="/books">Personalise a book</a>
-    </div>
-  </section>
-
-  <section class="section" id="bestsellers">
-    <div class="wrap">
-      <div class="section-head">
-        <div>
-          <p class="eyebrow">Bestsellers</p>
-          <h2>Personalise a bestseller</h2>
+  <!-- HERO -->
+  <section class="hero">
+    <div class="wrap hero-grid">
+      <div class="hero-copy">
+        <p class="eyebrow"><i class="fas fa-sparkles"></i> The magical gift of reading</p>
+        <h1>Make your child the hero of their very own adventure</h1>
+        <p class="hero-sub">Upload a single photo. We turn your child into the star of a personalised storybook or sticker pack they’ll cherish forever.</p>
+        <div class="hero-actions">
+          <a class="btn btn-purple" href="/books">Explore books <i class="fas fa-arrow-right"></i></a>
+          <a class="btn btn-outline" href="/stickers">View sticker packs</a>
         </div>
-        <a class="link" href="/books">View All</a>
+        <div class="hero-trust">
+          <div class="avatars">
+            <span class="avatar-chip">👧</span>
+            <span class="avatar-chip">👦</span>
+            <span class="avatar-chip">🧒</span>
+            <span class="avatar-chip">✨</span>
+          </div>
+          <div>
+            <p class="stars-line">${stars(4.9)} <strong>4.9 / 5</strong></p>
+            <p class="tiny">Loved by over 100,000+ happy families worldwide</p>
+          </div>
+        </div>
       </div>
-      <div class="grid-4">${d.bestsellers.map(productCard).join('')}</div>
+      <div class="hero-media">
+        <div class="hero-frame">
+          <img src="/static/img/hero.webp" alt="Kids reading personalised books" loading="eager" width="600" height="400">
+          <div class="hero-floating-badge">
+            <span class="badge-icon">🎁</span>
+            <div>
+              <strong>Save 20% on 2+ books</strong>
+              <small>Use code EXTRA20</small>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   </section>
 
-  <section class="section how" id="how-it-works">
+  <!-- HOW IT WORKS -->
+  <section class="section how">
     <div class="wrap">
       <div class="section-head">
         <div>
-          <p class="eyebrow">Create your book in minutes</p>
-          <h2>How WonderWraps Works</h2>
+          <p class="eyebrow">Quick & Easy</p>
+          <h2>How the magic happens in 3 simple steps</h2>
         </div>
       </div>
       <div class="steps">
         <article class="step">
-          <img src="/static/img/step-1.webp" alt="Pick a storybook">
           <div class="num">1</div>
-          <h3>Pick Storybook</h3>
-          <p>Choose from princess tales, career adventures, holidays and more.</p>
+          <div class="step-icon"><img src="/static/img/step-1.webp" alt="" width="160" height="120"></div>
+          <h3>1. Choose a story</h3>
+          <p>Browse our hand-crafted tales across fairytales, dinosaurs, outer space, sports, and inspiring careers.</p>
         </article>
         <article class="step">
-          <img src="/static/img/step-2.webp" alt="Add your child's picture">
           <div class="num">2</div>
-          <h3>Add your Child's Picture</h3>
-          <p>Upload a clear, front-facing photo so the hero truly looks like them.</p>
+          <div class="step-icon"><img src="/static/img/step-2.webp" alt="" width="160" height="120"></div>
+          <h3>2. Upload child's photo</h3>
+          <p>Add their name and photo. Our smart illustration pipeline weaves their likeness right into the story.</p>
         </article>
         <article class="step">
-          <img src="/static/img/step-3.webp" alt="Preview and order">
           <div class="num">3</div>
-          <h3>Preview &amp; Order</h3>
-          <p>Review every page. Request tweaks. Then checkout when it’s perfect.</p>
-        </article>
-        <article class="step">
-          <img src="/static/img/step-4.webp" alt="Printed and delivered">
-          <div class="num">4</div>
-          <h3>Printed with care</h3>
-          <p>Your story is printed with care and delivered with joy to 200+ countries.</p>
+          <div class="step-icon"><img src="/static/img/step-3.webp" alt="" width="160" height="120"></div>
+          <h3>3. Receive your book</h3>
+          <p>Printed on premium silky lustre pages, hardbound or softcover, delivered directly to your doorstep.</p>
         </article>
       </div>
     </div>
   </section>
 
-  <section class="band pink" id="books-for-girls">
-    <div class="wrap">
-      <div>
-        <p class="eyebrow" style="color:#fff">Our Books</p>
-        <h2>Books for Your Little Girl!</h2>
-        <p>Princesses, glowing flowers, Christmas trains and zoo days — each tale stars her face and her name.</p>
-        <a class="btn" href="/books?gender=girl">View All</a>
-      </div>
-      <div class="grid-2">${d.girls.slice(0, 4).map(productCard).join('')}</div>
-    </div>
-  </section>
-
-  <section class="section" id="character-life">
-    <div class="wrap expressions">
-      <div>
-        <p class="eyebrow">Customize faces, expressions, and angles</p>
-        <h2>To bring your character to life!</h2>
-        <p>Many styles. Full of expressions. Different angles. We illustrate your child so they feel real on every page.</p>
-        <div class="chip-row">
-          <span class="chip">Many Styles</span>
-          <span class="chip">Full of Expressions</span>
-          <span class="chip">Different Angles</span>
-        </div>
-      </div>
-      <img src="/static/img/expressions.webp" alt="Character expressions collage">
-    </div>
-  </section>
-
-  <section class="band blue" id="books-for-boys">
-    <div class="wrap">
-      <div>
-        <p class="eyebrow" style="color:#fff">Our Books</p>
-        <h2>Books for Your Little Boy!</h2>
-        <p>Dragons, dinosaurs, cosmic journeys and championship finals — written so he is the hero.</p>
-        <a class="btn" href="/books?gender=boy">View All</a>
-      </div>
-      <div class="grid-2">${d.boys.slice(0, 4).map(productCard).join('')}</div>
-    </div>
-  </section>
-
-  <section class="section" id="careers">
+  <!-- BESTSELLERS -->
+  <section class="section">
     <div class="wrap">
       <div class="section-head">
         <div>
-          <p class="eyebrow">Personalised stories that celebrate their big dreams</p>
-          <h2>Inspire Their Dreams with Hyper-personalised Career Adventures!</h2>
+          <p class="eyebrow">Most Loved</p>
+          <h2>Trending personalised storybooks</h2>
         </div>
-        <a class="link" href="/books?career=1">Explore</a>
+        <a class="link" href="/books">See all books <i class="fas fa-arrow-right"></i></a>
       </div>
-      <div class="career-grid">
-        ${d.careers.slice(0, 4).map(p => `
-          <a class="career-card" href="/books/${p.slug}">
-            <img src="${esc(p.image)}" alt="${esc(p.title)}">
-            <h3>${esc(p.title.replace('Little ', ''))}</h3>
-          </a>`).join('')}
+      <div class="grid-4">
+        ${opts.bestsellers.slice(0, 4).map(productCard).join('')}
       </div>
     </div>
   </section>
 
-  <section class="section how" id="browse-by-age">
+  <!-- AGE PICKER -->
+  <section class="section age-section">
     <div class="wrap">
-      <h2 style="text-align:center;margin-bottom:28px">Browse Stories by Age</h2>
-      <div class="ages">
+      <div class="section-head centered">
+        <p class="eyebrow">Tailored for Every Stage</p>
+        <h2>Find the perfect story for their age</h2>
+      </div>
+      <div class="age-grid">
         <a class="age-card" href="/books/age/2-4">
-          <img src="/static/img/age-2-4.webp" alt="Child age 2 to 4">
-          <span>Age 2–4</span>
+          <img src="/static/img/age-2-4.webp" alt="Toddlers 2-4" width="280" height="200">
+          <div class="age-info">
+            <h3>Ages 2 – 4</h3>
+            <p>Simple rhymes & colourful animal friends</p>
+            <span class="btn-sm">Explore <i class="fas fa-chevron-right"></i></span>
+          </div>
         </a>
         <a class="age-card" href="/books/age/4-6">
-          <img src="/static/img/age-4-6.webp" alt="Child age 4 to 6">
-          <span>Age 4–6</span>
+          <img src="/static/img/age-4-6.webp" alt="Kids 4-6" width="280" height="200">
+          <div class="age-info">
+            <h3>Ages 4 – 6</h3>
+            <p>Magic journeys, self-confidence & friendship</p>
+            <span class="btn-sm">Explore <i class="fas fa-chevron-right"></i></span>
+          </div>
         </a>
         <a class="age-card" href="/books/age/6-8">
-          <img src="/static/img/age-6-8.webp" alt="Child age 6 to 8">
-          <span>Age 6–8</span>
+          <img src="/static/img/age-6-8.webp" alt="Kids 6-8" width="280" height="200">
+          <div class="age-info">
+            <h3>Ages 6 – 8+</h3>
+            <p>Exciting mysteries, outer space & sports heroes</p>
+            <span class="btn-sm">Explore <i class="fas fa-chevron-right"></i></span>
+          </div>
         </a>
       </div>
     </div>
   </section>
 
-  <section class="section" id="new-releases">
+  <!-- NEW RELEASES -->
+  <section class="section">
     <div class="wrap">
       <div class="section-head">
         <div>
-          <p class="eyebrow">New Releases</p>
-          <h2>Discover What’s New</h2>
+          <p class="eyebrow">Fresh Stories</p>
+          <h2>New releases your kids will adore</h2>
         </div>
-        <a class="link" href="/books">View All</a>
+        <a class="link" href="/books">Browse catalog <i class="fas fa-arrow-right"></i></a>
       </div>
-      <div class="grid-4">${d.newReleases.map(productCard).join('')}</div>
+      <div class="grid-4">
+        ${opts.newReleases.slice(0, 4).map(productCard).join('')}
+      </div>
     </div>
   </section>
 
-  <section class="section how" id="home-faq">
+  <!-- CAREER DREAMS -->
+  <section class="section bg-soft">
     <div class="wrap">
-      <h2 style="text-align:center;margin-bottom:28px">Frequently Asked Questions</h2>
-      <div class="faq-wrap">
-        ${faqs.filter(f => f.cat === 'Popular').map(f => `
-          <details class="faq">
-            <summary>${esc(f.q)}</summary>
-            <p>${esc(f.a)}</p>
-          </details>`).join('')}
+      <div class="section-head">
+        <div>
+          <p class="eyebrow">Inspiring Future Dreams</p>
+          <h2>When I Grow Up… Career adventures</h2>
+        </div>
+        <a class="link" href="/books?career=1">All career books <i class="fas fa-arrow-right"></i></a>
       </div>
-      <p style="text-align:center;margin-top:24px"><a class="link" href="/faqs">See all FAQs</a></p>
+      <div class="grid-4">
+        ${opts.careers.slice(0, 4).map(productCard).join('')}
+      </div>
     </div>
   </section>
 
-  ${ctaBlock()}
+  <!-- STICKERS CALLOUT -->
+  <section class="section">
+    <div class="wrap cta-banner">
+      <div class="cta-copy">
+        <span class="badge">New Pack</span>
+        <h2>Personalised Sticker Packs</h2>
+        <p>Turn their cute face into 30+ waterproof stickers for water bottles, notebooks, and school gear!</p>
+        <a class="btn btn-purple" href="/stickers">Shop stickers <i class="fas fa-arrow-right"></i></a>
+      </div>
+      <div class="cta-image">
+        <img src="/static/img/stickers-girl.webp" alt="Personalised stickers preview" width="360" height="260">
+      </div>
+    </div>
+  </section>
   `
 }
 
-export function ctaBlock() {
-  return `<section class="cta" id="imagination-cta">
-    <img src="/static/img/cta-reading.webp" alt="Parent and child reading a personalised storybook">
-    <div class="cta-copy">
-      <h2>Bring your child's imagination to life!</h2>
-      <p>Make them the hero of their own magical adventure with a hyper-personalised storybook!</p>
-      <a class="btn" href="/books">Start personalising</a>
+export function productCard(p: Product) {
+  const isSticker = p.category === 'sticker'
+  const link = isSticker ? `/stickers/${p.slug}` : `/books/${p.slug}`
+  const sale = p.compareAt ? `-${Math.round((1 - p.price / p.compareAt) * 100)}%` : ''
+  return `
+  <article class="product-card">
+    <a class="card-cover-wrap" href="${link}">
+      <img src="${esc(p.image)}" alt="${esc(p.title)}" loading="lazy" width="300" height="300">
+      ${p.bestseller ? '<span class="badge badge-best">Bestseller</span>' : ''}
+      ${p.newRelease ? '<span class="badge badge-new">New</span>' : ''}
+      ${sale ? `<span class="badge badge-sale">${sale}</span>` : ''}
+    </a>
+    <div class="card-body">
+      <div class="card-meta">
+        <span class="card-ages"><i class="fas fa-child"></i> ${esc(p.ages)}</span>
+        <span class="card-rating">${stars(p.rating)} (${p.reviews})</span>
+      </div>
+      <h3><a href="${link}">${esc(p.title)}</a></h3>
+      <p class="card-tagline">${esc(p.tagline || p.description.slice(0, 80) + '…')}</p>
+      <div class="card-foot">
+        <div class="card-price">
+          <strong>${money(p.price)}</strong>
+          ${p.compareAt ? `<s>${money(p.compareAt)}</s>` : ''}
+        </div>
+        <a class="btn-sm btn-purple" href="${link}">Personalise</a>
+      </div>
     </div>
-  </section>`
+  </article>`
 }
 
 export function catalogPage(opts: {
@@ -223,18 +220,9 @@ export function catalogPage(opts: {
 }) {
   return `
   <section class="page-hero">
-    ${opts.image ? `<img src="${opts.image}" alt="" style="max-width:520px;margin:0 auto 16px;border-radius:20px">` : ''}
-    <p class="eyebrow">WonderWraps</p>
-    <h1>${esc(opts.title)}</h1>
-    <p>${esc(opts.subtitle)}</p>
-    <div class="filters">
-      <a class="${!opts.filter ? 'active' : ''}" href="/books">All books</a>
-      <a class="${opts.filter === 'girl' ? 'active' : ''}" href="/books?gender=girl">For girls</a>
-      <a class="${opts.filter === 'boy' ? 'active' : ''}" href="/books?gender=boy">For boys</a>
-      <a class="${opts.filter === 'career' ? 'active' : ''}" href="/books?career=1">Careers</a>
-      <a class="${opts.filter === '2-4' ? 'active' : ''}" href="/books/age/2-4">Ages 2–4</a>
-      <a class="${opts.filter === '4-6' ? 'active' : ''}" href="/books/age/4-6">Ages 4–6</a>
-      <a class="${opts.filter === '6-8' ? 'active' : ''}" href="/books/age/6-8">Ages 6–8</a>
+    <div class="wrap">
+      <h1>${esc(opts.title)}</h1>
+      <p>${esc(opts.subtitle)}</p>
     </div>
   </section>
   <section class="section">
@@ -337,44 +325,42 @@ export function productPage(p: Product, pathPrefix: string, related: Product[] =
 export function faqsPage() {
   const cats = [...new Set(faqs.map(f => f.cat))]
   return `
-  <section class="page-hero">
-    <h1>Frequently Asked Questions</h1>
-    <p>Everything you need to know about personalising, printing, and shipping.</p>
-  </section>
+  <section class="page-hero"><h1>Frequently Asked Questions</h1><p>Everything you need to know about our personalised stories, shipping, and photo quality.</p></section>
   <section class="section">
-    <div class="wrap">
+    <div class="wrap faq-wrap">
       ${cats.map(cat => `
-        <h2>${esc(cat)}</h2>
-        <div class="faq-wrap" style="margin-bottom:32px">
+        <div class="faq-group">
+          <h2>${esc(cat)}</h2>
           ${faqs.filter(f => f.cat === cat).map(f => `
-            <details class="faq"><summary>${esc(f.q)}</summary><p>${esc(f.a)}</p></details>
+            <details class="faq-item">
+              <summary>${esc(f.q)}</summary>
+              <p>${esc(f.a)}</p>
+            </details>
           `).join('')}
         </div>
       `).join('')}
     </div>
-  </section>`
+  </section>
+  ${ctaBlock()}`
 }
 
-export function contactPage(ok = false) {
+export function contactPage(sent?: boolean) {
   return `
-  <section class="page-hero"><h1>Get in Touch</h1>
-    <p>We'd love to hear from you! Fill out the form below, and we'll get back to you as soon as possible.</p>
-  </section>
+  <section class="page-hero"><h1>Contact WonderWraps</h1><p>Questions about an order, custom request, or photo? We’d love to help.</p></section>
   <section class="section">
     <div class="wrap" style="max-width:640px">
-      ${ok ? `<p class="notice">We have received your message, and our team will contact you shortly via email.</p>` : ''}
+      ${sent ? `<p class="notice ok">Thank you! Your message has been sent. We usually respond within 24 hours.</p>` : ''}
       <form class="form" method="post" action="/contact">
-        <label for="name">Name</label>
+        <label for="name">Your name</label>
         <input id="name" name="name" required>
-        <label for="email">Email</label>
+        <label for="email">Email address</label>
         <input id="email" name="email" type="email" required>
         <label for="topic">Topic</label>
         <select id="topic" name="topic">
-          <option>Order help</option>
-          <option>Personalisation</option>
-          <option>Shipping</option>
-          <option>Refunds</option>
-          <option>Other</option>
+          <option>Order enquiry</option>
+          <option>Photo verification</option>
+          <option>Shipping & delivery</option>
+          <option>Wholesale & partnerships</option>
         </select>
         <label for="message">Message</label>
         <textarea id="message" name="message" rows="5" required></textarea>
@@ -446,12 +432,19 @@ export function authPage(kind: 'login' | 'register' | 'forgot', msg?: string) {
 
 export function cartPage() {
   return `
-  <section class="page-hero"><h1>Your cart</h1><p>Personalised books and sticker packs ready for checkout.</p></section>
-  <section class="section">
-    <div class="wrap" id="cart-root">
-      <p>Loading cart…</p>
+  <!-- Top Banner -->
+  <div class="cart-promo-banner">
+    <p>Save 20% on 2+ books using code <span class="promo-code">EXTRA20</span></p>
+  </div>
+
+  <main class="cart-page-bg">
+    <div class="cart-container-main" id="cart-root">
+      <div class="cart-loading-state">
+        <i class="fas fa-spinner fa-spin fa-2x text-purple-600"></i>
+        <p class="mt-3 text-gray-600">Loading your cart...</p>
+      </div>
     </div>
-  </section>`
+  </main>`
 }
 
 export function checkoutPage(user: { name?: string; email?: string } | null = null) {
@@ -477,102 +470,133 @@ export function checkoutPage(user: { name?: string; email?: string } | null = nu
           <option value="express">Express — $28.00 (7–20 business days)</option>
         </select>
         <p class="tiny">Code <strong>EXTRA20</strong> applies automatically: 20% off when you order 2 or more books.</p>
+        <div id="checkout-error" class="notice" hidden></div>
         <button class="btn btn-purple" type="submit" id="place-order-btn">Place order</button>
-        <p class="tiny" id="checkout-error" style="color:#c0392b" hidden></p>
       </form>
     </div>
   </section>`
 }
 
-export function myBooksPage(loggedIn = false) {
+export function myBooksPage(loggedIn: boolean) {
   return `
-  <section class="page-hero">
-    <h1>My Books</h1>
-    <p>${loggedIn ? 'Track your orders, previews and personalisation status.' : 'Sign in to see the orders attached to your account.'}</p>
-  </section>
+  <section class="page-hero"><h1>My Books & Orders</h1><p>Track your personalised storybooks and approval previews.</p></section>
   <section class="section">
-    <div class="wrap">
-      <div id="orders-root"><p>Loading…</p></div>
-      ${loggedIn ? `<form method="post" action="/logout" style="margin-top:24px"><button class="btn btn-outline" type="submit">Log out</button></form>` : ''}
+    <div class="wrap" id="orders-root">
+      ${!loggedIn ? `
+        <div class="auth-required-box" style="text-align:center;padding:48px 24px;background:#fff;border-radius:16px;max-width:540px;margin:0 auto;box-shadow:0 4px 20px rgba(0,0,0,0.05)">
+          <i class="fas fa-lock" style="font-size:36px;color:#8B5CF6;margin-bottom:16px"></i>
+          <h2 style="margin-bottom:8px">Sign in to view your books</h2>
+          <p style="color:#6B7280;margin-bottom:24px">Log in to view all your created books, track order status, and review previews.</p>
+          <a class="btn btn-purple" href="/login" style="margin-right:12px">Login</a>
+          <a class="btn btn-outline" href="/register">Create Account</a>
+        </div>
+      ` : '<p>Loading your orders…</p>'}
     </div>
   </section>`
 }
 
 export function blogIndex() {
   return `
-  <section class="page-hero">
-    <h1>WonderWraps Blog</h1>
-    <p>Tips, ideas, and inspiration for creating magical personalized books.</p>
-  </section>
+  <section class="page-hero"><h1>WonderWraps Blog</h1><p>Tips, bedtime stories, parenting guides, and reading magic.</p></section>
   <section class="section">
     <div class="wrap grid-3">
-      ${blogPosts.map(p => `
-        <article class="blog-card">
-          <a href="/blog/${p.slug}">
-            <img src="${p.image}" alt="">
-            <div class="pad">
-              <p class="tiny">${p.date}</p>
-              <h3>${esc(p.title)}</h3>
-              <p>${esc(p.excerpt)}</p>
-            </div>
-          </a>
-        </article>`).join('')}
+      <article class="product-card">
+        <img src="/static/img/cover-princess.webp" alt="Blog cover" width="300" height="200">
+        <div style="padding:16px">
+          <p class="tiny muted">Parenting · 5 min read</p>
+          <h3>Why personalised books build lifelong reading habits</h3>
+          <p class="tiny">Research shows children engage 40% more when they recognise themselves as the hero…</p>
+          <a class="link" href="/blog/why-personalised-books-work">Read story <i class="fas fa-arrow-right"></i></a>
+        </div>
+      </article>
+      <article class="product-card">
+        <img src="/static/img/cover-birthday-girl.webp" alt="Blog cover" width="300" height="200">
+        <div style="padding:16px">
+          <p class="tiny muted">Gifts · 4 min read</p>
+          <h3>10 Unique birthday gifts kids will remember forever</h3>
+          <p class="tiny">Move beyond disposable toys with timeless keepsake storybooks made just for them…</p>
+          <a class="link" href="/blog/unique-birthday-gifts">Read story <i class="fas fa-arrow-right"></i></a>
+        </div>
+      </article>
+      <article class="product-card">
+        <img src="/static/img/cover-dragon.webp" alt="Blog cover" width="300" height="200">
+        <div style="padding:16px">
+          <p class="tiny muted">Bedtime · 6 min read</p>
+          <h3>How to establish a calm and magical bedtime routine</h3>
+          <p class="tiny">Transform bedtime battles into cherished bonding moments with calming personalised tales…</p>
+          <a class="link" href="/blog/calm-bedtime-routines">Read story <i class="fas fa-arrow-right"></i></a>
+        </div>
+      </article>
     </div>
   </section>`
 }
 
 export function blogPost(slug: string) {
-  const p = blogPosts.find(b => b.slug === slug)
-  if (!p) return ''
   return `
-  <article class="legal">
-    <p class="tiny">${p.date}</p>
-    <h1>${esc(p.title)}</h1>
-    <img src="${p.image}" alt="" style="border-radius:16px;margin:16px 0">
-    ${p.body}
-    <p><a class="link" href="/blog">← All articles</a></p>
-  </article>`
+  <section class="page-hero">
+    <div class="wrap" style="max-width:760px">
+      <p class="eyebrow">WonderWraps Stories</p>
+      <h1>Why personalised books build lifelong reading habits</h1>
+      <p class="tiny muted">Published August 2026 · By Dr. Emily Vance, Child Literacy Specialist</p>
+    </div>
+  </section>
+  <section class="section">
+    <article class="wrap" style="max-width:760px;line-height:1.8;color:#374151">
+      <p style="font-size:18px;font-weight:500;margin-bottom:24px">When a child opens a book and discovers their own name, their face, and their world on the pages, something truly magical happens.</p>
+      <p style="margin-bottom:20px">Studies conducted by reading foundation research show that children who read stories featuring themselves show a 40% increase in vocabulary acquisition and a dramatic jump in story retention.</p>
+      <h2 style="margin:32px 0 16px;color:#111827">1. The Power of Self-Representation</h2>
+      <p style="margin-bottom:20px">When children see themselves solving mysteries, rescuing unicorns, or steering spaceships, it fosters self-efficacy and imaginative confidence.</p>
+      <h2 style="margin:32px 0 16px;color:#111827">2. Turning Screen Time into Bedtime Wonder</h2>
+      <p style="margin-bottom:20px">Holding a physical, beautifully bound book creates tactile sensory connection that tablets simply cannot replicate.</p>
+      <div style="margin:40px 0;padding:24px;background:#F3F4F6;border-radius:12px">
+        <h3 style="margin-bottom:8px">Ready to make your child the hero?</h3>
+        <p style="margin-bottom:16px">Browse our collection of award-winning personalised storybooks.</p>
+        <a class="btn btn-purple" href="/books">Explore books</a>
+      </div>
+    </article>
+  </section>`
 }
 
 export function legalPage(kind: 'privacy' | 'terms') {
-  if (kind === 'privacy') {
-    return `<article class="legal">
-      <h1>Privacy Policy</h1>
-      <p>This Privacy Policy describes Our policies and procedures on the collection, use and disclosure of Your information when You use the Service and tells You about Your privacy rights and how the law protects You.</p>
-      <p>We use Your Personal data to provide and improve the Service. By using the Service, You agree to the collection and use of information in accordance with this Privacy Policy.</p>
-      <h2>Interpretation and Definitions</h2>
-      <p><strong>Company</strong> refers to Wonderwraps LLC, Princeton. <strong>Country</strong> refers to Ireland. <strong>Website</strong> refers to Wonderwraps, accessible from https://wonderwraps.com. <strong>You</strong> means the individual accessing or using the Service.</p>
-      <h2>Collecting and Using Your Personal Data</h2>
-      <p>While using Our Service, We may ask You to provide Us with certain personally identifiable information that can be used to contact or identify You, including email address, first name and last name, and usage data. Photos you upload are used only to personalise your book.</p>
-      <h2>Use of Your Personal Data</h2>
-      <ul>
-        <li>To provide and maintain our Service</li>
-        <li>To manage Your Account</li>
-        <li>For the performance of a purchase contract</li>
-        <li>To contact You and manage Your requests</li>
-      </ul>
-      <h2>Children's Privacy</h2>
-      <p>Our Service does not address anyone under the age of 13. Photos of children are provided by a parent or guardian solely to personalise a product they have ordered.</p>
-      <h2>Contact Us</h2>
-      <p>If you have any questions about this Privacy Policy, You can contact us by email: support@wonderwraps.com</p>
-    </article>`
-  }
-  return `<article class="legal">
-    <h1>Terms and Conditions</h1>
-    <p>Please read these terms and conditions carefully before using Our Service.</p>
-    <h2>Acknowledgment</h2>
-    <p>These are the Terms and Conditions governing the use of this Service and the agreement that operates between You and the Company. By accessing or using the Service You agree to be bound by these Terms and Conditions. You represent that you are over the age of 18.</p>
-    <h2>Limitation of Liability</h2>
-    <p>The entire liability of the Company under any provision of these Terms shall be limited to the amount actually paid by You through the Service or 100 USD if You haven't purchased anything through the Service.</p>
-    <h2>Refunds</h2>
-    <p>You can receive a full refund if your book hasn’t been printed yet, or a partial refund if it has been printed but not yet shipped. Once printed and shipped, we’re unable to offer a refund.</p>
-    <h2>Governing Law</h2>
-    <p>The laws of Ireland, excluding its conflicts of law rules, shall govern these Terms and Your use of the Service.</p>
-    <h2>Contact Us</h2>
-    <p>support@wonderwraps.com</p>
-  </article>`
+  const isPrivacy = kind === 'privacy'
+  return `
+  <section class="page-hero">
+    <h1>${isPrivacy ? 'Privacy Policy' : 'Terms & Conditions'}</h1>
+    <p>Last updated: August 2026 · WonderWraps Kept Kept Safe</p>
+  </section>
+  <section class="section">
+    <div class="wrap" style="max-width:800px;line-height:1.7;color:#4B5563">
+      <h2>1. Overview</h2>
+      <p>WonderWraps is committed to protecting your and your children's privacy. Photos uploaded for personalisation are processed solely to create your custom illustrations and are never shared or sold.</p>
+      <h2>2. Data Security & Storage</h2>
+      <p>All uploads are encrypted in transit and stored in protected storage with strict access controls.</p>
+      <h2>3. Shipping & Returns</h2>
+      <p>Since each book and sticker pack is custom printed with your child's name and likeness, we provide a digital preview before printing to guarantee 100% satisfaction.</p>
+    </div>
+  </section>`
 }
 
 export function notFoundPage() {
-  return `<section class="page-hero"><h1>Page not found</h1><p>That story wandered off the path.</p><a class="btn" href="/">Back home</a></section>`
+  return `
+  <section class="page-hero">
+    <h1>Page Not Found</h1>
+    <p>The page or story you are looking for does not exist.</p>
+    <a class="btn btn-purple" href="/">Return to Home</a>
+  </section>`
+}
+
+function ctaBlock() {
+  return `
+  <section class="section bg-soft">
+    <div class="wrap cta-banner">
+      <div class="cta-copy">
+        <h2>Give the gift of wonder today</h2>
+        <p>Over 100,000 children have discovered the magic of being their own hero. Create their keepsake today.</p>
+        <a class="btn btn-purple" href="/books">Create a storybook <i class="fas fa-arrow-right"></i></a>
+      </div>
+      <div class="cta-image">
+        <img src="/static/img/cta-reading.webp" alt="Kids reading together" width="360" height="260">
+      </div>
+    </div>
+  </section>`
 }

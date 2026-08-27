@@ -54,7 +54,7 @@ export function page(opts: {
         </div>
         <a class="icon-btn" href="/cart" aria-label="Cart">
           <i class="fas fa-bag-shopping"></i>
-          <span class="cart-badge" id="cart-count" hidden>0</span>
+          <span class="cart-badge" id="cart-badge" hidden>0</span>
         </a>
         <a class="icon-btn" href="/login" aria-label="Account">
           <i class="far fa-user"></i>
