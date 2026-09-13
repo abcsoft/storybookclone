@@ -68,3 +68,4 @@ A full-stack clone of [wonderwraps.com](https://wonderwraps.com/) — personaliz
 - **Local**: `npm run db:migrate:local` → `npx wrangler d1 execute webapp-production --local --file=./seed.sql` → `npx wrangler d1 execute webapp-production --local --file=./seed_pdp.sql` → `npm run build` → `pm2 start ecosystem.config.cjs`
 - **Reset local DB**: `npm run db:reset`
 - **Last Updated**: 2026-08-27
+# storybookclone
