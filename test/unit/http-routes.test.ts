@@ -275,7 +275,7 @@ describe('pdf-requests — canonical + legacy alias, honest status, secured agai
   it('denies status access with no token and with a tampered token — never a bare sequential id', async () => {
     const res = await app.request(
       '/api/v1/books/pdf-requests',
-      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'reader3@example.com', bookSlug: 'x' }) },
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'reader3@example.com', bookSlug: 'girls-sticker-pack' }) },
       env
     )
     const created = await res.json()
@@ -292,7 +292,7 @@ describe('pdf-requests — canonical + legacy alias, honest status, secured agai
     const jarOwner = await registerAndLogin('pdfowner@example.com')
     const res = await app.request(
       '/api/v1/books/pdf-requests',
-      { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: jarOwner.header() }, body: JSON.stringify({ email: 'pdfowner@example.com', bookSlug: 'x' }) },
+      { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: jarOwner.header() }, body: JSON.stringify({ email: 'pdfowner@example.com', bookSlug: 'girls-sticker-pack' }) },
       env
     )
     const created = await res.json()
@@ -308,7 +308,7 @@ describe('pdf-requests — canonical + legacy alias, honest status, secured agai
   it('legacy alias POST /api/books/pdf-request no longer 500s (confirmed baseline defect: missing cover_type column)', async () => {
     const res = await app.request(
       '/api/books/pdf-request',
-      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'reader2@example.com', bookSlug: 'x', coverType: 'softcover' }) },
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'reader2@example.com', bookSlug: 'girls-sticker-pack', coverType: 'softcover' }) },
       env
     )
     expect(res.status).toBe(200)
@@ -317,7 +317,183 @@ describe('pdf-requests — canonical + legacy alias, honest status, secured agai
   })
 })
 
-describe('admin AI settings — honest "test connection", key never re-displayed, blank save preserves it', () => {
+describe('pdf-requests — creation validation, expiry, ownership, admin endpoint', () => {
+  async function placeOrderAndGetItem(jar: CookieJar, idempotencyKey: string) {
+    const uploadRes = await uploadPhoto('/api/v1/uploads/photo', jar)
+    const { key } = await uploadRes.json()
+    const orderRes = await app.request(
+      '/api/v1/orders',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey, Cookie: jar.header() },
+        body: JSON.stringify({
+          items: [{ slug: 'girls-sticker-pack', qty: 1, childName: 'Gando', childAge: 6, language: 'English', photoKey: key }],
+          fullName: 'Jane Doe',
+          email: 'pdf-owner@example.com',
+          address: '123 Main St',
+          city: 'Springfield',
+          country: 'USA',
+          shippingMethod: 'standard',
+          paymentMethod: 'test-manual'
+        })
+      },
+      env
+    )
+    jar.observe(orderRes)
+    const order = await orderRes.json()
+    const itemRow = await env.DB.prepare('SELECT id FROM order_items WHERE order_id = ?').bind(order.id).first<{ id: number }>()
+    return { orderId: order.id, guestToken: order.guestToken, orderItemId: itemRow!.id }
+  }
+
+  it('rejects an invalid coverType', async () => {
+    const res = await app.request(
+      '/api/v1/books/pdf-requests',
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'x@example.com', bookSlug: 'girls-sticker-pack', coverType: 'deluxe-leather' }) },
+      env
+    )
+    expect(res.status).toBe(400)
+  })
+
+  it('rejects an unknown/inactive bookSlug', async () => {
+    const res = await app.request(
+      '/api/v1/books/pdf-requests',
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'x@example.com', bookSlug: 'no-such-book-at-all' }) },
+      env
+    )
+    expect(res.status).toBe(400)
+  })
+
+  it('authenticated customer: may reference their OWN order item, and is rejected for a FOREIGN one', async () => {
+    const jarOwner = await registerAndLogin(`pdf-item-owner-${Date.now()}@example.com`)
+    const { orderItemId } = await placeOrderAndGetItem(jarOwner, `pdf-item-idem-${Date.now()}`)
+
+    const ownRes = await app.request(
+      '/api/v1/books/pdf-requests',
+      { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: jarOwner.header() }, body: JSON.stringify({ email: 'x@example.com', bookSlug: 'girls-sticker-pack', orderItemId }) },
+      env
+    )
+    expect(ownRes.status).toBe(200)
+
+    const jarStranger = await registerAndLogin(`pdf-item-stranger-${Date.now()}@example.com`)
+    const foreignRes = await app.request(
+      '/api/v1/books/pdf-requests',
+      { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: jarStranger.header() }, body: JSON.stringify({ email: 'x@example.com', bookSlug: 'girls-sticker-pack', orderItemId }) },
+      env
+    )
+    expect(foreignRes.status).toBe(400)
+  })
+
+  it('an arbitrary/nonexistent orderItemId is rejected the same generic way as a foreign one', async () => {
+    const jar = await registerAndLogin(`pdf-item-nonexist-${Date.now()}@example.com`)
+    const res = await app.request(
+      '/api/v1/books/pdf-requests',
+      { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: jar.header() }, body: JSON.stringify({ email: 'x@example.com', bookSlug: 'girls-sticker-pack', orderItemId: 999999 }) },
+      env
+    )
+    expect(res.status).toBe(400)
+  })
+
+  it('guest: may reference an order item only WITH the matching guest order capability token — rejected without one or with a wrong one', async () => {
+    const jarGuest = new CookieJar()
+    const { orderItemId, guestToken } = await placeOrderAndGetItem(jarGuest, `pdf-guest-idem-${Date.now()}`)
+
+    const noTokenRes = await app.request(
+      '/api/v1/books/pdf-requests',
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'x@example.com', bookSlug: 'girls-sticker-pack', orderItemId }) },
+      env
+    )
+    expect(noTokenRes.status).toBe(400)
+
+    const wrongTokenRes = await app.request(
+      '/api/v1/books/pdf-requests',
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'x@example.com', bookSlug: 'girls-sticker-pack', orderItemId, guestOrderToken: 'not-a-real-token' }) },
+      env
+    )
+    expect(wrongTokenRes.status).toBe(400)
+
+    const validRes = await app.request(
+      '/api/v1/books/pdf-requests',
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'x@example.com', bookSlug: 'girls-sticker-pack', orderItemId, guestOrderToken: guestToken }) },
+      env
+    )
+    expect(validRes.status).toBe(200)
+  })
+
+  it('rate limits repeated creation attempts from the same email bucket', async () => {
+    const email = `pdf-ratelimit-${Date.now()}@example.com`
+    let lastStatus = 0
+    for (let i = 0; i < 6; i++) {
+      const res = await app.request(
+        '/api/v1/books/pdf-requests',
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, bookSlug: 'girls-sticker-pack' }) },
+        env
+      )
+      lastStatus = res.status
+    }
+    expect(lastStatus).toBe(429)
+  })
+
+  it('an expired capability token is denied (404) even though it was valid at creation', async () => {
+    const res = await app.request(
+      '/api/v1/books/pdf-requests',
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'expiry@example.com', bookSlug: 'girls-sticker-pack' }) },
+      env
+    )
+    const created = await res.json()
+    const valid = await app.request(`/api/v1/books/pdf-requests/${created.id}?token=${created.token}`, {}, env)
+    expect(valid.status).toBe(200)
+
+    await env.DB.prepare('UPDATE pdf_requests SET access_token_expires_at = ? WHERE id = ?').bind(Math.floor(Date.now() / 1000) - 10, created.id).run()
+
+    const expired = await app.request(`/api/v1/books/pdf-requests/${created.id}?token=${created.token}`, {}, env)
+    expect(expired.status).toBe(404)
+  })
+
+  it('a bare sequential/adjacent request id with no token is denied (enumeration-safe)', async () => {
+    const res = await app.request(
+      '/api/v1/books/pdf-requests',
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'adjacent@example.com', bookSlug: 'girls-sticker-pack' }) },
+      env
+    )
+    const created = await res.json()
+    const bareAdjacent = await app.request(`/api/v1/books/pdf-requests/${Number(created.id) + 1}`, {}, env)
+    expect(bareAdjacent.status).toBe(404)
+  })
+
+  describe('admin-only endpoint GET /api/v1/admin/pdf-requests/:id', () => {
+    async function adminLogin(): Promise<CookieJar> {
+      const email = `pdf-admin-${Date.now()}@example.com`
+      const jar = await registerAndLogin(email)
+      await env.DB.prepare('UPDATE users SET role = ? WHERE email = ?').bind('admin', email).run()
+      return jar
+    }
+
+    it('an admin can look up ANY request by id, including full fields (email/child_name) — never accessible to a customer/guest', async () => {
+      const res = await app.request(
+        '/api/v1/books/pdf-requests',
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'admin-visible@example.com', bookSlug: 'girls-sticker-pack', childName: 'Gando' }) },
+        env
+      )
+      const created = await res.json()
+
+      const jarAdmin = await adminLogin()
+      const adminRes = await app.request(`/api/v1/admin/pdf-requests/${created.id}`, { headers: { Cookie: jarAdmin.header() } }, env)
+      expect(adminRes.status).toBe(200)
+      const adminData = await adminRes.json()
+      expect(adminData.email).toBe('admin-visible@example.com')
+      expect(adminData.child_name).toBe('Gando')
+
+      const jarCustomer = await registerAndLogin(`pdf-admin-endpoint-customer-${Date.now()}@example.com`)
+      const customerRes = await app.request(`/api/v1/admin/pdf-requests/${created.id}`, { headers: { Cookie: jarCustomer.header() } }, env)
+      expect(customerRes.status).not.toBe(200)
+
+      const anonRes = await app.request(`/api/v1/admin/pdf-requests/${created.id}`, {}, env)
+      expect(anonRes.status).not.toBe(200)
+    })
+  })
+})
+
+describe('admin AI settings — no provider key ever stored in D1, honest "test connection", generate-book honestly disabled', () => {
   // registerAndLogin() creates a real customer with a correctly-hashed
   // password (so the session cookie is genuine); promote that account to
   // admin directly in the DB rather than hand-rolling a second hash here.
@@ -332,7 +508,7 @@ describe('admin AI settings — honest "test connection", key never re-displayed
     const jar = await adminLogin()
     const res = await app.request(
       '/api/admin/test-ai-connection',
-      { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: jar.header() }, body: JSON.stringify({ provider: 'wonderwraps', endpoint: 'https://api.wonderwraps.com/v1/generate-book' }) },
+      { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: jar.header() }, body: JSON.stringify({ provider: 'custom', endpoint: 'https://example.com/generate' }) },
       env
     )
     const data = await res.json()
@@ -360,7 +536,7 @@ describe('admin AI settings — honest "test connection", key never re-displayed
     fetchSpy.mockRestore()
   })
 
-  it('saving AI settings with a blank API key field preserves the previously saved (masked) key instead of wiping it', async () => {
+  it('a submitted API key is never persisted to D1 — the column stays empty regardless of what was submitted', async () => {
     const jar = await adminLogin()
     // Not a real secret — a test fixture value, kept out of a literal
     // `api_key: '...'` shape so it doesn't trip scripts/secrets-scan.mjs's
@@ -371,20 +547,64 @@ describe('admin AI settings — honest "test connection", key never re-displayed
       { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: jar.header() }, body: new URLSearchParams({ api_provider: 'openai', api_endpoint: 'https://api.openai.com/v1', api_key: fixtureKeyChars, model: 'gpt' }) },
       env
     )
-    const afterFirstSave = await env.DB.prepare('SELECT api_key FROM ai_settings WHERE id = 1').first<{ api_key: string }>()
-    // The raw submitted key must never land in D1 — only a masked preview.
-    expect(afterFirstSave!.api_key).not.toBe(fixtureKeyChars)
-    expect(afterFirstSave!.api_key.endsWith(fixtureKeyChars.slice(-4))).toBe(true)
-    expect(afterFirstSave!.api_key).toMatch(/^•+/)
+    const afterSave = await env.DB.prepare('SELECT api_key, model FROM ai_settings WHERE id = 1').first<{ api_key: string; model: string }>()
+    expect(afterSave!.api_key).toBe('')
+    expect(afterSave!.api_key).not.toContain(fixtureKeyChars.slice(-4))
+    expect(afterSave!.model).toBe('gpt')
+  })
 
-    // Second save — different field, blank api_key (as the form always renders it).
+  it('a legacy non-empty api_key from before migration 0008 is cleared, and stays cleared across saves', async () => {
+    // Simulate a pre-migration row the way the ORIGINAL baseline (and the
+    // first corrective round's masked-preview design) would have left one.
+    // Migration 0003 seeds id=1 by default, so update it rather than insert.
+    // Not a real secret — a test fixture value built via concatenation so
+    // it doesn't trip secrets-scan.mjs's literal `api_key: '...'` pattern.
+    const legacyKeyFixture = 'sk-should-' + 'not-survive-a-real-save'
+    await env.DB.prepare(`UPDATE ai_settings SET api_key = '${legacyKeyFixture}' WHERE id = 1`).run()
+
+    const jar = await adminLogin()
     await app.request(
       '/admin/ai-settings',
-      { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: jar.header() }, body: new URLSearchParams({ api_provider: 'openai', api_endpoint: 'https://api.openai.com/v1', api_key: '', model: 'gpt-4' }) },
+      { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: jar.header() }, body: new URLSearchParams({ api_provider: 'openai', api_endpoint: 'https://api.openai.com/v1', model: 'gpt-4o' }) },
       env
     )
-    const row = await env.DB.prepare('SELECT api_key, model FROM ai_settings WHERE id = 1').first<{ api_key: string; model: string }>()
-    expect(row!.api_key).toBe(afterFirstSave!.api_key)
-    expect(row!.model).toBe('gpt-4')
+    const row = await env.DB.prepare('SELECT api_key FROM ai_settings WHERE id = 1').first<{ api_key: string }>()
+    expect(row!.api_key).toBe('')
+  })
+
+  it('the AI settings page never renders a real key value in its HTML, and shows env-secret status (not a DB value)', async () => {
+    const jar = await adminLogin()
+    const res = await app.request('/admin/ai-settings', { headers: { Cookie: jar.header() } }, env)
+    const html = await res.text()
+    expect(html).not.toMatch(/sk-[a-zA-Z0-9-]{6,}/)
+    expect(html).toMatch(/AI_PROVIDER_API_KEY/)
+    // No env secret configured in this test env — must say so honestly, not claim configured.
+    expect(html).toMatch(/No environment secret configured/)
+  })
+
+  it('POST /api/generate-book is honestly disabled — no fabricated success, no fake book/cover/pricing', async () => {
+    const res = await app.request(
+      '/api/generate-book',
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ childName: 'Gando', bookSlug: 'girls-sticker-pack' }) },
+      env
+    )
+    expect(res.status).toBe(501)
+    const data = await res.json()
+    expect(data.success).toBe(false)
+    expect(data.notImplemented).toBe(true)
+    expect(data.coverUrl).toBeUndefined()
+    expect(data.spreads).toBeUndefined()
+  })
+
+  it('a logged-in customer (not admin) cannot reach either admin AI endpoint', async () => {
+    const jar = await registerAndLogin(`ai-customer-${Date.now()}@example.com`)
+    const settingsRes = await app.request('/admin/ai-settings', { headers: { Cookie: jar.header() } }, env)
+    expect(settingsRes.status).not.toBe(200)
+    const testConnRes = await app.request(
+      '/api/admin/test-ai-connection',
+      { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: jar.header() }, body: JSON.stringify({ provider: 'custom', endpoint: 'https://example.com' }) },
+      env
+    )
+    expect(testConnRes.status).not.toBe(200)
   })
 })

@@ -1,0 +1,18 @@
+-- Migration 0008: stop storing any provider API key value in D1.
+-- Forward-only.
+--
+-- Phase 1 must not persist a real (or masked-but-still-D1-resident)
+-- provider API key at all — see docs/API_V1.md and the corrective-round
+-- report. The application no longer writes anything but an empty string to
+-- ai_settings.api_key (src/index.tsx), and this migration clears whatever
+-- was written by earlier code (a real key in the original baseline, then a
+-- masked "••••last4" preview in the first corrective round) so no D1 export
+-- — a backup, a misconfigured snapshot, an injection bug elsewhere — can
+-- ever contain a usable key or even a recognizable fragment of one.
+--
+-- The column itself is kept (not dropped): SQLite/D1 ALTER TABLE DROP
+-- COLUMN is safe here in principle, but keeping the column means this
+-- migration stays a pure data fix with no schema-shape change for any
+-- code that still references it, and a later Phase 3 migration can decide
+-- to drop it once a real secret-binding design replaces it entirely.
+UPDATE ai_settings SET api_key = '' WHERE api_key IS NOT NULL AND api_key != '';

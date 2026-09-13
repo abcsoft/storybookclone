@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { migratedFakeD1 } from '../helpers/testApp'
 import { createOrder, hashOrderPayload, type CreateOrderInput } from '../../src/orders'
-import { recordUpload } from '../../src/uploads'
+import { recordUpload, checkUploadOwnership } from '../../src/uploads'
 import type { RotatingSecrets } from '../../src/secrets'
 
 const OWNER = 'browser-owner-token-1'
@@ -232,28 +232,31 @@ describe('createOrder — atomic photo claiming under concurrency (TOCTOU regres
     expect(itemCount!.n).toBe(1) // the loser's item row must not exist either — whole batch rolled back together
   })
 
-  it('proves the DB-level guarantee directly: a second atomic claim insert for an already-claimed key fails and rolls back its whole batch', async () => {
+  it('proves the DB-level guarantee directly: a second atomic claim insert for an already-claimed key fails and rolls back its whole batch (PRIMARY KEY uniqueness)', async () => {
     // A lower-level, timing-independent proof of the exact mechanism
     // createOrder relies on — bypasses application pre-checks entirely and
     // drives the same schema constraint (upload_claims.upload_key PRIMARY
-    // KEY) that closes the TOCTOU window.
+    // KEY) that closes the TOCTOU window. Both inserts use the upload's
+    // real owner_token so this specifically isolates the PRIMARY KEY
+    // constraint from the ownership trigger (see the migration-0006-
+    // specific tests below for the trigger itself).
     const db = migratedFakeD1()
     await seedProduct(db, 'book-direct')
-    await seedUpload(db, 'uploads/direct-race.jpg')
+    await seedUpload(db, 'uploads/direct-race.jpg', OWNER)
 
     await db.batch([
       db.prepare("INSERT INTO orders (full_name, email, address, city, country, subtotal, total, idempotency_key) VALUES ('A','a@example.com','x','y','z',1,1,'direct-a')"),
       db
-        .prepare(`INSERT INTO upload_claims (upload_key, order_id) VALUES (?, (SELECT id FROM orders WHERE idempotency_key = ?))`)
-        .bind('uploads/direct-race.jpg', 'direct-a')
+        .prepare(`INSERT INTO upload_claims (upload_key, order_id, owner_token) VALUES (?, (SELECT id FROM orders WHERE idempotency_key = ?), ?)`)
+        .bind('uploads/direct-race.jpg', 'direct-a', OWNER)
     ])
 
     await expect(
       db.batch([
         db.prepare("INSERT INTO orders (full_name, email, address, city, country, subtotal, total, idempotency_key) VALUES ('B','b@example.com','x','y','z',1,1,'direct-b')"),
         db
-          .prepare(`INSERT INTO upload_claims (upload_key, order_id) VALUES (?, (SELECT id FROM orders WHERE idempotency_key = ?))`)
-          .bind('uploads/direct-race.jpg', 'direct-b')
+          .prepare(`INSERT INTO upload_claims (upload_key, order_id, owner_token) VALUES (?, (SELECT id FROM orders WHERE idempotency_key = ?), ?)`)
+          .bind('uploads/direct-race.jpg', 'direct-b', OWNER)
       ])
     ).rejects.toThrow()
 
@@ -263,6 +266,77 @@ describe('createOrder — atomic photo claiming under concurrency (TOCTOU regres
     expect(orderB).toBeNull()
     const claims = await db.prepare('SELECT COUNT(*) AS n FROM upload_claims WHERE upload_key = ?').bind('uploads/direct-race.jpg').first<{ n: number }>()
     expect(claims!.n).toBe(1)
+  })
+
+  it('DB-enforced ownership trigger (migration 0006): a claim insert with the WRONG owner_token is rejected even though the row would otherwise be a fresh PRIMARY KEY (no PK conflict possible)', async () => {
+    const db = migratedFakeD1()
+    await seedProduct(db, 'book-trigger-owner')
+    await seedUpload(db, 'uploads/trigger-owner-mismatch.jpg', OWNER)
+
+    await db.prepare("INSERT INTO orders (full_name, email, address, city, country, subtotal, total, idempotency_key) VALUES ('C','c@example.com','x','y','z',1,1,'trigger-owner')").run()
+    await expect(
+      db
+        .prepare(`INSERT INTO upload_claims (upload_key, order_id, owner_token) VALUES (?, (SELECT id FROM orders WHERE idempotency_key = ?), ?)`)
+        .bind('uploads/trigger-owner-mismatch.jpg', 'trigger-owner', 'a-completely-different-owner-token')
+        .run()
+    ).rejects.toThrow()
+    const claims = await db.prepare('SELECT COUNT(*) AS n FROM upload_claims WHERE upload_key = ?').bind('uploads/trigger-owner-mismatch.jpg').first<{ n: number }>()
+    expect(claims!.n).toBe(0)
+  })
+
+  it('DB-enforced ownership trigger (migration 0006): a claim insert against an EXPIRED upload is rejected even with the correct owner_token', async () => {
+    const db = migratedFakeD1()
+    await seedProduct(db, 'book-trigger-expired')
+    const pastExpiry = Math.floor(Date.now() / 1000) - 3600
+    await db
+      .prepare('INSERT INTO photo_uploads (upload_key, owner_token, content_type, byte_size, width, height, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .bind('uploads/trigger-expired.jpg', OWNER, 'image/jpeg', 12345, 900, 900, pastExpiry)
+      .run()
+
+    await db.prepare("INSERT INTO orders (full_name, email, address, city, country, subtotal, total, idempotency_key) VALUES ('D','d@example.com','x','y','z',1,1,'trigger-expired')").run()
+    await expect(
+      db
+        .prepare(`INSERT INTO upload_claims (upload_key, order_id, owner_token) VALUES (?, (SELECT id FROM orders WHERE idempotency_key = ?), ?)`)
+        .bind('uploads/trigger-expired.jpg', 'trigger-expired', OWNER)
+        .run()
+    ).rejects.toThrow()
+  })
+
+  it('DB-enforced ownership trigger (migration 0006): a claim insert against an ALREADY-CONSUMED upload is rejected even with the correct owner_token', async () => {
+    const db = migratedFakeD1()
+    await seedProduct(db, 'book-trigger-consumed')
+    await seedUpload(db, 'uploads/trigger-consumed.jpg', OWNER)
+    await db.prepare("UPDATE photo_uploads SET consumed_at = CURRENT_TIMESTAMP WHERE upload_key = 'uploads/trigger-consumed.jpg'").run()
+
+    await db.prepare("INSERT INTO orders (full_name, email, address, city, country, subtotal, total, idempotency_key) VALUES ('E','e@example.com','x','y','z',1,1,'trigger-consumed')").run()
+    await expect(
+      db
+        .prepare(`INSERT INTO upload_claims (upload_key, order_id, owner_token) VALUES (?, (SELECT id FROM orders WHERE idempotency_key = ?), ?)`)
+        .bind('uploads/trigger-consumed.jpg', 'trigger-consumed', OWNER)
+        .run()
+    ).rejects.toThrow()
+  })
+
+  it('an expiry that occurs AFTER the applications pre-check but BEFORE the batch executes is still caught by the DB-enforced trigger, not just the pre-check', async () => {
+    const db = migratedFakeD1()
+    await seedProduct(db, 'book-late-expiry')
+    await seedUpload(db, 'uploads/late-expiry.jpg', OWNER)
+
+    // Pre-check would pass right now (not yet expired)...
+    const preCheck = await checkUploadOwnership(db, 'uploads/late-expiry.jpg', OWNER)
+    expect(preCheck.ok).toBe(true)
+
+    // ...but the upload expires in the window between the pre-check and
+    // the batch actually running (simulated directly here).
+    await db.prepare("UPDATE photo_uploads SET expires_at = ? WHERE upload_key = 'uploads/late-expiry.jpg'").bind(Math.floor(Date.now() / 1000) - 1).run()
+
+    await db.prepare("INSERT INTO orders (full_name, email, address, city, country, subtotal, total, idempotency_key) VALUES ('F','f@example.com','x','y','z',1,1,'late-expiry')").run()
+    await expect(
+      db
+        .prepare(`INSERT INTO upload_claims (upload_key, order_id, owner_token) VALUES (?, (SELECT id FROM orders WHERE idempotency_key = ?), ?)`)
+        .bind('uploads/late-expiry.jpg', 'late-expiry', OWNER)
+        .run()
+    ).rejects.toThrow()
   })
 })
 

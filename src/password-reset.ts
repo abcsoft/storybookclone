@@ -6,6 +6,7 @@ import { hashPassword } from './auth'
 import { destroyAllSessionsForUser } from './auth'
 import { sha256Hex } from './secrets'
 import { getEmailAdapter, FailClosedEmailAdapter } from './email'
+import { isRateLimited as isRateLimitedShared, recordRateLimitEvent } from './rate-limit'
 
 const RESET_TOKEN_TTL_SECONDS = 30 * 60 // 30 minutes
 const RATE_LIMIT_MAX = 3
@@ -15,17 +16,8 @@ function toHex(buf: Uint8Array) {
   return [...buf].map((x) => x.toString(16).padStart(2, '0')).join('')
 }
 
-async function isRateLimited(db: D1Database, bucket: string): Promise<boolean> {
-  const since = Math.floor(Date.now() / 1000) - RATE_LIMIT_WINDOW_SECONDS
-  const row = await db
-    .prepare('SELECT COUNT(*) AS n FROM rate_limit_events WHERE bucket = ? AND created_at > ?')
-    .bind(bucket, since)
-    .first<{ n: number }>()
-  return (row?.n || 0) >= RATE_LIMIT_MAX
-}
-
-async function recordRateLimitEvent(db: D1Database, bucket: string) {
-  await db.prepare('INSERT INTO rate_limit_events (bucket, created_at) VALUES (?, ?)').bind(bucket, Math.floor(Date.now() / 1000)).run()
+function isRateLimited(db: D1Database, bucket: string): Promise<boolean> {
+  return isRateLimitedShared(db, bucket, { max: RATE_LIMIT_MAX, windowSeconds: RATE_LIMIT_WINDOW_SECONDS })
 }
 
 /**

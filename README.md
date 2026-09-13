@@ -78,8 +78,16 @@ even locally — that's the same safe default a real deployment gets.
 In a deployed environment, set a real `GUEST_ORDER_TOKEN_SECRET` instead:
 `wrangler secret put GUEST_ORDER_TOKEN_SECRET` (a long random string —
 never `ENVIRONMENT=development` in production). `GUEST_ORDER_TOKEN_SECRET_PREV`
-supports rotation without breaking outstanding guest order links; see
-`docs/API_V1.md`.
+supports rotation without breaking outstanding guest order links, but ONLY
+for a bounded window — it requires `GUEST_ORDER_TOKEN_SECRET_PREV_DEADLINE`
+(a Unix timestamp) to also be set, or resolution fails closed. Optional:
+`GUEST_ORDER_TOKEN_TTL_SECONDS` overrides the token lifetime (default 30
+days). See `docs/API_V1.md` for the exact token format and rotation
+semantics.
+
+For a future real AI provider integration (Phase 3 — nothing calls this
+yet): `wrangler secret put AI_PROVIDER_API_KEY`. No provider key is ever
+stored in D1; `/admin/ai-settings` only shows whether this secret is set.
 
 ## Local admin bootstrap
 There is **no default admin account**. To get one on your local D1:
@@ -93,9 +101,9 @@ This writes directly to your local `.wrangler` D1 state only (`--remote` is refu
 | Command | What it does |
 |---|---|
 | `npm run typecheck` | `tsc --noEmit` — must report zero errors |
-| `npm test` | Unit tests (Vitest): password hashing, authorization separation, cart migration/validation, upload byte-signature validation, order idempotency/atomicity, guest-token tampering, password-reset tokens, and more — see `test/unit/` |
-| `npm run test:integration` | Migration smoke test — applies every file in `migrations/` to an empty DB and to an already-migrated ("existing baseline") DB using Node's built-in SQLite, and asserts every expected table/column exists |
-| `npm run test:e2e` | Three real, separate browser journeys (Chromium via Playwright, real local `wrangler dev` + local D1/R2): a **guest** checkout (never logs in — verifies `user_id IS NULL`, the signed guest link, and tampered/cross-order token denial), an **authenticated** checkout (My Books, cross-customer denial, PDF request, forgot/reset password), and a **browser-level double-submission race** (two genuinely concurrent same-Idempotency-Key requests from the page's own JS, proving exactly one order/claim results) |
+| `npm test` | Unit tests (Vitest): password hashing, authorization separation, cart migration/validation, upload byte-signature validation, order idempotency/atomicity, database-enforced (trigger-level) upload-claim ownership, versioned/expiring/nonce-bearing guest-token tampering and rotation (fake-clock boundaries), PDF-request capability expiry/ownership/rate-limiting, password-reset tokens, and more — see `test/unit/` |
+| `npm run test:integration` | Migration smoke test (Node's built-in SQLite) — applies every file in `migrations/` to an empty DB, from the accepted Phase 0 baseline, from the current Phase 1 (0004/0005) baseline, with pre-existing rows (a legacy non-empty `ai_settings.api_key`, a pre-0006 `upload_claims` row) present before the upgrade, and repeated-apply behavior — asserting every expected table/column/trigger exists and legacy data is handled correctly |
+| `npm run test:e2e` | Three real, separate browser journeys (Chromium via Playwright, real local `wrangler dev` + local D1/R2): a **guest** checkout (never logs in — verifies `user_id IS NULL`, the signed guest link stays valid on reopen, and tampered/cross-order/missing token denial), an **authenticated** checkout (My Books, cross-customer denial, PDF request, forgot/reset password), and a **browser-level double-submission race** (two genuinely concurrent same-Idempotency-Key requests from the page's own JS, proving exactly one order/claim results, plus a same-key-changed-payload request proving `409`) |
 | `npm run secrets:scan` | Pattern-based scan of tracked files for hash/key/token-shaped secrets |
 | `npm run check` | Runs all of the above plus `npm run build` — the CI-equivalent local gate |
 | `node scripts/audit-frontend.mjs <label>` | Live-browser visual/functional audit of every public + admin route at desktop and mobile widths — see `docs/FRONTEND_AUDIT.md` |
@@ -104,6 +112,7 @@ This writes directly to your local `.wrangler` D1 state only (`--remote` is refu
 This repository is being brought to production readiness in phases; see `STORYBOOKCLONE_COMPLETION_CODING_PACK.md` for the full plan. As of the Phase 1 (`fix/core-commerce-journey`) branch:
 - The browse → personalize → photo upload → cart → server quote → checkout → order → My Books → reader/PDF-request journey works end to end (see `docs/API_V1.md`); there is no durable, versioned personalization/generation/payment **domain** yet (still Phases 2–4) — orders/personalization live on the existing `orders`/`order_items` schema, not a separate user-book/preview-version model.
 - The admin panel (dashboard, orders, products, PDP editor, discounts, users, messages, AI settings) renders correctly and is reachable via the bootstrap above (`docs/FRONTEND_AUDIT.md`), but is not yet the complete operational control plane described in the completion pack's Phase 6 (granular roles, audit log, generation/refund/fulfillment operator views).
+- AI book generation is genuinely not implemented, not simulated: `POST /api/generate-book` returns an honest `501`, `/api/admin/test-ai-connection` makes zero outbound requests for any provider, and no provider API key is ever stored in D1 (`ai_settings.api_key` is always empty — a real key can only ever live in the `AI_PROVIDER_API_KEY` environment secret, unused by any code path yet). See `docs/FRONTEND_AUDIT.md`'s third corrective round.
 - A historical commit on this repository briefly tracked a raw database dump containing real password hashes, session tokens, and an API key. See `docs/SECURITY_INCIDENT_REMEDIATION.md` for the required rotation/revocation steps — do this before treating any of that historical data as still-valid or safe.
 
 ## Deployment

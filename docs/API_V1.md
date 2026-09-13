@@ -66,19 +66,31 @@ not call a real payment provider (Phase 4). Every `photoKey` must be a real,
 unexpired, unconsumed upload owned by the requesting browser/session (see
 `ww_upload` above) or the whole order is rejected.
 
-**Atomic write, including photo claiming.** The order row, every
-`order_items` row, AND a claim row per unique `photoKey` (`upload_claims`,
-`upload_key` PRIMARY KEY) are written in ONE atomic `db.batch()` — never a
-bare order INSERT followed by separate items/consumption updates. This is
-what closes a real TOCTOU race: if two different checkouts (different
-`Idempotency-Key`s) concurrently try to claim the same photo, the second
-one's `upload_claims` insert hits the UNIQUE constraint, which fails —
-and rolls back — that entire batch (its order and item rows included).
-Exactly one of the two can ever win; the loser gets a deterministic `409`
-(or, depending on timing, a `400` from the faster pre-check — both are
-safe). One order MAY legitimately reuse the same `photoKey` across
-multiple of its OWN items (e.g. a matching sticker pack) — claimed once,
-not once per item.
+**Atomic write, including a DATABASE-ENFORCED photo claim.** The order row,
+every `order_items` row, AND a claim row per unique `photoKey`
+(`upload_claims`) are written in ONE atomic `db.batch()` — never a bare
+order INSERT followed by separate items/consumption updates. Each claim
+insert is guarded by TWO independent, atomically-enforced conditions, both
+checked BY THE DATABASE at the moment the statement runs (migration
+`0006_db_enforced_upload_claim.sql`), not by application code beforehand:
+1. `upload_claims.upload_key` is `PRIMARY KEY` — a second, concurrently-
+   committing claim for the same key hits a UNIQUE-constraint violation.
+2. `trg_upload_claims_enforce_ownership`, a `BEFORE INSERT` trigger, aborts
+   the insert unless a `photo_uploads` row genuinely exists with the SAME
+   `upload_key`, the SAME `owner_token` as the claim attempt, `consumed_at
+   IS NULL`, and `expires_at` still in the future — checked at insert time,
+   not at some earlier pre-check that could be stale by the time the batch
+   actually runs.
+
+Either failure fails — and rolls back — the entire batch (order and item
+rows included). Exactly one of two racing checkouts can ever win; the loser
+gets a deterministic `409` (claimed by someone else) or `400` (its own
+upload turned out to be foreign/expired/consumed by the time the batch
+ran — both are safe, specific outcomes, never a raw exception). `src/uploads.ts`'s
+`checkUploadOwnership()` still runs first as a fast, friendly pre-check for
+the common non-racing case — but it is NOT the authority; the trigger is.
+One order MAY legitimately reuse the same `photoKey` across multiple of its
+OWN items (e.g. a matching sticker pack) — claimed once, not once per item.
 
 Same `Idempotency-Key` + same body → replays the original order (`replayed:
 true`, same `id`), including under real concurrent double-submission. Same
@@ -86,27 +98,44 @@ key + a *different* body → `409`.
 
 → `{ ok: true, id: <order id>, guestToken: "<versioned token>", replayed: boolean }`
 
-`guestToken` is a versioned, expiring HMAC-SHA256 capability token —
-`v1.<orderId>.<issuedAt>.<expiresAt>.<hexHmac>` (see `signGuestOrderToken`/
-`verifyGuestOrderToken` in `src/orders.ts`) — signed with
-`GUEST_ORDER_TOKEN_SECRET`, a **Cloudflare Worker secret binding**, never
-the database (a prior iteration of this baseline generated and stored this
-key in D1's `app_secrets` table; that design is retired — see
-`src/secrets.ts`). The order id, issued time and expiry are all covered BY
-the signature, not appended after it, so tampering with any segment
-invalidates the whole token. Verifying re-checks the version, the order id
-match, and that `expiresAt` hasn't passed — expiry is a defense-in-depth
-backstop (currently 1 year from issuance), not a short-lived session token;
-a guest reopening/refreshing the same confirmation link days or weeks later
-is expected use and stays valid. Missing the secret in a non-development
+`guestToken` is a versioned, expiring, nonce-bearing HMAC-SHA256 capability
+token — `v1.<orderId>.<issuedAt>.<expiresAt>.<nonce>.<hexHmac>` (see
+`signGuestOrderToken`/`verifyGuestOrderToken` in `src/orders.ts`) — signed
+with `GUEST_ORDER_TOKEN_SECRET`, a **Cloudflare Worker secret binding**,
+never the database (a prior iteration of this baseline generated and
+stored this key in D1's `app_secrets` table; that design is retired — see
+`src/secrets.ts`). The order id, issued time, expiry AND nonce are all
+covered BY the signature, not appended after it, so tampering with any
+segment invalidates the whole token; the nonce makes signing
+non-deterministic (two tokens for the same order are never identical),
+closing the earlier gap where a bare `HMAC(secret, orderId)` was a pure
+function an attacker with the secret could regenerate at will with no way
+to tell one issuance from another.
+
+Verifying re-checks the version, the order id match, that `issuedAt` isn't
+in the future (a few seconds' tolerance for ordinary clock skew — not a
+security boundary), and that `expiresAt` hasn't passed. TTL defaults to 30
+days (`DEFAULT_GUEST_ORDER_TOKEN_TTL_SECONDS`, `src/secrets.ts`),
+overridable via `GUEST_ORDER_TOKEN_TTL_SECONDS` — a bounded default, long
+enough that a guest reopening the same confirmation link days or weeks
+later stays valid (expected use, not a threat), short enough that a leaked
+token doesn't work forever. Missing the secret in a non-development
 environment fails closed (`503` on order creation, `404`/generic-page on
 guest access) rather than falling back to anything guessable.
-`GUEST_ORDER_TOKEN_SECRET_PREV` supports rotation: tokens signed under the
-old secret keep verifying while both are set; remove `_PREV` to finish the
-rotation and expire them. This is what makes `/order-success?id=&token=`
-and `GET /api/v1/orders/:id/guest` safe to be unauthenticated: knowing/
-guessing a sequential order id alone proves nothing, and a D1 export alone
-can't forge a token (the signing secret isn't in the database).
+
+**Rotation is bounded, not indefinite.** `GUEST_ORDER_TOKEN_SECRET_PREV`
+lets tokens signed under an old secret keep verifying during a migration —
+but ONLY while BOTH the token's own expiry AND a REQUIRED
+`GUEST_ORDER_TOKEN_SECRET_PREV_DEADLINE` (a Unix timestamp, seconds) have
+not yet passed. Setting `_PREV` without a valid `_PREV_DEADLINE` is treated
+as a misconfiguration and fails closed (`MissingSecretError`) — an
+unbounded "previous key works forever until someone remembers to unset it"
+window is not an accepted design here. Remove `_PREV` (or let its deadline
+pass) to disable old-key verification. This is what makes
+`/order-success?id=&token=` and `GET /api/v1/orders/:id/guest` safe to be
+unauthenticated: knowing/guessing a sequential order id alone proves
+nothing, and a D1 export alone can't forge a token (the signing secret
+isn't in the database).
 
 Legacy alias (kept, tested): `POST /api/orders` — identical behavior.
 
@@ -154,23 +183,44 @@ call this exact same core logic (`src/password-reset.ts`) — there is only
 one implementation of the rules, not a parallel one for the HTML forms.
 
 ## POST /api/v1/books/pdf-requests
-Body: `{ email, bookSlug, childName?, childAge?, coverType?, orderItemId? }`.
+Body: `{ email, bookSlug, childName?, childAge?, coverType?, orderItemId?, guestOrderToken? }`.
 Writes a row to `pdf_requests` and returns immediately — **this queues a
 request, it does not generate a PDF** (that pipeline is Phase 7). The
 response and the stored `status` are always `"queued"` in this baseline;
-never claim `"ready"`/`"sent"` here.
+never claim `"ready"`/`"sent"` here. Validated before anything is written:
+- `coverType` (if supplied) must be exactly `"hardcover"` or `"softcover"`.
+- `bookSlug` must name a real, currently-active product.
+- `orderItemId` (if supplied) must resolve to a real `order_items` row the
+  caller can actually prove ownership of: the authenticated session user
+  (via `orders.user_id`), or — for a guest — a `guestOrderToken` that
+  verifies against that exact order (same mechanism as `POST
+  /api/v1/orders`'s `guestToken`, see above). A missing/wrong/foreign
+  `orderItemId` is rejected with the same generic `400` regardless of
+  which of those is true — the response never confirms whether the id
+  exists at all.
+- The submitted `email` is contact info only — it is NEVER used to decide
+  ownership of anything above.
+- Rate limited per email bucket (`pdf-request:<email>`, `rate_limit_events`
+  — same DB-backed mechanism as forgot-password): 5 requests/hour → `429`.
+
 → `{ success: true, id, status: "queued", message }`
 
 **Response includes a `token`** — a random capability token whose SHA-256
 hash alone is stored (`pdf_requests.access_token_hash`); shown only in this
-one response.
+one response. It **expires** (`pdf_requests.access_token_expires_at`,
+migration `0007_pdf_capability_expiry.sql`) — 30 days from creation by
+default — after which the same token is rejected exactly like a wrong one.
+A row created before migration 0007 has no recorded expiry and is treated
+as already-expired (fails closed), never as "valid forever".
 
 ## GET /api/v1/books/pdf-requests/:id?token=
 Owner/guest access. Not a bare sequential id: authorized only for the admin
-role, the authenticated owner (`user_id` match), or a request carrying the
-`token` returned at creation. Anyone else → `404` (not `403`, same
-reasoning as guest order access). Response never includes email or other
-PII. → `{ id, status, book_slug, cover_type, created_at, updated_at }`
+role, the authenticated owner (`user_id` match), or a request carrying a
+valid, UNEXPIRED `token` returned at creation. Anyone else — including a
+correct-but-expired token — gets `404` (not `403`, same reasoning as guest
+order access). Response is deliberately minimal: `{ id, status, book_slug,
+cover_type, created_at, updated_at }` — no email, no child name, no token
+material of any kind.
 
 ## GET /api/v1/admin/pdf-requests/:id
 🔒 Admin-only — a *separate* endpoint from the one above, not the same

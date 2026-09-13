@@ -244,7 +244,6 @@ export function adminProducts(products: Product[], flash?: string) {
 export function adminProductForm(p: Product | null, flash?: string) {
   const isNew = !p
   const v = (k: keyof Product) => (p ? (p[k] as any) ?? '' : '')
-  const flags = (p as any) || {}
   return adminPage({
     title: isNew ? 'New product' : `Edit ${p!.title}`,
     active: 'products',
@@ -269,8 +268,8 @@ export function adminProductForm(p: Product | null, flash?: string) {
             ${['girl', 'boy', 'unisex'].map((g) => `<option value="${g}" ${v('gender') === g ? 'selected' : ''}>${g}</option>`).join('')}
           </select>
         </label>
-        <label>Age min<input name="age_min" type="number" min="0" max="18" value="${isNew ? 2 : (flags.ageMin ?? v('ageMin'))}"></label>
-        <label>Age max<input name="age_max" type="number" min="0" max="18" value="${isNew ? 10 : (flags.ageMax ?? v('ageMax'))}"></label>
+        <label>Age min<input name="age_min" type="number" min="0" max="18" value="${isNew ? 2 : (p?.ageMin ?? v('ageMin'))}"></label>
+        <label>Age max<input name="age_max" type="number" min="0" max="18" value="${isNew ? 10 : (p?.ageMax ?? v('ageMax'))}"></label>
         <label>Pages<input name="pages" type="number" min="1" value="${isNew ? 32 : v('pages')}"></label>
         <label>Ages label<input name="ages" value="${esc(String(v('ages') || '4–10'))}"></label>
         <label>Reviews count<input name="reviews" type="number" min="0" value="${isNew ? 0 : v('reviews')}"></label>
@@ -282,10 +281,10 @@ export function adminProductForm(p: Product | null, flash?: string) {
       <label>Full story<textarea name="story" rows="5">${esc(String(v('story')))}</textarea></label>
       <label>Traits (one per line)<textarea name="traits" rows="3">${esc(((p?.traits as string[]) || []).join('\n'))}</textarea></label>
       <div class="a-checks">
-        <label><input type="checkbox" name="bestseller" ${flags.bestseller ? 'checked' : ''}> Bestseller</label>
-        <label><input type="checkbox" name="new_release" ${flags.newRelease ? 'checked' : ''}> New release</label>
-        <label><input type="checkbox" name="career" ${flags.career ? 'checked' : ''}> Career adventure</label>
-        <label><input type="checkbox" name="active" ${isNew || (p as any)?.active ? 'checked' : ''}> Visible in store</label>
+        <label><input type="checkbox" name="bestseller" ${p?.bestseller ? 'checked' : ''}> Bestseller</label>
+        <label><input type="checkbox" name="new_release" ${p?.newRelease ? 'checked' : ''}> New release</label>
+        <label><input type="checkbox" name="career" ${p?.career ? 'checked' : ''}> Career adventure</label>
+        <label><input type="checkbox" name="active" ${isNew || p?.active ? 'checked' : ''}> Visible in store</label>
       </div>
       <button class="a-btn" type="submit">${isNew ? 'Create product' : 'Save changes'}</button>
     </form>`
@@ -401,14 +400,20 @@ export type AiSettingsRow = {
   enable_ai_preview: number
 }
 
-export function adminAiSettings(settings: AiSettingsRow, flash?: string) {
+// Phase 1 does not store, accept, or use any real provider API key anywhere
+// in D1 — see migration 0008 and the corrective-round report. This page
+// shows only WHETHER a real key is configured as a Cloudflare Worker secret
+// binding (env), never a value from the database and never the secret
+// itself. `envKeyConfigured` is computed by the route handler from
+// `c.env.AI_PROVIDER_API_KEY` (or equivalent), not from `settings`.
+export function adminAiSettings(settings: AiSettingsRow, envKeyConfigured: boolean, flash?: string) {
   return adminPage({
     title: 'AI & Book API Settings',
     active: 'ai-settings',
     body: `
-    <h1>🤖 AI Book Generator & WonderWraps API Settings</h1>
-    <p class="muted">Configure the external AI storybook generation API (WonderWraps API, OpenAI, Replicate Face-Swap, Fal.ai, or Custom Endpoint) to generate real personalized book covers & story spreads.</p>
-    
+    <h1>🤖 AI Book Generator Settings</h1>
+    <p class="muted">Configure the external AI storybook generation provider (OpenAI, Replicate Face-Swap, Fal.ai, or a custom endpoint). No generation pipeline is wired up yet — see Phase 3 in the completion pack.</p>
+
     ${flash ? `<p class="a-notice ok">${esc(flash)}</p>` : ''}
 
     <form class="a-card a-form" method="post" action="/admin/ai-settings">
@@ -416,25 +421,26 @@ export function adminAiSettings(settings: AiSettingsRow, flash?: string) {
       <div class="a-grid2">
         <label>API Provider
           <select name="api_provider" id="api_provider">
-            <option value="wonderwraps" ${settings.api_provider === 'wonderwraps' ? 'selected' : ''}>WonderWraps API (Official)</option>
             <option value="openai" ${settings.api_provider === 'openai' ? 'selected' : ''}>OpenAI (DALL-E 3 & GPT-4o)</option>
             <option value="replicate" ${settings.api_provider === 'replicate' ? 'selected' : ''}>Replicate (InstantID / Face-Swap)</option>
             <option value="fal" ${settings.api_provider === 'fal' ? 'selected' : ''}>Fal.ai (Flux Fast Storybook)</option>
             <option value="custom" ${settings.api_provider === 'custom' ? 'selected' : ''}>Custom Webhook / REST Endpoint</option>
           </select>
         </label>
-        <label>API Endpoint URL *
-          <input name="api_endpoint" required value="${esc(settings.api_endpoint || 'https://api.wonderwraps.com/v1/generate-book')}" placeholder="https://api.wonderwraps.com/v1/generate-book">
+        <label>API Endpoint URL
+          <input name="api_endpoint" value="${esc(settings.api_endpoint || '')}" placeholder="https://api.example.com/v1/generate-book">
         </label>
       </div>
 
       <div class="a-grid2">
         <label>API Key / Bearer Secret Token
-          <input name="api_key" type="password" value="" placeholder="${settings.api_key ? '•••• saved — leave blank to keep it, or enter a new key to replace it' : 'sk-live-… or ww_sec_…'}" autocomplete="off">
-          <span class="tiny muted">Not used by any real generation call yet — see Phase 3. Never shown back once saved; leaving this blank keeps the current key.</span>
+          <p class="tiny muted" style="margin:0;padding:10px 12px;background:${envKeyConfigured ? '#f0fdf4' : '#fef2f2'};border:1px solid ${envKeyConfigured ? '#bbf7d0' : '#fecaca'};border-radius:8px;">
+            ${envKeyConfigured ? '✅ A key is configured as an environment secret (AI_PROVIDER_API_KEY).' : '⚠️ No environment secret configured — set one with <code>wrangler secret put AI_PROVIDER_API_KEY</code>.'}
+            This form cannot set or view it — no provider key is ever stored in the database (see migration 0008). Real key management is a Phase 3 item.
+          </p>
         </label>
         <label>AI Model Identifier
-          <input name="model" value="${esc(settings.model || 'wonderwraps-v2')}" placeholder="e.g. wonderwraps-v2, dall-e-3, instantid-v1">
+          <input name="model" value="${esc(settings.model || '')}" placeholder="e.g. dall-e-3, instantid-v1">
         </label>
       </div>
 
@@ -488,8 +494,7 @@ export function adminAiSettings(settings: AiSettingsRow, flash?: string) {
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({
               endpoint: document.querySelector('input[name="api_endpoint"]')?.value,
-              provider: document.querySelector('select[name="api_provider"]')?.value,
-              apiKey: document.querySelector('input[name="api_key"]')?.value
+              provider: document.querySelector('select[name="api_provider"]')?.value
             })
           });
           const data = await res.json();

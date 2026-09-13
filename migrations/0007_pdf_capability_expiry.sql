@@ -1,0 +1,15 @@
+-- Migration 0007: expiring PDF-request status capability.
+-- Forward-only.
+--
+-- Migration 0005 added pdf_requests.access_token_hash (a capability token,
+-- hashed) so a guest could check their own request's status without an
+-- account — but that capability never expired. This adds a real expiry.
+--
+-- Existing rows (created before this migration) keep access_token_expires_at
+-- NULL. That is intentionally treated as "no longer valid" by the
+-- application (never "valid forever") — see handlePdfRequestStatus in
+-- src/index.tsx — the same fail-closed default this project uses
+-- everywhere else data predates a security fix (see e.g. the Phase 0
+-- SECURITY_INCIDENT_REMEDIATION note). This is pre-launch/dev data; no real
+-- guest is depending on an old link surviving this migration.
+ALTER TABLE pdf_requests ADD COLUMN access_token_expires_at INTEGER;

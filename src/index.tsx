@@ -66,6 +66,7 @@ import { resolveGuestOrderTokenSecrets, MissingSecretError, sha256Hex, timingSaf
 import { validatePhotoBytes, contentTypeFor, recordUpload, checkUploadOwnership, getUploadOwner, MAX_PHOTO_BYTES } from './uploads'
 import { PHOTO_POLICY, photoPolicySummary } from './photo-policy'
 import { requestPasswordReset, resetPassword } from './password-reset'
+import { isRateLimited, recordRateLimitEvent } from './rate-limit'
 
 type Bindings = {
   DB: D1Database
@@ -85,6 +86,16 @@ type Bindings = {
   // GUEST_ORDER_TOKEN_SECRET`. _PREV supports rotation — see src/secrets.ts.
   GUEST_ORDER_TOKEN_SECRET?: string
   GUEST_ORDER_TOKEN_SECRET_PREV?: string
+  // Optional overrides for the guest-order-token TTL/rotation window — see
+  // resolveGuestOrderTokenSecrets() in src/secrets.ts for full semantics.
+  GUEST_ORDER_TOKEN_TTL_SECONDS?: string
+  GUEST_ORDER_TOKEN_SECRET_PREV_DEADLINE?: string
+  // Phase 3 placeholder: NOT read by any real generation call yet (none
+  // exists — see /api/generate-book). The admin AI-settings page reads
+  // only whether this is SET, to show a truthful "configured: yes/no"
+  // status; it never reads or displays the value, and no D1 column ever
+  // stores it (migration 0008). `wrangler secret put AI_PROVIDER_API_KEY`.
+  AI_PROVIDER_API_KEY?: string
 }
 type Vars = { user: AuthUser | null }
 
@@ -540,7 +551,8 @@ app.get('/order-success', async (c) => {
     let guestOk = false
     if (!isOwner && token) {
       try {
-        guestOk = await verifyGuestOrderToken(resolveGuestOrderTokenSecrets(c.env), id, token)
+        const cfg = resolveGuestOrderTokenSecrets(c.env)
+        guestOk = await verifyGuestOrderToken(cfg.secrets, id, token, { previousDeadline: cfg.previousDeadline })
       } catch (err) {
         if (!(err instanceof MissingSecretError)) throw err
         // Fail closed: no signing secret configured means no guest token
@@ -726,9 +738,9 @@ async function handleCreateOrder(c: Context<{ Bindings: Bindings; Variables: Var
   const user = c.get('user')
   const ownerToken = getOrSetUploadOwnerToken(c)
 
-  let secrets
+  let tokenConfig
   try {
-    secrets = resolveGuestOrderTokenSecrets(c.env)
+    tokenConfig = resolveGuestOrderTokenSecrets(c.env)
   } catch (err) {
     if (err instanceof MissingSecretError) {
       return c.json({ error: 'Checkout is temporarily unavailable (server misconfigured). Please try again shortly.' }, 503)
@@ -736,7 +748,11 @@ async function handleCreateOrder(c: Context<{ Bindings: Bindings; Variables: Var
     throw err
   }
 
-  const result = await createOrder(c.env.DB, { ...body, idempotencyKey }, { userId: user?.id ?? null, uploadOwnerToken: ownerToken, secrets })
+  const result = await createOrder(
+    c.env.DB,
+    { ...body, idempotencyKey },
+    { userId: user?.id ?? null, uploadOwnerToken: ownerToken, secrets: tokenConfig.secrets, guestTokenTtlSeconds: tokenConfig.ttlSeconds }
+  )
   if (!result.ok) return c.json({ error: result.error }, result.status as any)
   return c.json({ ok: true, id: result.orderId, guestToken: result.guestToken, replayed: result.replayed })
 }
@@ -749,7 +765,8 @@ app.get('/api/v1/orders/:id/guest', async (c) => {
   const token = c.req.query('token') || ''
   let ok = false
   try {
-    ok = await verifyGuestOrderToken(resolveGuestOrderTokenSecrets(c.env), id, token)
+    const cfg = resolveGuestOrderTokenSecrets(c.env)
+    ok = await verifyGuestOrderToken(cfg.secrets, id, token, { previousDeadline: cfg.previousDeadline })
   } catch (err) {
     if (!(err instanceof MissingSecretError)) throw err
   }
@@ -1211,14 +1228,19 @@ app.get('/admin/users', async (c) => {
 })
 
 // ---- AI Settings & Book Generation API Settings ----
+// No real provider API key is ever accepted, stored, returned, or read
+// from D1 here — see migration 0008 and docs/API_V1.md. ai_settings.api_key
+// is written only ever as '' below; a real key can only ever come from the
+// AI_PROVIDER_API_KEY environment secret (Phase 3's real integration), and
+// this page shows only whether that secret is SET, never its value.
 app.get('/admin/ai-settings', async (c) => {
   let settings = await c.env.DB.prepare('SELECT * FROM ai_settings WHERE id = 1').first<AiSettingsRow>()
   if (!settings) {
     settings = {
-      api_provider: 'wonderwraps',
-      api_endpoint: 'https://api.wonderwraps.com/v1/generate-book',
+      api_provider: 'custom',
+      api_endpoint: '',
       api_key: '',
-      model: 'wonderwraps-v2',
+      model: '',
       style_preset: 'fairytale-watercolour',
       prompt_template: 'A magical illustrated fairytale storybook cover and inside scene depicting {child_name}, age {child_age}, in the story {book_title}. Art style: fairytale watercolor, warm soft lighting, vibrant colors.',
       face_swap_strength: 0.85,
@@ -1227,31 +1249,15 @@ app.get('/admin/ai-settings', async (c) => {
       enable_ai_preview: 1
     }
   }
-  return c.html(adminAiSettings(settings, c.req.query('saved') ? 'AI API Settings saved successfully.' : undefined))
+  const envKeyConfigured = !!c.env.AI_PROVIDER_API_KEY
+  return c.html(adminAiSettings(settings, envKeyConfigured, c.req.query('saved') ? 'AI API Settings saved successfully.' : undefined))
 })
 
 app.post('/admin/ai-settings', async (c) => {
   const b = await c.req.parseBody()
-  const provider = String(b.api_provider || 'wonderwraps')
-  const endpoint = String(b.api_endpoint || 'https://api.wonderwraps.com/v1/generate-book').trim()
-  // The form never renders the current key back (see adminAiSettings) — a
-  // blank submission means "leave it unchanged", not "clear it", so a save
-  // triggered by editing an unrelated field doesn't wipe out the key.
-  //
-  // No real provider API key is ever written to D1 (corrective-round
-  // requirement): there is no generation pipeline that reads this column
-  // yet (Phase 3), so persisting a real secret here would be pure
-  // liability with no functional benefit — a copy of this table (backup,
-  // export, injection bug) would leak a live key. Only a masked preview
-  // (last 4 characters) is stored, purely so the admin UI can show "a key
-  // is on file" without ever holding the real value. A future phase wires
-  // a real Cloudflare Worker secret binding (e.g. `wrangler secret put
-  // AI_PROVIDER_API_KEY`) for the actual outbound call.
-  const submittedApiKey = String(b.api_key || '').trim()
-  const existing = await c.env.DB.prepare('SELECT api_key FROM ai_settings WHERE id = 1').first<{ api_key: string }>()
-  const maskApiKey = (raw: string) => (raw.length > 4 ? `••••${raw.slice(-4)}` : '••••')
-  const apiKey = submittedApiKey ? maskApiKey(submittedApiKey) : existing?.api_key || ''
-  const model = String(b.model || 'wonderwraps-v2').trim()
+  const provider = String(b.api_provider || 'custom')
+  const endpoint = String(b.api_endpoint || '').trim()
+  const model = String(b.model || '').trim()
   const stylePreset = String(b.style_preset || 'fairytale-watercolour')
   const promptTemplate = String(b.prompt_template || '')
   const faceSwapStrength = parseFloat(String(b.face_swap_strength || '0.85')) || 0.85
@@ -1261,11 +1267,11 @@ app.post('/admin/ai-settings', async (c) => {
 
   await c.env.DB.prepare(`
     INSERT INTO ai_settings (id, api_provider, api_endpoint, api_key, model, style_preset, prompt_template, face_swap_strength, hardcover_price, softcover_price, enable_ai_preview, updated_at)
-    VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    VALUES (1, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
     ON CONFLICT(id) DO UPDATE SET
       api_provider = excluded.api_provider,
       api_endpoint = excluded.api_endpoint,
-      api_key = excluded.api_key,
+      api_key = '',
       model = excluded.model,
       style_preset = excluded.style_preset,
       prompt_template = excluded.prompt_template,
@@ -1277,7 +1283,6 @@ app.post('/admin/ai-settings', async (c) => {
   `).bind(
     provider,
     endpoint,
-    apiKey,
     model,
     stylePreset,
     promptTemplate,
@@ -1328,6 +1333,13 @@ app.post('/api/admin/test-ai-connection', async (c) => {
 // schema; this also fixes the response wording to stop implying delivery).
 // Canonical: POST/GET /api/v1/books/pdf-requests[/:id].
 // Legacy alias kept, tested: POST /api/books/pdf-request.
+const PDF_REQUEST_COVER_TYPES = new Set(['hardcover', 'softcover'])
+// Matches the guest-order-token default (docs/API_V1.md): long enough for
+// a guest to reasonably come back and check status, bounded so a leaked
+// capability doesn't work forever.
+const PDF_REQUEST_TOKEN_TTL_SECONDS = 60 * 60 * 24 * 30
+const PDF_REQUEST_RATE_LIMIT = { max: 5, windowSeconds: 60 * 60 }
+
 async function handleCreatePdfRequest(c: Context<{ Bindings: Bindings; Variables: Vars }>) {
   const body = await c.req.json<any>().catch(() => ({}))
   const email = String(body.email || '').toLowerCase().trim()
@@ -1341,19 +1353,69 @@ async function handleCreatePdfRequest(c: Context<{ Bindings: Bindings; Variables
   if (!email || !email.includes('@')) {
     return c.json({ success: false, error: 'Valid email is required.' }, 400)
   }
+  // The submitted email is contact info only — it is NEVER used to decide
+  // who may reference an order item below. Ownership is decided solely by
+  // the session user id (authenticated) or a verified guest order
+  // capability token (guest); an attacker who knows/guesses someone else's
+  // email cannot use it to attach their PDF request to that person's order.
+  if (!PDF_REQUEST_COVER_TYPES.has(coverType)) {
+    return c.json({ success: false, error: `coverType must be one of: ${[...PDF_REQUEST_COVER_TYPES].join(', ')}.` }, 400)
+  }
+  if (!bookSlug || !(await getProductBySlug(c.env.DB, bookSlug))) {
+    return c.json({ success: false, error: 'Unknown or inactive book.' }, 400)
+  }
+
+  // Rate limit by email bucket — same DB-backed pattern as forgot-password
+  // (src/password-reset.ts); Workers isolates are ephemeral, so an
+  // in-memory limiter would not actually limit anything.
+  const bucket = `pdf-request:${email}`
+  if (await isRateLimited(c.env.DB, bucket, PDF_REQUEST_RATE_LIMIT)) {
+    return c.json({ success: false, error: 'Too many requests — please try again later.' }, 429)
+  }
+  await recordRateLimitEvent(c.env.DB, bucket)
+
+  if (orderItemId) {
+    const itemRow = await c.env.DB.prepare('SELECT oi.id, oi.order_id, o.user_id FROM order_items oi JOIN orders o ON o.id = oi.order_id WHERE oi.id = ?')
+      .bind(orderItemId)
+      .first<{ id: number; order_id: number; user_id: number | null }>()
+    // Generic rejection for every "not yours" shape (doesn't exist, belongs
+    // to someone else, belongs to an account when you're a guest, or your
+    // guest capability token doesn't check out) — do not let the response
+    // distinguish which, same enumeration-safe reasoning as guest order
+    // access.
+    let orderItemOwned = false
+    if (itemRow) {
+      if (user) {
+        orderItemOwned = itemRow.user_id === user.id
+      } else if (itemRow.user_id === null) {
+        const guestOrderToken = String(body.guestOrderToken || '')
+        if (guestOrderToken) {
+          try {
+            const cfg = resolveGuestOrderTokenSecrets(c.env)
+            orderItemOwned = await verifyGuestOrderToken(cfg.secrets, itemRow.order_id, guestOrderToken, { previousDeadline: cfg.previousDeadline })
+          } catch (err) {
+            if (!(err instanceof MissingSecretError)) throw err
+          }
+        }
+      }
+    }
+    if (!orderItemOwned) return c.json({ success: false, error: 'That order item could not be verified.' }, 400)
+  }
 
   // A random capability token, shown ONLY in this response (only its
   // SHA-256 hash is stored) — this is what lets an unauthenticated guest
   // check their own request's status without exposing every request to
   // anyone who can guess/enumerate a sequential id (confirmed baseline gap).
+  // Expires — see PDF_REQUEST_TOKEN_TTL_SECONDS — not a forever-valid link.
   const rawToken = [...crypto.getRandomValues(new Uint8Array(24))].map((b) => b.toString(16).padStart(2, '0')).join('')
   const tokenHash = await sha256Hex(rawToken)
+  const expiresAt = Math.floor(Date.now() / 1000) + PDF_REQUEST_TOKEN_TTL_SECONDS
 
   const r = await c.env.DB.prepare(
-    `INSERT INTO pdf_requests (email, book_slug, child_name, child_age, cover_type, user_id, order_item_id, status, access_token_hash)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?)`
+    `INSERT INTO pdf_requests (email, book_slug, child_name, child_age, cover_type, user_id, order_item_id, status, access_token_hash, access_token_expires_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?)`
   )
-    .bind(email, bookSlug, childName, childAge, coverType, user?.id ?? null, orderItemId, tokenHash)
+    .bind(email, bookSlug, childName, childAge, coverType, user?.id ?? null, orderItemId, tokenHash, expiresAt)
     .run()
 
   return c.json({
@@ -1374,13 +1436,16 @@ async function handlePdfRequestStatus(c: Context<{ Bindings: Bindings; Variables
   const token = c.req.query('token') || ''
   const user = c.get('user')
 
-  const row = await c.env.DB.prepare('SELECT id, status, book_slug, cover_type, user_id, access_token_hash, created_at, updated_at FROM pdf_requests WHERE id = ?').bind(id).first<{
+  const row = await c.env.DB.prepare(
+    'SELECT id, status, book_slug, cover_type, user_id, access_token_hash, access_token_expires_at, created_at, updated_at FROM pdf_requests WHERE id = ?'
+  ).bind(id).first<{
     id: number
     status: string
     book_slug: string
     cover_type: string
     user_id: number | null
     access_token_hash: string | null
+    access_token_expires_at: number | null
     created_at: string
     updated_at: string
   }>()
@@ -1388,12 +1453,17 @@ async function handlePdfRequestStatus(c: Context<{ Bindings: Bindings; Variables
 
   let authorized = user?.role === 'admin' || (!!user && row.user_id === user.id)
   if (!authorized && token && row.access_token_hash) {
-    authorized = timingSafeEqual(await sha256Hex(token), row.access_token_hash)
+    // A NULL expiry (rows created before migration 0007) is treated as
+    // already-expired, never as "valid forever" — see that migration's
+    // comment. An expired-but-otherwise-correct token gets the same 404 as
+    // a wrong one: existence isn't confirmed either way.
+    const notExpired = typeof row.access_token_expires_at === 'number' && row.access_token_expires_at >= Math.floor(Date.now() / 1000)
+    if (notExpired) authorized = timingSafeEqual(await sha256Hex(token), row.access_token_hash)
   }
   if (!authorized) return c.json({ error: 'Not found' }, 404)
 
-  const { access_token_hash: _drop, user_id: _drop2, ...safe } = row
-  return c.json(safe)
+  // Minimal fields only — no email, no child_name, no raw token material.
+  return c.json({ id: row.id, status: row.status, book_slug: row.book_slug, cover_type: row.cover_type, created_at: row.created_at, updated_at: row.updated_at })
 }
 // Separate, admin-only endpoint (distinct from handlePdfRequestStatus's
 // owner/guest-token path above): an operator looking up ANY pdf_request by
@@ -1420,32 +1490,22 @@ app.get('/api/v1/books/pdf-requests/:id', handlePdfRequestStatus)
 app.get('/api/v1/admin/pdf-requests/:id', handleAdminPdfRequestStatus)
 
 // AI Book Generator Route (Client calls this to generate/preview books)
+// Confirmed review finding: this used to fabricate a full "generated" book
+// (cover, story spread text, pricing) unconditionally — real-looking output
+// with no real AI call behind it, for every request, regardless of any
+// admin configuration. No frontend code calls this route (checked — the
+// reader page's static preview art is unrelated). Real generation is a
+// Phase 3 item; until a real provider adapter exists, this must say so
+// honestly instead of returning fake success.
 app.post('/api/generate-book', async (c) => {
-  const body = await c.req.json<any>()
-  const { childName, childAge, bookSlug, photoUrl } = body
-
-  const settings = await c.env.DB.prepare('SELECT * FROM ai_settings WHERE id = 1').first<AiSettingsRow>()
-
-  // Build generated response with customized visuals and story spreads
-  return c.json({
-    success: true,
-    provider: settings?.api_provider || 'wonderwraps',
-    bookTitle: `Princess ${childName || 'gando'}, the One We All Needed`,
-    childName: childName || 'gando',
-    childAge: childAge || 5,
-    coverUrl: photoUrl || '/static/preview-book-cover-ref.webp',
-    spreads: [
-      {
-        pageNumber: 1,
-        imageUrl: '/static/preview-book-spread-ref.webp',
-        text: `Her eyes beamed as she safely led her brothers home once again. "You reminded me who I am," the unicorn said.`
-      }
-    ],
-    pricing: {
-      hardcover: settings?.hardcover_price || 49.20,
-      softcover: settings?.softcover_price || 34.20
-    }
-  })
+  return c.json(
+    {
+      success: false,
+      notImplemented: true,
+      message: 'AI book generation is not implemented in this phase (see Phase 3 in STORYBOOKCLONE_COMPLETION_CODING_PACK.md). No image, story, or preview is generated by this endpoint.'
+    },
+    501
+  )
 })
 
 // ---- inbox ----

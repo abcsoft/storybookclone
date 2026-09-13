@@ -133,11 +133,33 @@ code read (not a screenshot) reveals:
 | 4 | The AI settings form persisted the **raw, real** provider API key into D1's `ai_settings.api_key` column | The POST handler now stores only a masked preview (`••••<last 4 chars>`) — the real value is never written to the database at all, pending a Phase 3 real secret-binding design |
 | 5 | `Product` (the storefront/admin product shape) was declared twice — once in `src/data.ts`, once in `src/db.ts` — and had already drifted once (db.ts's copy silently lacked `active`, finding #6 above) | Consolidated into one declaration, `src/product.ts`; both files now import it |
 
+**Superseded by the third corrective round below:** row 4's "masked preview"
+design was itself replaced — no provider key, masked or otherwise, is
+stored in D1 anymore. Treat the section below as the current, accurate
+behavior for AI settings and the guest/PDF capability tokens; this table
+is a historical record of what round 2 actually fixed, not a live claim.
+
 Also: the guest-order access token (`docs/API_V1.md`) now carries its own
 version/issued-time/expiry, and a genuinely separate admin-only endpoint
 (`GET /api/v1/admin/pdf-requests/:id`) was added rather than folding admin
 access into the owner/guest-token endpoint's existing branches — see this
 round's final report for the full requirement-to-test mapping.
+
+### Third corrective round: bounded rotation/nonce, DB-enforced claim, PDF expiry, no key in D1 at all, consolidated type
+A source-level review (not just live routes) found five implementation
+gaps the first two rounds' behavior-level testing hadn't surfaced:
+
+| # | Finding | Fix |
+|---|---|---|
+| 1 | The guest-order token was a deterministic `HMAC(secret, orderId)` with no version/nonce and an effectively unbounded 1-year TTL; `GUEST_ORDER_TOKEN_SECRET_PREV` had no bounded deadline — the rotation window was "forever until someone remembers to unset it" | Token is now `v1.<orderId>.<issuedAt>.<expiresAt>.<nonce>.<sig>` — every field covered by the signature, non-deterministic (nonce), rejects future-issued/expired/malformed tokens with a fake-clock-testable boundary. `GUEST_ORDER_TOKEN_SECRET_PREV` now REQUIRES a `GUEST_ORDER_TOKEN_SECRET_PREV_DEADLINE` — set without one, resolution fails closed. Default TTL dropped from 1 year to 30 days (`GUEST_ORDER_TOKEN_TTL_SECONDS`, overridable) |
+| 2 | `upload_claims`' only real constraint was its PRIMARY KEY; owner/expiry/consumed-at validation lived entirely in application code (`checkUploadOwnership()`) called BEFORE the atomic batch — a real TOCTOU gap between that pre-check and the batch actually running | Migration `0006`: `upload_claims.owner_token` + a `BEFORE INSERT` trigger that `RAISE(ABORT)`s unless a matching, unexpired, unconsumed `photo_uploads` row exists for that exact key+owner AT INSERT TIME — enforced by the database, inside the same atomic `db.batch()` as the order/items |
+| 3 | `pdf_requests.access_token_hash` never expired; request CREATION didn't validate `coverType`/`bookSlug`/`orderItemId` ownership at all, and had no rate limit | Migration `0007` adds `access_token_expires_at` (30-day default). Creation now validates `coverType` against an enum, `bookSlug` against an active product, and `orderItemId` against real ownership (session user, or a verified guest-order capability token) — a foreign/nonexistent id is rejected generically. Rate limited 5/hour per email (`src/rate-limit.ts`, shared with forgot-password) |
+| 4 | `ai_settings.api_key` still held a real (then masked-preview) value in D1; `/api/admin/test-ai-connection`'s form JS still referenced a since-removed field; `/api/generate-book` unconditionally fabricated a full "generated" book/cover/pricing response for EVERY request, with no real AI call behind it and no frontend even calling it | Migration `0008` clears any legacy value; the POST handler no longer accepts or writes `api_key` at all — the column is always `''`. The admin page shows only whether `AI_PROVIDER_API_KEY` is set as an environment secret (never a DB value, never the secret itself). `/api/generate-book` now returns an honest `501 { success:false, notImplemented:true }` |
+| 5 | `Product` was consolidated in round 2, but `src/admin.ts`'s product-edit form still used `(p as any)?.active` and a `const flags = (p as any) \|\| {}` escape hatch instead of the real, already-typed fields | Removed both — every field access now goes through the real `Product` type with no cast |
+
+See `docs/API_V1.md` for the exact token format, migration file names, and
+endpoint contracts — that document is the authoritative, currently-accurate
+reference; this file is a chronological log of what each round found.
 
 ## Explicit scope boundary
 
