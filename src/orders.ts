@@ -6,6 +6,10 @@
 import { quoteCart, shippingFor, round2, type CartLine } from './db'
 import { checkUploadOwnership } from './uploads'
 import { sha256Hex, signWithRotation, hmacSha256Hex, timingSafeEqual, DEFAULT_GUEST_ORDER_TOKEN_TTL_SECONDS, type RotatingSecrets } from './secrets'
+import { PERSONALIZATION_LIMITS } from './personalization/user-books'
+import type { Owner } from './personalization/ownership'
+import { ownerToken as personalizationOwnerToken } from './personalization/uploads'
+import type { UserBookRow, PersonalizationInputRow } from './personalization/types'
 
 export type OrderItemInput = {
   slug: string
@@ -15,6 +19,11 @@ export type OrderItemInput = {
   language?: string
   dedication?: string
   photoKey?: string
+  // Phase 2: when present, childName/childAge/language/dedication/photoKey
+  // above are IGNORED and instead derived authoritatively from this
+  // user_book's current personalization revision — see the "authoritative
+  // personalization" block in createOrder() below.
+  userBookId?: string
 }
 
 export type CreateOrderInput = {
@@ -67,7 +76,15 @@ export async function hashOrderPayload(input: CreateOrderInput): Promise<string>
 export async function createOrder(
   db: D1Database,
   input: CreateOrderInput,
-  ctx: { userId: number | null; uploadOwnerToken: string; secrets: RotatingSecrets; guestTokenTtlSeconds?: number }
+  ctx: {
+    userId: number | null
+    uploadOwnerToken: string
+    secrets: RotatingSecrets
+    guestTokenTtlSeconds?: number
+    // Phase 2: resolved once per request (see src/personalization/ownership.ts
+    // resolveOwner()) — required only for items that reference a userBookId.
+    personalizationOwner?: Owner | null
+  }
 ): Promise<CreateOrderResult> {
   const items = Array.isArray(input.items) ? input.items : []
   if (!items.length) return { ok: false, status: 400, error: 'Cart is empty.' }
@@ -110,10 +127,72 @@ export async function createOrder(
     return { ok: true, orderId: existing.id, guestToken: await signGuestOrderToken(ctx.secrets, existing.id, { ttlSeconds: ctx.guestTokenTtlSeconds }), replayed: true }
   }
 
+  // Phase 2: for any item that references a userBookId, EVERY personalization
+  // field (name/age/language/dedication/photo) is derived authoritatively
+  // from that user_book's current revision — the client's own values for
+  // those same fields are discarded, never merged or trusted, exactly the
+  // pattern src/index.tsx already uses for PDF-request creation. A
+  // forged/foreign/not-ready userBookId is rejected outright.
+  const resolvedItems: OrderItemInput[] = []
+  const resolvedRevisions: (number | null)[] = []
+  // Which owner_token a given photoKey's atomic claim must match — legacy
+  // (non-user_book) items use the ww_upload cookie token as always;
+  // user_book-derived items were uploaded through the Phase 2 lifecycle,
+  // which owns uploads under a `user:<id>`/`prospect:<id>` scheme instead
+  // (see src/personalization/uploads.ts) — never the legacy cookie value.
+  const ownerTokenForPhotoKey = new Map<string, string>()
   for (const item of items) {
+    if (!item.userBookId) {
+      resolvedItems.push(item)
+      resolvedRevisions.push(null)
+      if (item.photoKey) ownerTokenForPhotoKey.set(String(item.photoKey), ctx.uploadOwnerToken)
+      continue
+    }
+    if (!ctx.personalizationOwner) return { ok: false, status: 400, error: 'That personalised book could not be verified.' }
+    const book = await db.prepare('SELECT * FROM user_books WHERE public_id = ?').bind(item.userBookId).first<UserBookRow>()
+    const owned =
+      !!book &&
+      ((ctx.personalizationOwner.type === 'user' && book.user_id === ctx.personalizationOwner.userId) ||
+        (ctx.personalizationOwner.type === 'prospect' && book.prospect_id === ctx.personalizationOwner.prospectId))
+    if (!book || !owned) return { ok: false, status: 400, error: 'That personalised book could not be verified.' }
+
+    const product = await db.prepare('SELECT id FROM products WHERE slug = ?').bind(String(item.slug)).first<{ id: number }>()
+    if (!product || product.id !== book.product_id) return { ok: false, status: 400, error: 'That personalised book does not match the requested product.' }
+
+    if (book.state !== 'ready_to_generate' || book.current_revision === 0) {
+      return { ok: false, status: 400, error: 'Finish personalising this book (including face selection, if needed) before checkout.' }
+    }
+
+    const revisionRow = await db
+      .prepare('SELECT * FROM personalization_inputs WHERE user_book_id = ? AND revision = ?')
+      .bind(book.id, book.current_revision)
+      .first<PersonalizationInputRow>()
+    if (!revisionRow) return { ok: false, status: 400, error: 'This book has no personalisation details yet.' }
+    const language = await db.prepare('SELECT name FROM languages WHERE code = ?').bind(revisionRow.language_code).first<{ name: string }>()
+
+    resolvedItems.push({
+      ...item,
+      childName: revisionRow.child_name,
+      childAge: revisionRow.child_age ?? undefined,
+      language: language?.name || revisionRow.language_code,
+      dedication: revisionRow.dedication,
+      photoKey: revisionRow.photo_upload_key
+    })
+    resolvedRevisions.push(book.current_revision)
+    ownerTokenForPhotoKey.set(revisionRow.photo_upload_key, personalizationOwnerToken(ctx.personalizationOwner))
+  }
+
+  for (let i = 0; i < resolvedItems.length; i++) {
+    const item = resolvedItems[i]
     if (!String(item.childName || '').trim()) return { ok: false, status: 400, error: 'Each item needs a child name.' }
     const key = String(item.photoKey || '')
     if (!key.startsWith('uploads/')) return { ok: false, status: 400, error: 'Each item needs an uploaded photo.' }
+    // A userBookId item's photo ownership was already proven above via the
+    // user_book/owner chain (a stronger guarantee — Phase 2 uploads are
+    // owned by `user:<id>`/`prospect:<id>`, a different scheme than the
+    // legacy `ww_upload` cookie this check compares against). Only the
+    // legacy, non-user_book path needs this specific check.
+    if (resolvedRevisions[i] !== null) continue
     // Fast pre-check for the common (non-racing) bad-request case — the
     // atomic upload_claims insert in the batch below is the real,
     // race-proof authority (see the concurrency comment further down).
@@ -121,7 +200,7 @@ export async function createOrder(
     if (!check.ok) return { ok: false, status: 400, error: uploadOwnershipErrorMessage(check.reason) }
   }
 
-  const cartLines: CartLine[] = items.map((i) => ({ slug: String(i.slug), kind: undefined, qty: i.qty }))
+  const cartLines: CartLine[] = resolvedItems.map((i) => ({ slug: String(i.slug), kind: undefined, qty: i.qty }))
   const quote = await quoteCart(db, cartLines, input.code)
   if (quote.invalid.length) return { ok: false, status: 400, error: `Unknown product(s): ${quote.invalid.join(', ')}` }
   const ship = shippingFor(String(input.shippingMethod || 'standard'))
@@ -139,12 +218,13 @@ export async function createOrder(
   // order insert AND every item insert commit as ONE atomic db.batch()
   // instead of two separate round-trips (order first, items after) where a
   // failure between them would orphan a paid-looking order with no items.
-  const itemStmts = items.map((it) => {
+  const itemStmts = resolvedItems.map((it, i) => {
     const meta = quote.priceMap.get(String(it.slug))!
     return db
       .prepare(
-        `INSERT INTO order_items (order_id, product_id, slug, title, kind, unit_price, qty, child_name, child_age, language, dedication, photo_key)
-         VALUES ((SELECT id FROM orders WHERE idempotency_key = ?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO order_items (order_id, product_id, slug, title, kind, unit_price, qty, child_name, child_age, language, dedication, photo_key, user_book_id, personalization_input_revision)
+         VALUES ((SELECT id FROM orders WHERE idempotency_key = ?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+           (SELECT id FROM user_books WHERE public_id = ?), ?)`
       )
       .bind(
         idempotencyKey,
@@ -154,11 +234,13 @@ export async function createOrder(
         meta.kind,
         meta.price,
         Math.max(1, Math.min(10, Number(it.qty) || 1)),
-        String(it.childName || '').slice(0, 24),
+        String(it.childName || '').slice(0, PERSONALIZATION_LIMITS.childNameMaxLength),
         it.childAge ? Number(it.childAge) : null,
         String(it.language || 'English').slice(0, 40),
-        String(it.dedication || '').slice(0, 200),
-        String(it.photoKey || '')
+        String(it.dedication || '').slice(0, PERSONALIZATION_LIMITS.dedicationMaxLength),
+        String(it.photoKey || ''),
+        it.userBookId || null,
+        resolvedRevisions[i]
       )
   })
 
@@ -166,7 +248,7 @@ export async function createOrder(
   // reuse a photoKey (e.g. a matching sticker pack added alongside a book —
   // see the cart cross-sell), so claim/consume each UNIQUE key once, not
   // once per item.
-  const uniquePhotoKeys = [...new Set(items.map((it) => String(it.photoKey)))]
+  const uniquePhotoKeys = [...new Set(resolvedItems.map((it) => String(it.photoKey)))]
   // Two independent, atomic guarantees on this one INSERT, both enforced
   // BY THE DATABASE, not application code (migration 0006):
   //  1) upload_claims.upload_key is PRIMARY KEY: if a DIFFERENT,
@@ -189,7 +271,7 @@ export async function createOrder(
   const claimStmts = uniquePhotoKeys.map((key) =>
     db
       .prepare(`INSERT INTO upload_claims (upload_key, order_id, owner_token) VALUES (?, (SELECT id FROM orders WHERE idempotency_key = ?), ?)`)
-      .bind(key, idempotencyKey, ctx.uploadOwnerToken)
+      .bind(key, idempotencyKey, ownerTokenForPhotoKey.get(key) || ctx.uploadOwnerToken)
   )
   const consumeStmts = uniquePhotoKeys.map((key) => db.prepare('UPDATE photo_uploads SET consumed_at = CURRENT_TIMESTAMP WHERE upload_key = ?').bind(key))
 
@@ -229,9 +311,9 @@ export async function createOrder(
     // batch actually executing. Re-run the same ownership check so the
     // caller gets the same clear, specific error the pre-check would have
     // given, instead of a raw batch-failure exception.
-    for (const item of items) {
+    for (const item of resolvedItems) {
       const key = String(item.photoKey || '')
-      const check = await checkUploadOwnership(db, key, ctx.uploadOwnerToken)
+      const check = await checkUploadOwnership(db, key, ownerTokenForPhotoKey.get(key) || ctx.uploadOwnerToken)
       if (!check.ok) return { ok: false, status: 400, error: uploadOwnershipErrorMessage(check.reason) }
     }
 

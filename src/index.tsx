@@ -67,8 +67,11 @@ import { validatePhotoBytes, contentTypeFor, recordUpload, checkUploadOwnership,
 import { PHOTO_POLICY, photoPolicySummary } from './photo-policy'
 import { requestPasswordReset, resetPassword } from './password-reset'
 import { consumeRateLimit } from './rate-limit'
+import { registerPersonalizationRoutes } from './personalization/routes'
+import { resolveOwner as resolvePersonalizationOwner } from './personalization/ownership'
+import { ownerToken as personalizationOwnerToken } from './personalization/uploads'
 
-type Bindings = {
+export type Bindings = {
   DB: D1Database
   PHOTOS?: R2Bucket
   // Optional one-time local/dev admin bootstrap. Never set a real value in a
@@ -96,8 +99,13 @@ type Bindings = {
   // status; it never reads or displays the value, and no D1 column ever
   // stores it (migration 0008). `wrangler secret put AI_PROVIDER_API_KEY`.
   AI_PROVIDER_API_KEY?: string
+  // Phase 2 face-analysis adapter selection — see
+  // src/personalization/face-analysis.ts. Set ONLY in test config
+  // (test/helpers/testApp.ts, scripts/test-e2e.mjs, CI); absent in any
+  // real deployment, where the adapter fails closed (disabled) by design.
+  FACE_ANALYSIS_PROVIDER?: string
 }
-type Vars = { user: AuthUser | null }
+export type Vars = { user: AuthUser | null }
 
 const app = new Hono<{ Bindings: Bindings; Variables: Vars }>()
 
@@ -277,6 +285,10 @@ app.use('*', async (c, next) => {
   await next()
 })
 app.use('*', attachUser)
+
+// Phase 2 personalization domain (user-books, uploads lifecycle, face
+// analysis, personalization revisions) — see src/personalization/*.
+registerPersonalizationRoutes(app)
 
 // Every browser (guest or logged-in) gets a stable, opaque, httpOnly upload
 // ownership token. It has nothing to do with login — it's what lets order
@@ -678,6 +690,18 @@ app.get('/photos/:key{.+}', async (c) => {
       .first()
     authorized = !!owns
   }
+  // Phase 2: a photo uploaded via the two-phase user-book lifecycle is
+  // owned under user:<id>/prospect:<id> (src/personalization/uploads.ts),
+  // never the legacy ww_upload cookie above — so a guest viewing their own
+  // reader/order-success page (same browser session, valid prospect
+  // capability) needs this scheme recognized too, or their own photo 404s.
+  if (!authorized) {
+    const personalizationOwner = await resolvePersonalizationOwner(c)
+    if (personalizationOwner) {
+      const uploadOwner = await getUploadOwner(c.env.DB, key)
+      authorized = uploadOwner !== null && uploadOwner === personalizationOwnerToken(personalizationOwner)
+    }
+  }
   if (!authorized) return c.notFound()
 
   const obj = await c.env.PHOTOS.get(key)
@@ -802,10 +826,11 @@ async function handleCreateOrder(c: Context<{ Bindings: Bindings; Variables: Var
     throw err
   }
 
+  const personalizationOwner = await resolvePersonalizationOwner(c)
   const result = await createOrder(
     c.env.DB,
     { ...body, idempotencyKey },
-    { userId: user?.id ?? null, uploadOwnerToken: ownerToken, secrets: tokenConfig.secrets, guestTokenTtlSeconds: tokenConfig.ttlSeconds }
+    { userId: user?.id ?? null, uploadOwnerToken: ownerToken, secrets: tokenConfig.secrets, guestTokenTtlSeconds: tokenConfig.ttlSeconds, personalizationOwner }
   )
   if (!result.ok) return c.json({ error: result.error }, result.status as any)
   return c.json({ ok: true, id: result.orderId, guestToken: result.guestToken, replayed: result.replayed })
