@@ -9,11 +9,34 @@ A full-stack clone of [wonderwraps.com](https://wonderwraps.com/) — personaliz
 
 ## How personalization works (mirrors the reference flow)
 1. Customer picks a storybook → fills child's name, age, language, dedication, uploads a photo.
-2. Photo uploads to **R2** (`POST /api/upload-photo`, 5MB max, images only) and is linked to the cart item.
+2. As of Phase 2, the photo and every personalization field are attached to
+   a durable, private **user_book** (see "Personalization domain" below) —
+   not just a browser cart item. The cart carries only that book's opaque
+   id plus non-authoritative display data.
 3. Cart totals are always computed **server-side** (`POST /api/quote`) — client prices are ignored (tamper-proof).
-4. Checkout (`POST /api/orders`) creates an order + personalized `order_items` with `preview_status = pending`.
+4. Checkout (`POST /api/orders`) re-reads the authoritative personalization
+   by user_book id, snapshots it into `order_items`, and binds the exact
+   input revision — a forged cart-item field changes nothing.
 5. Order pipeline (admin-managed): `pending_preview → preview_sent → approved → printing → shipped → delivered` (or `cancelled`). Each item's preview: `pending → preview_ready → changes_requested → approved`.
-6. Customer tracks everything on **My Books** (login required).
+6. Customer tracks everything on **My Books** (login required) or via a signed guest link.
+
+## Personalization domain (Phase 2)
+`src/personalization/` — a durable, private, versioned user-book domain
+replacing "personalization lives only in a cart item." Full design,
+ER model, state machine, ownership/capability rules, upload lifecycle, and
+privacy/retention behaviour: **`docs/PHASE_2_PERSONALIZATION_DOMAIN.md`**.
+API contract: `docs/API_V1.md`'s "Phase 2" section. In short:
+- A `user_book` is owned by exactly one of an authenticated `user_id` or an
+  expiring guest **prospect capability** (DB-enforced, never both/neither).
+- Personalization edits create new immutable revisions — never overwritten
+  in place — and go through a two-phase photo upload + a provider-neutral,
+  fail-closed-by-default face-analysis adapter (a real detection call is a
+  later phase; deterministic fixtures drive tests).
+- A single state machine (`draft → awaiting_photo_analysis →
+  [awaiting_face_selection] → ready_to_generate`, plus `expired`/
+  `cancelled`) is the only code path allowed to change a book's state.
+- Generation, real payment, live email, PDF rendering, and fulfillment are
+  **not** part of this phase — see the "Known baseline limitations" below.
 
 ## URLs
 ### Storefront
@@ -44,11 +67,17 @@ A full-stack clone of [wonderwraps.com](https://wonderwraps.com/) — personaliz
 | `/api/my/orders` | GET | 🔒 Own orders |
 | `/api/my/orders/:id` | GET | 🔒 Order detail + personalized items |
 | `/photos/:key` | GET | Serve uploaded child photos from R2 |
+| `/api/v1/user-books` | POST | Create/resume a personalization user_book (Phase 2) |
+| `/api/v1/user-books/:id` | GET/PATCH | Read / revise personalization (Phase 2) |
+| `/api/v1/uploads/photo/initiate`, `/complete` | POST | Two-phase photo upload (Phase 2) |
+| `/api/v1/uploads/:id/analysis`, `/select-face` | GET/POST | Face detection + selection (Phase 2, deterministic-fake in tests) |
+| `/api/v1/products/:slug/personalization-schema`, `/api/v1/languages` | GET | Server-owned personalization limits (Phase 2) |
 
 ## Data Architecture
-- **D1 tables**: `users` (role: customer/admin), `sessions`, `products` (catalog CRUD), `discounts`, `orders`, `order_items` (personalization + preview status), `contacts`, `newsletter`
+- **D1 tables**: `users` (role: customer/admin), `sessions`, `products` (catalog CRUD), `discounts`, `orders`, `order_items` (personalization + preview status, plus Phase 2's `user_book_id`/`personalization_input_revision`), `contacts`, `newsletter`
+- **Phase 2 personalization domain** (`migrations/0010`–`0014`): `languages`, `product_localizations`, `book_templates`, `book_scenes`, `scene_placeholders`, `prospects`, `user_books`, `personalization_inputs`, `detected_faces`, `preview_versions`, `preview_assets`, `revision_requests`, `approvals`, `user_book_events`, `retention_failures` — see `docs/PHASE_2_PERSONALIZATION_DOMAIN.md`.
 - **R2 bucket** `webapp-photos`: child photos (`uploads/<uuid>.<ext>`)
-- **Cart**: browser `localStorage` until checkout; prices always re-verified server-side
+- **Cart**: browser `localStorage` until checkout; prices always re-verified server-side; a Phase 2 item carries only an opaque `userBookId` plus non-authoritative display data — never a raw photo or guest capability token
 - **Auth**: PBKDF2-SHA-256 (100k iterations, Web Crypto) + httpOnly session cookies (30 days)
 - Catalog seeds from `seed.sql` (or auto-seeds from `src/data.ts` if the products table is empty)
 
@@ -89,6 +118,13 @@ For a future real AI provider integration (Phase 3 — nothing calls this
 yet): `wrangler secret put AI_PROVIDER_API_KEY`. No provider key is ever
 stored in D1; `/admin/ai-settings` only shows whether this secret is set.
 
+`FACE_ANALYSIS_PROVIDER` (Phase 2, unset by default) selects the
+personalization domain's face-detection adapter — leaving it unset gives
+the fail-closed `disabled` adapter (an honest "unavailable" status, never
+a fake result); the only other value, `deterministic-fake`, is set solely
+by `test/helpers/testApp.ts` and `scripts/test-e2e.mjs`'s spawned dev
+server, and must never be set in a real deployment.
+
 ## Local admin bootstrap
 There is **no default admin account**. To get one on your local D1:
 ```
@@ -102,17 +138,17 @@ This writes directly to your local `.wrangler` D1 state only (`--remote` is refu
 |---|---|
 | `npm run typecheck` | `tsc --noEmit` — must report zero errors |
 | `npm test` | Unit tests (Vitest): password hashing, authorization separation, cart migration/validation, upload byte-signature validation, order idempotency/atomicity, database-enforced (trigger-level) upload-claim ownership, versioned/expiring/nonce-bearing guest-token tampering and rotation (fake-clock boundaries), PDF-request capability expiry/ownership/rate-limiting, password-reset tokens, and more — see `test/unit/` |
-| `npm run test:integration` | Migration smoke test (Node's built-in SQLite) — applies every file in `migrations/` to an empty DB, from the accepted Phase 0 baseline, from the current Phase 1 (0004/0005) baseline, with pre-existing rows (a legacy non-empty `ai_settings.api_key`, a pre-0006 `upload_claims` row) present before the upgrade, and repeated-apply behavior — asserting every expected table/column/trigger exists and legacy data is handled correctly |
-| `npm run test:e2e` | Three real, separate browser journeys (Chromium via Playwright, real local `wrangler dev` + local D1/R2): a **guest** checkout (never logs in — verifies `user_id IS NULL`, the signed guest link stays valid on reopen, tampered/cross-order/missing token denial, and the full order-success → reader → PDF-request flow with the guest capability token captured from a URL fragment, scrubbed from the address bar, never in localStorage, and its own missing/tampered/another-request/expired-token denial), an **authenticated** checkout (My Books, cross-customer denial, PDF request, forgot/reset password), and a **browser-level double-submission race** (two genuinely concurrent same-Idempotency-Key requests from the page's own JS, proving exactly one order/claim results, plus a same-key-changed-payload request proving `409`) |
+| `npm run test:integration` | Migration smoke test (Node's built-in SQLite) — applies every file in `migrations/` to an empty DB, from the accepted Phase 0 baseline, from the accepted Phase 1 (`0009`) baseline, with pre-existing rows (a legacy non-empty `ai_settings.api_key`, a pre-0006 `upload_claims` row, and — Phase 2 — pre-existing users/orders/uploads surviving the Phase 2 upgrade untouched) present before the upgrade, and repeated-apply behavior — asserting every expected table/column/trigger exists and legacy data is handled correctly |
+| `npm run test:e2e` | Real, separate browser journeys (Chromium via Playwright, real local `wrangler dev` + local D1/R2, `FACE_ANALYSIS_PROVIDER=deterministic-fake`): a **guest** checkout (never logs in — Phase 2 user_book/upload/personalization flow, verifies `user_id IS NULL`, the exact `order_items.user_book_id`/revision link, the signed guest link stays valid on reopen, tampered/cross-order/missing token denial, and the full order-success → reader → PDF-request flow with the guest capability token captured from a URL fragment, scrubbed from the address bar, never in localStorage, and its own missing/tampered/another-request/expired-token denial), an **authenticated** checkout (same Phase 2 flow, My Books, exact user_book/revision link, cross-customer denial, PDF request, forgot/reset password), a **browser-level double-submission race** (two genuinely concurrent same-Idempotency-Key requests from the page's own JS, proving exactly one order/claim results, plus a same-key-changed-payload request proving `409`), and a **deterministic multi-face** scenario (a 3-face fixture photo forces an explicit face-selection UI before `ready_to_generate`, verified against D1) |
 | `npm run secrets:scan` | Pattern-based scan of tracked files for hash/key/token-shaped secrets |
 | `npm run check` | Runs all of the above plus `npm run build` — the CI-equivalent local gate |
 | `node scripts/audit-frontend.mjs <label>` | Live-browser visual/functional audit of every public + admin route at desktop and mobile widths — see `docs/FRONTEND_AUDIT.md` |
 
 ## Known baseline limitations
-This repository is being brought to production readiness in phases; see `STORYBOOKCLONE_COMPLETION_CODING_PACK.md` for the full plan. As of the Phase 1 (`fix/core-commerce-journey`) branch:
-- The browse → personalize → photo upload → cart → server quote → checkout → order → My Books → reader/PDF-request journey works end to end (see `docs/API_V1.md`); there is no durable, versioned personalization/generation/payment **domain** yet (still Phases 2–4) — orders/personalization live on the existing `orders`/`order_items` schema, not a separate user-book/preview-version model.
+This repository is being brought to production readiness in phases; see `STORYBOOKCLONE_COMPLETION_CODING_PACK.md` for the full plan. As of the Phase 2 (`feat/personalization-domain`) branch:
+- The browse → personalize → photo upload → cart → server quote → checkout → order → My Books → reader/PDF-request journey works end to end (see `docs/API_V1.md`), and personalization now lives in a durable, versioned **user-book domain** (`docs/PHASE_2_PERSONALIZATION_DOMAIN.md`) instead of only on the `orders`/`order_items` schema — but generation/payment/email/PDF/fulfillment remain unimplemented (Phases 3–6, see below).
 - The admin panel (dashboard, orders, products, PDP editor, discounts, users, messages, AI settings) renders correctly and is reachable via the bootstrap above (`docs/FRONTEND_AUDIT.md`), but is not yet the complete operational control plane described in the completion pack's Phase 6 (granular roles, audit log, generation/refund/fulfillment operator views).
-- AI book generation is genuinely not implemented, not simulated: `POST /api/generate-book` returns an honest `501`, `/api/admin/test-ai-connection` makes zero outbound requests for any provider, and no provider API key is ever stored in D1 (`ai_settings.api_key` is always empty — a real key can only ever live in the `AI_PROVIDER_API_KEY` environment secret, unused by any code path yet). See `docs/FRONTEND_AUDIT.md`'s third corrective round.
+- AI book generation is genuinely not implemented, not simulated: `POST /api/generate-book` returns an honest `501`, `/api/admin/test-ai-connection` makes zero outbound requests for any provider, and no provider API key is ever stored in D1 (`ai_settings.api_key` is always empty — a real key can only ever live in the `AI_PROVIDER_API_KEY` environment secret, unused by any code path yet). Face *detection* (Phase 2, distinct from book generation) is the same pattern: `src/personalization/face-analysis.ts`'s production default is disabled/fail-closed, and only a deterministic offline fixture exists for tests — no real vision provider is called anywhere. See `docs/FRONTEND_AUDIT.md`'s third corrective round.
 - A historical commit on this repository briefly tracked a raw database dump containing real password hashes, session tokens, and an API key. See `docs/SECURITY_INCIDENT_REMEDIATION.md` for the required rotation/revocation steps — do this before treating any of that historical data as still-valid or safe.
 
 ## Deployment
@@ -120,6 +156,6 @@ This repository is being brought to production readiness in phases; see `STORYBO
 - **Local**: `npm install` → `npm run db:migrate:local` → `npx wrangler d1 execute webapp-production --local --file=./seed.sql` → `npx wrangler d1 execute webapp-production --local --file=./seed_pdp.sql` → `npm run admin:bootstrap -- --email you@example.com --password '...'` → `npm run build` → `pm2 start ecosystem.config.cjs` (or `npx wrangler pages dev dist --d1=webapp-production --r2=webapp-photos --local --port 3000`)
 - **Reset local DB**: `npm run db:reset`
 - **Before any production deploy**: run `npm run check`, review `docs/SECURITY_INCIDENT_REMEDIATION.md`, and configure real (non-placeholder) D1/R2 bindings in `wrangler.jsonc`.
-- **Last Updated**: 2026-09-13
+- **Last Updated**: 2026-09-14
 
 # storybookclone

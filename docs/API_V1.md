@@ -295,6 +295,91 @@ column even though this handler always tried to insert one, so every call
 ## GET /photos/:key
 Never a permanently public URL. Authorized only for: the admin role; the
 browser whose `ww_upload` owner-token matches the upload's recorded owner
-(pre-order); or a logged-in customer who owns an `order_items` row
-referencing that exact key (post-order). Everyone else → `404` (not `403` —
-existence isn't confirmed either).
+(pre-order, legacy single-shot upload); a logged-in customer who owns an
+`order_items` row referencing that exact key (post-order); or (Phase 2) a
+caller whose resolved session-user/guest-prospect ownership
+(`src/personalization/ownership.ts`) matches the upload's `user:<id>` /
+`prospect:<id>` owner token — needed because a photo uploaded through the
+two-phase Phase 2 lifecycle (below) is never owned under the legacy
+`ww_upload` cookie scheme. Everyone else → `404` (not `403` — existence
+isn't confirmed either).
+
+---
+
+# Phase 2 — Personalization domain API
+
+See `docs/PHASE_2_PERSONALIZATION_DOMAIN.md` for the full domain model,
+state machine, and ownership design. Endpoints below live in
+`src/personalization/routes.ts`; canonical errors are
+`{ "error": { "code", "message", "fields"?, "requestId" } }` (never a plain
+string, unlike the legacy endpoints above — `public/static/api.js`
+unwraps both shapes for display).
+
+## GET /api/v1/languages
+Public. → `{ languages: [{ code, name, native_name, direction }] }`.
+
+## GET /api/v1/products/:slug/personalization-schema
+Public. Derives limits from the product row, the `languages` table, and
+`PHOTO_POLICY` — the one source both frontend and backend read.
+→ `{ ageRange: {min,max}, languages: [...], childName: {maxLength}, dedication: {maxLength}, coverOptions: [...], photo: {...} }`
+
+## POST /api/v1/uploads/photo/initiate
+Body `{ contentType, byteSize }`. Requires a resolved (or newly
+auto-provisioned guest) owner. → `{ uploadId, completionToken, expiresAt }`.
+`uploadId` alone does **not** mean a file was received — see complete below.
+
+## POST /api/v1/uploads/photo/complete
+`multipart/form-data`: `uploadId`, `completionToken`, `photo`. Verifies the
+completion token's hash + expiry, then real-decodes the bytes
+(`validatePhotoBytes`). Idempotent for the same owner; cannot claim/replace
+another owner's upload. → `{ ok: true, uploadId, width, height }`.
+
+## GET /api/v1/uploads/:id/analysis
+Runs face analysis once per upload (subsequent calls read the already-
+recorded faces) and applies the outcome to any of the caller's own books
+waiting on this exact upload. → one of:
+- `{ status: "pending_upload" }` — no completed upload at this id (yet) for this caller.
+- `{ status: "unavailable", message }` — no face-analysis provider configured (production default — never fabricated).
+- `{ status: "complete", faces: [{ id, boundingBox:{x,y,width,height}, confidence, category }], faceSelectionRequired: boolean }`.
+
+## POST /api/v1/uploads/:id/select-face
+Body `{ userBookId, faceId }`. Rejects a face that doesn't belong to the
+book's own authoritative upload (`foreign_face`), even if that face id
+exists for a *different* upload.
+
+## POST /api/v1/user-books
+Body `{ productSlug }`, optional `Idempotency-Key` header. Requires an
+authenticated owner or a valid/newly-provisioned guest prospect.
+→ `{ id, productSlug, state, currentRevision, hasPhoto, faceSelectionRequired, selectedFaceId, createdAt, updatedAt }`
+— `id` is the opaque `public_id`; no internal DB id, storage key, or raw
+capability token is ever returned.
+
+## GET /api/v1/user-books/:id
+Same shape as above. Cross-owner access → generic `404`.
+
+## PATCH /api/v1/user-books/:id/personalization
+Header `If-Match: <version>` (or body `expectedVersion`) — required for
+safe concurrent editing; a mismatch is `409 version_conflict` before any
+write. Body: `{ childName?, childAge?, languageCode?, dedication?,
+photoUploadKey?, expectedVersion? }` — note the field names differ from
+the legacy `POST /api/v1/orders` item shape (`language`/`photoKey`) by
+design, since this endpoint validates against the `languages` table's
+codes and an owned *upload*, not an order-time snapshot. Creates a new
+immutable revision (never overwrites); an identical request is a no-op
+(no new revision); an active approval, if any, is atomically invalidated.
+→ same shape as `POST /api/v1/user-books`, plus `revisionCreated: boolean`
+and `revision: number`.
+
+## Cart → order integration (Phase 2)
+A cart item MAY carry an opaque `userBookId` instead of raw
+`childName`/`childAge`/`language`/`dedication`/`photoKey` fields
+(`public/static/cart.js` accepts either shape). `POST /api/v1/orders`
+accepts `items[].userBookId`: when present, the *other* personalization
+fields on that same item are validated for shape but their **values are
+discarded** — the server always re-reads the authoritative
+`personalization_inputs` row for the book's `current_revision` and snapshots
+that into `order_items` (plus new `order_items.user_book_id` and
+`.personalization_input_revision` columns). Requires the book to be
+`ready_to_generate`, owned by the resolved caller, and for the same
+product as the cart item — otherwise the whole order is rejected. A
+`userBookId`-less item continues to work exactly as in Phase 1.
