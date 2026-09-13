@@ -28,6 +28,8 @@ export type ProductRow = {
 // Shape the storefront templates expect (camelCase, like the old static data.ts).
 export type Product = {
   id: number
+  /** 1/0 — whether this product is visible on the storefront. */
+  active?: number
   slug: string
   title: string
   tagline: string
@@ -76,7 +78,12 @@ export function toProduct(r: ProductRow): Product {
     bestseller: !!r.bestseller,
     newRelease: !!r.new_release,
     career: !!r.career,
-    traits
+    traits,
+    // Confirmed frontend-audit bug: the admin products table read
+    // `(p as any).active`, but this mapping never carried the column
+    // through, so every row's `.active` was `undefined` and every product
+    // rendered as "Hidden" in /admin/products regardless of its real state.
+    active: r.active
   }
 }
 

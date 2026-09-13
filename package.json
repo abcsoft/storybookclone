@@ -18,6 +18,7 @@
     "test:integration": "node --experimental-sqlite scripts/test-integration.mjs",
     "test:e2e": "node scripts/test-e2e.mjs",
     "secrets:scan": "node scripts/secrets-scan.mjs",
+    "audit:frontend": "node scripts/audit-frontend.mjs",
     "check": "npm run typecheck && npm run test && npm run test:integration && npm run secrets:scan && npm run build && npm run test:e2e"
   },
   "dependencies": {

@@ -1,5 +1,7 @@
 export type Product = {
   id?: number
+  /** DB-only field (1/0); absent for the static catalog seed in this file. See toProduct() in db.ts. */
+  active?: number
   slug: string
   title: string
   tagline: string

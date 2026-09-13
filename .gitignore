@@ -43,5 +43,8 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+# audit screenshots/findings — local review evidence, not committed
+audit-evidence/
+
 # misc
 .DS_Store

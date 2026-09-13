@@ -106,7 +106,7 @@ function statusBadge(s: string) {
 
 export function ordersTable(orders: any[], link = true) {
   if (!orders.length) return '<p class="muted">No orders yet.</p>'
-  return `<table class="a-table">
+  return `<div class="a-table-scroll"><table class="a-table">
     <thead><tr><th>#</th><th>Customer</th><th>Items</th><th>Total</th><th>Status</th><th>Placed</th><th></th></tr></thead>
     <tbody>
       ${orders
@@ -123,7 +123,7 @@ export function ordersTable(orders: any[], link = true) {
         )
         .join('')}
     </tbody>
-  </table>`
+  </table></div>`
 }
 
 export function adminOrders(orders: any[], currentStatus: string) {
@@ -216,7 +216,7 @@ export function adminProducts(products: Product[], flash?: string) {
     body: `
     <div class="a-head"><h1>Products (${products.length})</h1><a class="a-btn" href="/admin/products/new">+ New product</a></div>
     ${flash ? `<p class="a-notice ok">${esc(flash)}</p>` : ''}
-    <table class="a-table">
+    <div class="a-table-scroll"><table class="a-table">
       <thead><tr><th></th><th>Title</th><th>Category</th><th>Price</th><th>Flags</th><th>Status</th><th></th></tr></thead>
       <tbody>
         ${products
@@ -227,7 +227,7 @@ export function adminProducts(products: Product[], flash?: string) {
           <td>${p.category}${p.gender !== 'unisex' ? ` · ${p.gender}` : ''}</td>
           <td>${money(p.price)}${p.compareAt ? ` <s class="muted">${money(p.compareAt)}</s>` : ''}</td>
           <td>${[p.bestseller && 'bestseller', p.newRelease && 'new', p.career && 'career'].filter(Boolean).join(', ') || '<span class="muted">—</span>'}</td>
-          <td>${(p as any).active ? '<span class="badge-status st-approved">Active</span>' : '<span class="badge-status st-cancelled">Hidden</span>'}</td>
+          <td>${p.active ? '<span class="badge-status st-approved">Active</span>' : '<span class="badge-status st-cancelled">Hidden</span>'}</td>
           <td>
             <a class="a-link" href="/admin/products/${p.id}">Edit</a>
             <a class="a-link" href="/admin/products/${p.id}/pdp" title="Edit product page (banner, gallery, accordions, steps, tips, magic, trust, reactions, media, related, FAQs)">📝 Page</a>
@@ -236,7 +236,7 @@ export function adminProducts(products: Product[], flash?: string) {
           )
           .join('')}
       </tbody>
-    </table>
+    </table></div>
     <p class="muted">📝 opens the WonderWraps PDP editor for that product (banner, gallery, accordions, tips, magic slider, trust cards, reactions, media logos, related products and FAQs).</p>`
   })
 }
@@ -299,7 +299,7 @@ export function adminDiscounts(rows: DiscountRow[], flash?: string) {
     body: `
     <h1>Discount codes</h1>
     ${flash ? `<p class="a-notice ok">${esc(flash)}</p>` : ''}
-    <table class="a-table">
+    <div class="a-table-scroll"><table class="a-table">
       <thead><tr><th>Code</th><th>Percent</th><th>Min books</th><th>Applies to</th><th>Auto-apply</th><th>Active</th><th></th></tr></thead>
       <tbody>
         ${rows
@@ -321,7 +321,7 @@ export function adminDiscounts(rows: DiscountRow[], flash?: string) {
           )
           .join('')}
       </tbody>
-    </table>
+    </table></div>
     <h2>Create code</h2>
     <form class="a-card a-form" method="post" action="/admin/discounts">
       <div class="a-grid2">
@@ -346,7 +346,7 @@ export function adminUsers(users: any[]) {
     active: 'users',
     body: `
     <h1>Users (${users.length})</h1>
-    <table class="a-table">
+    <div class="a-table-scroll"><table class="a-table">
       <thead><tr><th>#</th><th>Name</th><th>Email</th><th>Role</th><th>Orders</th><th>Joined</th></tr></thead>
       <tbody>
         ${users
@@ -362,7 +362,7 @@ export function adminUsers(users: any[]) {
           )
           .join('')}
       </tbody>
-    </table>`
+    </table></div>`
   })
 }
 

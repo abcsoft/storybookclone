@@ -29,7 +29,7 @@ function money(n) {
 
 // Mobile Menu Toggle
 const menuBtn = document.getElementById('menu-toggle')
-const mobileNav = document.getElementById('mobile-nav')
+const mobileNav = document.getElementById('mobile-drawer') // was '#mobile-nav' — no such id exists, so the hamburger button did nothing at all
 menuBtn?.addEventListener('click', () => {
   const open = mobileNav?.hasAttribute('hidden')
   if (open) {
@@ -38,6 +38,20 @@ menuBtn?.addEventListener('click', () => {
   } else {
     mobileNav?.setAttribute('hidden', '')
     menuBtn?.setAttribute('aria-expanded', 'false')
+  }
+})
+
+// Search toggle — the icon button existed with no listener at all (another
+// dead interaction found during the frontend audit).
+const searchToggle = document.getElementById('search-toggle')
+const searchBar = document.getElementById('search-bar')
+searchToggle?.addEventListener('click', () => {
+  const isHidden = searchBar?.hasAttribute('hidden')
+  if (isHidden) {
+    searchBar.removeAttribute('hidden')
+    searchBar.querySelector('input')?.focus()
+  } else {
+    searchBar?.setAttribute('hidden', '')
   }
 })
 

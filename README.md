@@ -69,22 +69,23 @@ There is **no default admin account**. To get one on your local D1:
 npm run db:migrate:local
 npm run admin:bootstrap -- --email you@example.com --password '<a strong password, 12+ chars>'
 ```
-This writes directly to your local `.wrangler` D1 state only (`--remote` is refused by the script). In a deployed environment, create the first admin the same way through your platform's local/staging tooling, or set `ADMIN_BOOTSTRAP_EMAIL` / `ADMIN_BOOTSTRAP_PASSWORD` as environment secrets for one request and then unset them — the app will never create or fall back to a hard-coded credential.
+This writes directly to your local `.wrangler` D1 state only (`--remote` is refused by the script). In a deployed environment, create the first admin the same way through your platform's local/staging tooling, or set `ADMIN_BOOTSTRAP_EMAIL` / `ADMIN_BOOTSTRAP_PASSWORD` as environment secrets for one request and then unset them — the app will never create or fall back to a hard-coded credential. See `docs/FRONTEND_AUDIT.md` for the full admin-panel review workflow (including a live-browser admin smoke test script).
 
 ## Testing & checks
 | Command | What it does |
 |---|---|
 | `npm run typecheck` | `tsc --noEmit` — must report zero errors |
-| `npm test` | Unit tests (Vitest): password hashing, session/role authorization separation, admin-bootstrap has no default-credential fallback |
-| `npm run test:integration` | Migration smoke test — applies every file in `migrations/` to an empty DB and to an already-migrated ("existing baseline") DB using Node's built-in SQLite, and asserts every expected table exists |
-| `npm run test:e2e` | Placeholder — no working browser purchase journey exists yet on this baseline (tracked as Phase 1, see below) |
+| `npm test` | Unit tests (Vitest): password hashing, authorization separation, cart migration/validation, upload byte-signature validation, order idempotency/atomicity, guest-token tampering, password-reset tokens, and more — see `test/unit/` |
+| `npm run test:integration` | Migration smoke test — applies every file in `migrations/` to an empty DB and to an already-migrated ("existing baseline") DB using Node's built-in SQLite, and asserts every expected table/column exists |
+| `npm run test:e2e` | Real end-to-end browser test (Chromium via Playwright) against a real local `wrangler dev` + local D1/R2 — drives product → personalize → upload → cart → checkout → order → My Books → PDF request → forgot/reset password |
 | `npm run secrets:scan` | Pattern-based scan of tracked files for hash/key/token-shaped secrets |
 | `npm run check` | Runs all of the above plus `npm run build` — the CI-equivalent local gate |
+| `node scripts/audit-frontend.mjs <label>` | Live-browser visual/functional audit of every public + admin route at desktop and mobile widths — see `docs/FRONTEND_AUDIT.md` |
 
 ## Known baseline limitations
-This repository is being brought to production readiness in phases; see `STORYBOOKCLONE_COMPLETION_CODING_PACK.md` for the full plan. As of the Phase 0 (security/baseline-recovery) branch:
-- The advertised browse → personalize → cart → checkout → My Books journey has known route/localStorage-key/schema mismatches and does **not** reliably work end-to-end yet (tracked as Phase 1).
-- There is no durable, versioned personalization/generation/payment domain yet (Phases 2–4).
+This repository is being brought to production readiness in phases; see `STORYBOOKCLONE_COMPLETION_CODING_PACK.md` for the full plan. As of the Phase 1 (`fix/core-commerce-journey`) branch:
+- The browse → personalize → photo upload → cart → server quote → checkout → order → My Books → reader/PDF-request journey works end to end (see `docs/API_V1.md`); there is no durable, versioned personalization/generation/payment **domain** yet (still Phases 2–4) — orders/personalization live on the existing `orders`/`order_items` schema, not a separate user-book/preview-version model.
+- The admin panel (dashboard, orders, products, PDP editor, discounts, users, messages, AI settings) renders correctly and is reachable via the bootstrap above (`docs/FRONTEND_AUDIT.md`), but is not yet the complete operational control plane described in the completion pack's Phase 6 (granular roles, audit log, generation/refund/fulfillment operator views).
 - A historical commit on this repository briefly tracked a raw database dump containing real password hashes, session tokens, and an API key. See `docs/SECURITY_INCIDENT_REMEDIATION.md` for the required rotation/revocation steps — do this before treating any of that historical data as still-valid or safe.
 
 ## Deployment

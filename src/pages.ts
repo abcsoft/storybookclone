@@ -458,11 +458,9 @@ export function resetPasswordPage(token: string, msg?: string) {
 
 export function cartPage() {
   return `
-  <!-- Top Banner -->
-  <div class="cart-promo-banner">
-    <p>Save 20% on 2+ books using code <span class="promo-code">EXTRA20</span></p>
-  </div>
-
+  <!-- The site-wide promo banner (layout.ts #promo-banner) already shows
+       this exact message on every page — this page repeated it a second
+       time immediately below it (frontend audit finding). -->
   <main class="cart-page-bg">
     <div class="cart-container-main" id="cart-root">
       <div class="cart-loading-state">

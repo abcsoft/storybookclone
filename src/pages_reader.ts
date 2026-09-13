@@ -29,10 +29,9 @@ export function personalizedBookReaderPage(data: PersonalizedBookData) {
   const softcoverPrice = data.softcoverPrice || 34.20
 
   return `
-  <!-- Top Promo Banner -->
-  <div class="reader-promo-banner">
-    <p>Save 20% on 2+ books using code <span class="promo-code">EXTRA20</span></p>
-  </div>
+  <!-- The site-wide promo banner (layout.ts #promo-banner) already shows
+       this exact message on every page — this page repeated it a second
+       time immediately below it (frontend audit finding). -->
 
   <main class="reader-container" id="reader-main">
     <!-- Header Title Bar -->

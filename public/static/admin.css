@@ -55,7 +55,11 @@ h2 { margin: 28px 0 14px; }
 .stat strong { font-size: 24px; }
 .stat span { color: var(--muted); font-size: 13px; }
 
-.a-table { width: 100%; border-collapse: collapse; background: var(--card); border-radius: 14px; overflow: hidden; border: 1px solid var(--line); }
+/* Found in the frontend audit: admin tables had no mobile handling at all —
+   fixed-width columns forced the whole page to scroll horizontally past the
+   viewport. Scroll just the table instead. */
+.a-table-scroll { overflow-x: auto; border-radius: 14px; }
+.a-table { width: 100%; min-width: 640px; border-collapse: collapse; background: var(--card); border-radius: 14px; overflow: hidden; border: 1px solid var(--line); }
 .a-table th, .a-table td { text-align: left; padding: 12px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
 .a-table th { background: #efeafd; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
 .a-table tr:last-child td { border-bottom: 0; }
