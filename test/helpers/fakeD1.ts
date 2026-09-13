@@ -8,9 +8,9 @@ type Row = Record<string, unknown>
 
 class FakeStatement {
   constructor(
-    private db: DatabaseSync,
-    private sql: string,
-    private params: unknown[] = []
+    public db: DatabaseSync,
+    public sql: string,
+    public params: unknown[] = []
   ) {}
 
   bind(...params: unknown[]) {
@@ -47,10 +47,24 @@ export class FakeD1Database {
     return new FakeStatement(this.db, sql)
   }
 
+  // Real D1 wraps batch() in an implicit transaction: all statements commit,
+  // or none do. Mirror that here (instead of independent sequential .run()
+  // calls) so atomicity tests are meaningful against this double.
   async batch(stmts: FakeStatement[]) {
-    const out = []
-    for (const s of stmts) out.push(await s.run())
-    return out
+    this.db.exec('BEGIN')
+    try {
+      const out = []
+      for (const s of stmts) {
+        const stmt = this.db.prepare(s.sql)
+        const info = stmt.run(...(s.params as never[]))
+        out.push({ success: true, meta: { last_row_id: Number(info.lastInsertRowid), changes: info.changes } })
+      }
+      this.db.exec('COMMIT')
+      return out
+    } catch (err) {
+      this.db.exec('ROLLBACK')
+      throw err
+    }
   }
 
   exec(sql: string) {

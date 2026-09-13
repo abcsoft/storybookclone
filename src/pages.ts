@@ -430,6 +430,32 @@ export function authPage(kind: 'login' | 'register' | 'forgot', msg?: string) {
   </section>`
 }
 
+export function resetPasswordPage(token: string, msg?: string) {
+  return `
+  <section class="auth">
+    <div class="auth-form">
+      <a class="brand" href="/"><img src="/static/img/logo.png" alt="" width="40" height="40"><span>WonderWraps</span></a>
+      <h1>Reset Password</h1>
+      <p>Choose a new password (at least 8 characters).</p>
+      ${msg ? `<p class="notice">${esc(msg)}</p>` : ''}
+      <form class="form" method="post" action="/reset-password">
+        <input type="hidden" name="token" value="${esc(token)}">
+        <label for="password">New password</label>
+        <input id="password" name="password" type="password" minlength="8" required>
+        <label for="confirmPassword">Confirm new password</label>
+        <input id="confirmPassword" name="confirmPassword" type="password" minlength="8" required>
+        <button class="btn btn-purple" type="submit">Reset password</button>
+      </form>
+      <p><a class="link" href="/login">Back to login</a></p>
+    </div>
+    <aside class="auth-art">
+      <h2>Adored by millions worldwide</h2>
+      <p>Hyper-personalised storybooks where your child is the hero.</p>
+      <img src="/static/img/login-art.webp" alt="Parent and child with a storybook">
+    </aside>
+  </section>`
+}
+
 export function cartPage() {
   return `
   <!-- Top Banner -->
@@ -470,18 +496,20 @@ export function checkoutPage(user: { name?: string; email?: string } | null = nu
           <option value="express">Express — $28.00 (7–20 business days)</option>
         </select>
         <p class="tiny">Code <strong>EXTRA20</strong> applies automatically: 20% off when you order 2 or more books.</p>
+        <p class="tiny checkout-test-payment-notice"><i class="fas fa-flask"></i> Test checkout — no real payment is collected. A production payment provider is a later milestone.</p>
         <div id="checkout-error" class="notice" hidden></div>
         <button class="btn btn-purple" type="submit" id="place-order-btn">Place order</button>
       </form>
     </div>
-  </section>`
+  </section>
+  <script type="module" src="/static/checkout.js"></script>`
 }
 
 export function myBooksPage(loggedIn: boolean) {
   return `
   <section class="page-hero"><h1>My Books & Orders</h1><p>Track your personalised storybooks and approval previews.</p></section>
   <section class="section">
-    <div class="wrap" id="orders-root">
+    <div class="wrap" id="orders-root" ${loggedIn ? 'data-mode="list"' : ''}>
       ${!loggedIn ? `
         <div class="auth-required-box" style="text-align:center;padding:48px 24px;background:#fff;border-radius:16px;max-width:540px;margin:0 auto;box-shadow:0 4px 20px rgba(0,0,0,0.05)">
           <i class="fas fa-lock" style="font-size:36px;color:#8B5CF6;margin-bottom:16px"></i>
@@ -490,9 +518,19 @@ export function myBooksPage(loggedIn: boolean) {
           <a class="btn btn-purple" href="/login" style="margin-right:12px">Login</a>
           <a class="btn btn-outline" href="/register">Create Account</a>
         </div>
-      ` : '<p>Loading your orders…</p>'}
+      ` : '<p class="my-books-loading">Loading your orders…</p>'}
     </div>
-  </section>`
+  </section>
+  ${loggedIn ? '<script type="module" src="/static/my-books.js"></script>' : ''}`
+}
+
+export function myBookOrderDetailPage(orderId: string | number) {
+  return `
+  <section class="page-hero"><h1>Order Detail</h1></section>
+  <section class="section">
+    <div class="wrap" id="order-detail-root" data-order-id="${esc(String(orderId))}"><p class="my-books-loading">Loading…</p></div>
+  </section>
+  <script type="module" src="/static/my-books.js"></script>`
 }
 
 export function blogIndex() {

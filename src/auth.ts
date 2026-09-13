@@ -60,6 +60,11 @@ export async function destroySession(db: D1Database, token: string) {
   await db.prepare('DELETE FROM sessions WHERE token = ?').bind(token).run()
 }
 
+/** Force re-login everywhere for a user — used after a password reset. */
+export async function destroyAllSessionsForUser(db: D1Database, userId: number) {
+  await db.prepare('DELETE FROM sessions WHERE user_id = ?').bind(userId).run()
+}
+
 export async function getSessionUser(db: D1Database, token: string | undefined): Promise<AuthUser | null> {
   if (!token) return null
   const now = Math.floor(Date.now() / 1000)

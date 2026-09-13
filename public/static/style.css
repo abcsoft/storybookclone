@@ -373,3 +373,21 @@ details.faq p { margin: 0 0 16px; color: var(--muted); }
 }
 .order-toggle { background: none; border: 0; cursor: pointer; padding: 6px 0; font: inherit; }
 .order-items { margin-top: 6px; }
+
+/* Checkout: order summary + explicit test-payment notice */
+.checkout-summary-card {
+  background: #faf8ff; border-radius: 14px; padding: 18px 20px; margin-bottom: 18px;
+}
+.checkout-summary-card h2 { margin: 0 0 10px; font-size: 16px; }
+.checkout-summary-row { display: flex; justify-content: space-between; padding: 4px 0; color: #4B5563; }
+.checkout-summary-row.total { font-weight: 800; color: #111827; border-top: 1px solid var(--line, #ece7f6); margin-top: 6px; padding-top: 8px; }
+.checkout-test-payment-notice { color: #9b3de0; background: #f6ecff; padding: 8px 12px; border-radius: 10px; }
+.notice.error { background: #fdecec; color: #b3261e; }
+
+/* My Books: order list + detail */
+.my-books-order-card {
+  background: #fff; border-radius: 14px; padding: 16px 18px; margin-bottom: 14px;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.05); display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap;
+}
+.my-books-order-card .order-id { font-weight: 800; }
+.my-books-empty, .my-books-error, .my-books-loading { text-align: center; padding: 32px 16px; color: #6B7280; }

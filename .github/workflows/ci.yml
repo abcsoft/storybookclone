@@ -35,3 +35,9 @@ jobs:
 
       - name: Production build
         run: npm run build
+
+      - name: Install Chromium (for the real-browser e2e journey)
+        run: npx playwright install --with-deps chromium
+
+      - name: End-to-end browser journey (real Chromium against local D1/R2)
+        run: npm run test:e2e

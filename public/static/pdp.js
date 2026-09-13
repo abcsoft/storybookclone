@@ -1,4 +1,8 @@
-// PDP-only interactivity: gallery slider + personalised preview & form controls
+// PDP-only interactivity: gallery slider + personalised preview & form controls.
+// ES module — imports the canonical cart store and the centralized API client
+// instead of touching localStorage / fetch directly (Phase 1 defects #1/#3).
+import { addItem } from './cart.js'
+import { uploadPhoto } from './api.js'
 
 (function () {
   // ----- gallery slider -----
@@ -75,12 +79,34 @@
     })
   }
 
-  // ----- Avatar Upload & Remove Interaction -----
+  // ----- Avatar Upload: local preview (blob:, never stored) + REAL server upload -----
   const avatarContainer = document.getElementById('avatar-container')
   const photoInput = document.getElementById('photo')
   const photoPreview = document.getElementById('photo-preview')
   const photoRemoveBtn = document.getElementById('photo-remove-btn')
   const avatarEmpty = document.getElementById('avatar-empty')
+  const photoStatus = document.getElementById('upload-status')
+
+  // The one piece of state the "Confirm order" step actually needs: a
+  // server-issued upload key. Nothing else (no base64) is ever persisted.
+  let uploadedPhotoKey = null
+  let uploadedPhotoUrl = null
+  let uploadInFlight = false
+
+  function setPhotoStatus(text, isError) {
+    if (!photoStatus) return
+    photoStatus.textContent = text || ''
+    photoStatus.hidden = !text
+    photoStatus.classList.toggle('is-error', !!isError)
+  }
+
+  function updateConfirmAvailability() {
+    const btn = document.getElementById('btn-confirm-order')
+    if (!btn) return
+    const ready = !!uploadedPhotoKey && !uploadInFlight
+    btn.disabled = !ready
+    btn.title = ready ? '' : (uploadInFlight ? 'Uploading photo…' : 'Upload a photo to continue')
+  }
 
   if (avatarContainer && photoInput) {
     avatarContainer.addEventListener('click', (e) => {
@@ -88,30 +114,56 @@
       photoInput.click()
     })
 
-    photoInput.addEventListener('change', () => {
+    photoInput.addEventListener('change', async () => {
       const file = photoInput.files?.[0]
       if (!file) return
-      const reader = new FileReader()
-      reader.onload = () => {
-        if (photoPreview) {
-          photoPreview.src = reader.result
-          photoPreview.style.display = 'block'
-        }
-        if (avatarEmpty) avatarEmpty.style.display = 'none'
-        const faceOverlay = document.getElementById('preview-child-face')
-        if (faceOverlay) faceOverlay.src = reader.result
+
+      uploadedPhotoKey = null
+      uploadedPhotoUrl = null
+      uploadInFlight = true
+      updateConfirmAvailability()
+      setPhotoStatus('Uploading photo…', false)
+
+      // Local, in-memory-only preview (blob: URL) — never persisted, never
+      // becomes the value we send anywhere.
+      const objectUrl = URL.createObjectURL(file)
+      if (photoPreview) {
+        photoPreview.src = objectUrl
+        photoPreview.style.display = 'block'
       }
-      reader.readAsDataURL(file)
+      if (avatarEmpty) avatarEmpty.style.display = 'none'
+      const faceOverlay = document.getElementById('preview-child-face')
+      if (faceOverlay) faceOverlay.src = objectUrl
+
+      const result = await uploadPhoto(file)
+      uploadInFlight = false
+      if (result.ok) {
+        uploadedPhotoKey = result.data.key
+        uploadedPhotoUrl = result.data.url
+        setPhotoStatus('Photo uploaded ✓', false)
+      } else {
+        setPhotoStatus(result.error || 'Upload failed — please try a different photo.', true)
+        if (photoPreview) photoPreview.style.display = 'none'
+        if (avatarEmpty) avatarEmpty.style.display = ''
+      }
+      updateConfirmAvailability()
     })
 
     photoRemoveBtn?.addEventListener('click', (e) => {
       e.stopPropagation()
       photoInput.value = ''
+      uploadedPhotoKey = null
+      uploadedPhotoUrl = null
+      setPhotoStatus('', false)
       if (photoPreview) {
         photoPreview.src = '/static/img/avatar-sample.png'
+        photoPreview.style.display = 'none'
       }
+      if (avatarEmpty) avatarEmpty.style.display = ''
+      updateConfirmAvailability()
     })
   }
+  updateConfirmAvailability()
 
   // ----- Storybook Live Preview Modal Logic -----
   const modal = document.getElementById('book-preview-modal')
@@ -215,6 +267,11 @@
   if (form) {
     form.addEventListener('submit', (e) => {
       e.preventDefault()
+      if (!uploadedPhotoKey) {
+        setPhotoStatus('Please upload a photo before previewing.', true)
+        document.getElementById('personalise')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+        return
+      }
       const childName = (nameInput?.value || 'gando').trim()
       const childAge = ageInput?.value || '6'
       const lang = document.getElementById('lang')?.value || 'English'
@@ -238,39 +295,34 @@
     })
   }
 
-  // Modal Confirm Order -> Add to Cart
+  // Modal Confirm Order -> Add to Cart (real, validated item only)
   btnConfirm?.addEventListener('click', async () => {
+    if (!uploadedPhotoKey) {
+      setPhotoStatus('Please upload a photo before adding to cart.', true)
+      return
+    }
     btnConfirm.disabled = true
     btnConfirm.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Adding to Cart…'
 
     const childName = (nameInput?.value || 'gando').trim()
     const childAge = ageInput?.value || '6'
     const language = document.getElementById('lang')?.value || 'English'
-    const photoSrc = photoPreview?.src || ''
 
     const item = {
-      id: Date.now(),
+      id: `${form?.dataset.slug || 'book'}-${Date.now()}`,
       slug: form?.dataset.slug || 'the-portugals-new-legend',
       title: form?.dataset.title || "The Portugal's New Legend",
-      image: form?.dataset.image || '/static/img/cover-portugal.webp',
+      image: uploadedPhotoUrl || form?.dataset.image || '/static/img/cover-portugal.webp',
       kind: form?.dataset.kind || 'book',
       childName,
       childAge,
       language,
       dedication: document.getElementById('dedication')?.value || '',
-      photoPreview: photoSrc,
+      photoKey: uploadedPhotoKey,
       qty: 1
     }
 
-    try {
-      const CART_KEY = 'ww_cart'
-      let cart = []
-      try { cart = JSON.parse(localStorage.getItem(CART_KEY) || '[]') } catch { cart = [] }
-      cart.push(item)
-      localStorage.setItem(CART_KEY, JSON.stringify(cart))
-      window.location.href = '/cart'
-    } catch {
-      window.location.href = '/cart'
-    }
+    addItem(item)
+    window.location.href = '/cart'
   })
 })()

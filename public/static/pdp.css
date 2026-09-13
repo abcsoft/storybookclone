@@ -451,6 +451,9 @@ body.pdp-page {
   margin: -10px 0 14px;
   font-weight: 600;
 }
+.pdp-photo-status.is-error {
+  color: #dc2626;
+}
 
 /* Form Fields */
 .pdp-field-group {
@@ -1158,6 +1161,9 @@ body.pdp-page {
   color: #16a34a;
   margin-top: 6px;
   padding-left: 6px;
+}
+.pdf-status-msg.is-error {
+  color: #dc2626;
 }
 
 /* Core Book Previews Stack (3D Book Display) */

@@ -13,6 +13,12 @@ export type PersonalizedBookData = {
   coverImage: string
   spreadImage: string
   photoUrl?: string
+  /** Opaque server upload key (uploads/…) — required to (re)add to cart. Absent for a read-only post-order view. */
+  photoKey?: string
+  dedication?: string
+  /** Post-order viewer: hide "continue to cart", show order context for the PDF request. */
+  readOnly?: boolean
+  orderItemId?: number
 }
 
 export function personalizedBookReaderPage(data: PersonalizedBookData) {
@@ -74,7 +80,7 @@ export function personalizedBookReaderPage(data: PersonalizedBookData) {
       <h2 class="reader-section-heading">Choose cover options</h2>
       <div class="cover-options-grid">
         <!-- Hardcover -->
-        <label class="cover-option-card active" id="card-hardcover">
+        <label class="cover-option-card active" id="card-hardcover" data-cover-type="hardcover" data-cover-price="${hardcoverPrice}">
           <input type="radio" name="coverOption" value="hardcover" checked class="sr-only">
           <span class="cover-badge-best">BEST CHOICE</span>
           <div class="cover-thumb-wrap">
@@ -90,7 +96,7 @@ export function personalizedBookReaderPage(data: PersonalizedBookData) {
         </label>
 
         <!-- Softcover -->
-        <label class="cover-option-card" id="card-softcover">
+        <label class="cover-option-card" id="card-softcover" data-cover-type="softcover" data-cover-price="${softcoverPrice}">
           <input type="radio" name="coverOption" value="softcover" class="sr-only">
           <div class="cover-thumb-wrap">
             <img src="/static/img/thumb-softcover.webp" alt="Softcover book" class="cover-thumb-img">
@@ -196,9 +202,10 @@ export function personalizedBookReaderPage(data: PersonalizedBookData) {
         <span class="floating-step-line"></span>
         <span class="floating-step"><i class="far fa-circle"></i> Preview</span>
       </div>
-      <button type="button" class="btn btn-purple btn-floating-continue" id="btn-continue-checkout">
-        Continue
-      </button>
+      ${data.readOnly
+        ? `<a href="/my-books" class="btn btn-purple btn-floating-continue">Back to My Books</a>`
+        : `<button type="button" class="btn btn-purple btn-floating-continue" id="btn-continue-checkout">Continue to Cart</button>`
+      }
     </nav>
   </main>
 
@@ -209,11 +216,15 @@ export function personalizedBookReaderPage(data: PersonalizedBookData) {
       childName,
       childAge,
       language: data.language || 'English',
+      dedication: data.dedication || '',
       hardcoverPrice,
       softcoverPrice,
-      photoUrl: data.photoUrl || '/static/img/avatar-sample.png'
+      photoUrl: data.photoUrl || '/static/img/avatar-sample.png',
+      photoKey: data.photoKey || null,
+      readOnly: !!data.readOnly,
+      orderItemId: data.orderItemId || null
     })};
   </script>
-  <script src="/static/reader.js"></script>
+  <script type="module" src="/static/reader.js"></script>
   `
 }

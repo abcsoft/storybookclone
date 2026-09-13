@@ -1,273 +1,166 @@
-// WonderWraps Storybook Reader & Customizer JavaScript
+// WonderWraps Storybook Reader & Customizer — ES module.
+// Rewritten to match the real markup in src/pages_reader.ts (the previous
+// version targeted element IDs/classes — #reader-continue-btn,
+// .reader-carousel, #change-details-btn, wonderwraps_customization — that do
+// not exist on this page, so every handler here silently no-op'd).
+import { addItem } from './cart.js'
+import { requestPdf } from './api.js'
+
+const state = Object.assign(
+  { slug: '', title: '', childName: 'gando', childAge: 5, language: 'English', dedication: '', photoUrl: '/static/img/avatar-sample.png', photoKey: null, readOnly: false, orderItemId: null, hardcoverPrice: 49.2, softcoverPrice: 34.2 },
+  window.__BOOK_DATA__ || {}
+)
+let selectedCoverType = 'hardcover'
+
 document.addEventListener('DOMContentLoaded', () => {
-  initCoverOptionSelector();
-  initSpreadCarousels();
-  initPdfEmailCapture();
-  initContinueButton();
-  initChangeDetailsDropdown();
-  loadCustomizerState();
-});
-
-// State
-let selectedCoverType = 'hardcover';
-let selectedCoverPrice = 49.20;
-let currentChildName = 'gando';
-let currentChildAge = 5;
-let currentChildGender = 'girl';
-let currentAvatarUrl = '/static/avatar-sample.png';
-
-function loadCustomizerState() {
-  try {
-    const saved = localStorage.getItem('wonderwraps_customization');
-    if (saved) {
-      const data = JSON.parse(saved);
-      if (data.childName) currentChildName = data.childName;
-      if (data.childAge) currentChildAge = data.childAge;
-      if (data.childGender) currentChildGender = data.childGender;
-      if (data.photoPreviewUrl) currentAvatarUrl = data.photoPreviewUrl;
-
-      // Update name and age text across the page if elements exist
-      const nameLabels = document.querySelectorAll('.child-name-display');
-      nameLabels.forEach(el => el.textContent = currentChildName);
-      
-      const ageLabels = document.querySelectorAll('.child-age-display');
-      ageLabels.forEach(el => el.textContent = currentChildAge);
-
-      // Update avatar overlays if user uploaded custom photo
-      if (data.photoPreviewUrl) {
-        const userFaces = document.querySelectorAll('.user-face-overlay');
-        userFaces.forEach(el => {
-          if (el.tagName === 'IMG') {
-            el.src = data.photoPreviewUrl;
-          }
-        });
-      }
-    }
-  } catch (e) {
-    console.warn('Error reading saved customization:', e);
-  }
-}
+  initCoverOptionSelector()
+  initPageFlip()
+  initPdfRequestForm()
+  initContinueButton()
+  initChangeDetailsDropdown()
+})
 
 // 1. Cover Option Selector (Hardcover / Softcover)
 function initCoverOptionSelector() {
-  const cards = document.querySelectorAll('.cover-option-card');
-  const indicator = document.getElementById('cover-radio-indicator');
-
-  cards.forEach(card => {
+  const cards = document.querySelectorAll('.cover-option-card')
+  cards.forEach((card) => {
     card.addEventListener('click', () => {
-      cards.forEach(c => c.classList.remove('active'));
-      card.classList.add('active');
-
-      selectedCoverType = card.dataset.coverType || 'hardcover';
-      selectedCoverPrice = parseFloat(card.dataset.coverPrice || (selectedCoverType === 'hardcover' ? '49.20' : '34.20'));
-
-      // Move top indicator line dot
-      if (indicator) {
-        if (selectedCoverType === 'softcover') {
-          indicator.style.left = '66.6%';
-        } else {
-          indicator.style.left = '33.3%';
-        }
-      }
-
-      // Update bottom price display if visible
-      const priceBadge = document.getElementById('footer-price-display');
-      if (priceBadge) {
-        priceBadge.textContent = `$${selectedCoverPrice.toFixed(2)}`;
-      }
-    });
-  });
+      cards.forEach((c) => c.classList.remove('active'))
+      card.classList.add('active')
+      const radio = card.querySelector('input[type="radio"]')
+      if (radio) radio.checked = true
+      selectedCoverType = card.dataset.coverType || 'hardcover'
+    })
+  })
 }
 
-// 2. Spread Carousel Flipping Navigation
-function initSpreadCarousels() {
-  const carousels = document.querySelectorAll('.reader-carousel');
-
-  carousels.forEach(carousel => {
-    const slides = carousel.querySelectorAll('.carousel-slide');
-    const prevBtn = carousel.querySelector('.carousel-btn-prev');
-    const nextBtn = carousel.querySelector('.carousel-btn-next');
-    const dotsContainer = carousel.querySelector('.carousel-dots');
-    let currentIndex = 0;
-
-    if (!slides.length) return;
-
-    // Create dots if container exists and dots are empty
-    if (dotsContainer && !dotsContainer.children.length) {
-      slides.forEach((_, idx) => {
-        const dot = document.createElement('span');
-        dot.className = `carousel-dot ${idx === 0 ? 'active' : ''}`;
-        dot.addEventListener('click', () => goToSlide(idx));
-        dotsContainer.appendChild(dot);
-      });
-    }
-
-    function updateSlide() {
-      slides.forEach((s, idx) => {
-        s.classList.toggle('active', idx === currentIndex);
-      });
-      if (dotsContainer) {
-        const dots = dotsContainer.querySelectorAll('.carousel-dot');
-        dots.forEach((d, idx) => d.classList.toggle('active', idx === currentIndex));
-      }
-    }
-
-    function goToSlide(idx) {
-      currentIndex = (idx + slides.length) % slides.length;
-      updateSlide();
-    }
-
-    if (nextBtn) {
-      nextBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        goToSlide(currentIndex + 1);
-      });
-    }
-
-    if (prevBtn) {
-      prevBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        goToSlide(currentIndex - 1);
-      });
-    }
-  });
+// 2. Cover/spread "flip" arrows — advance the dot indicator for that preview.
+function initPageFlip() {
+  document.querySelectorAll('.book-preview-item').forEach((item) => {
+    const btn = item.querySelector('.book-carousel-arrow')
+    const dots = item.querySelectorAll('.preview-dot')
+    if (!btn || !dots.length) return
+    let idx = 0
+    btn.addEventListener('click', () => {
+      idx = (idx + 1) % dots.length
+      dots.forEach((d, i) => d.classList.toggle('active', i === idx))
+    })
+  })
 }
 
-// 3. PDF Email Capture Box
-function initPdfEmailCapture() {
-  const form = document.getElementById('pdf-email-form');
-  const input = document.getElementById('pdf-email-input');
-  const msg = document.getElementById('pdf-email-msg');
-  const submitBtn = document.getElementById('pdf-email-submit-btn');
+// 3. PDF Copy Request
+function initPdfRequestForm() {
+  const form = document.getElementById('pdf-request-form')
+  const input = document.getElementById('pdf-email')
+  const submitBtn = document.getElementById('btn-pdf-submit')
+  const status = document.getElementById('pdf-status-msg')
+  if (!form || !input) return
 
-  if (!form || !input) return;
+  const showStatus = (text, isError) => {
+    if (!status) return
+    status.textContent = text
+    status.hidden = !text
+    status.classList.toggle('is-error', !!isError)
+  }
 
   form.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const email = input.value.trim();
+    e.preventDefault()
+    const email = input.value.trim()
     if (!email || !email.includes('@')) {
-      showMsg('Please enter a valid email address.', 'text-red-500');
-      return;
+      showStatus('Please enter a valid email address.', true)
+      return
     }
-
     if (submitBtn) {
-      submitBtn.disabled = true;
-      submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+      submitBtn.disabled = true
+      submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>'
     }
-
-    try {
-      const slug = window.location.pathname.split('/').pop() || 'wonderwraps-book';
-      const res = await fetch('/api/books/pdf-request', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email,
-          bookSlug: slug,
-          childName: currentChildName,
-          childAge: currentChildAge,
-          coverType: selectedCoverType
-        })
-      });
-
-      const data = await res.json();
-      if (data.success) {
-        showMsg('✨ PDF preview has been sent to your inbox!', 'text-green-600 font-medium');
-        input.value = '';
-      } else {
-        showMsg(data.message || 'Something went wrong. Please try again.', 'text-red-500');
-      }
-    } catch (err) {
-      showMsg('Saved! A free digital copy will be prepared for ' + email, 'text-green-600 font-medium');
-    } finally {
-      if (submitBtn) {
-        submitBtn.disabled = false;
-        submitBtn.textContent = 'Get PDF';
-      }
-    }
-  });
-
-  function showMsg(text, className) {
-    if (msg) {
-      msg.textContent = text;
-      msg.className = `text-xs mt-2 transition-all ${className}`;
-      msg.classList.remove('hidden');
-    }
-  }
-}
-
-// 4. Continue Button Flow to Cart / Checkout
-function initContinueButton() {
-  const continueBtn = document.getElementById('reader-continue-btn');
-  if (!continueBtn) return;
-
-  continueBtn.addEventListener('click', async () => {
-    continueBtn.disabled = true;
-    continueBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Adding to Bag...';
-
-    const slug = window.location.pathname.split('/').pop() || 'custom-book';
-    const bookTitle = document.querySelector('h1')?.textContent?.trim() || 'Personalized Storybook';
-
-    const item = {
-      id: `book-${Date.now()}`,
-      slug,
-      title: `${bookTitle} (${selectedCoverType.toUpperCase()})`,
+    const result = await requestPdf({
+      email,
+      bookSlug: state.slug,
+      childName: state.childName,
+      childAge: state.childAge,
       coverType: selectedCoverType,
-      price: selectedCoverPrice,
-      quantity: 1,
-      image: currentAvatarUrl || '/static/preview-book-cover-ref.webp',
-      childName: currentChildName,
-      childAge: currentChildAge,
-      childGender: currentChildGender
-    };
-
-    // Store in local cart
-    try {
-      let cart = JSON.parse(localStorage.getItem('wonderwraps_cart') || '[]');
-      cart.push(item);
-      localStorage.setItem('wonderwraps_cart', JSON.stringify(cart));
-    } catch (e) {
-      console.error(e);
+      orderItemId: state.orderItemId || undefined
+    })
+    if (result.ok) {
+      // Honest status: a request was queued, not "sent" — no PDF is
+      // actually generated yet in this baseline (that's a later phase).
+      showStatus('Request received — we’ll email you once your digital copy is ready.', false)
+      input.value = ''
+    } else {
+      showStatus(result.error || 'Something went wrong. Please try again.', true)
     }
-
-    // Redirect to cart
-    setTimeout(() => {
-      window.location.href = '/cart';
-    }, 400);
-  });
+    if (submitBtn) {
+      submitBtn.disabled = false
+      submitBtn.innerHTML = '<i class="fas fa-paper-plane"></i>'
+    }
+  })
 }
 
-// 5. Change Details Dropdown / Modal
-function initChangeDetailsDropdown() {
-  const changeBtn = document.getElementById('change-details-btn');
-  const changeDropdown = document.getElementById('change-details-dropdown');
+// 4. Continue Button Flow to Cart (adds a REAL, checkout-able item — the
+// same personalization + uploaded photoKey the customer already confirmed
+// on the product page; never a placeholder or duplicate).
+function initContinueButton() {
+  const continueBtn = document.getElementById('btn-continue-checkout')
+  if (!continueBtn) return
 
-  if (!changeBtn || !changeDropdown) return;
-
-  changeBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    changeDropdown.classList.toggle('hidden');
-  });
-
-  document.addEventListener('click', (e) => {
-    if (!changeDropdown.contains(e.target) && e.target !== changeBtn) {
-      changeDropdown.classList.add('hidden');
+  continueBtn.addEventListener('click', () => {
+    if (!state.photoKey) {
+      window.location.href = `/books/${encodeURIComponent(state.slug)}`
+      return
     }
-  });
+    continueBtn.disabled = true
+    continueBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Adding to Cart…'
 
-  const saveDetailsBtn = document.getElementById('save-details-btn');
-  if (saveDetailsBtn) {
-    saveDetailsBtn.addEventListener('click', () => {
-      const nameInput = document.getElementById('edit-child-name');
-      const ageInput = document.getElementById('edit-child-age');
-      if (nameInput && nameInput.value.trim()) {
-        currentChildName = nameInput.value.trim();
-        document.querySelectorAll('.child-name-display').forEach(el => el.textContent = currentChildName);
-      }
-      if (ageInput && ageInput.value) {
-        currentChildAge = parseInt(ageInput.value, 10);
-        document.querySelectorAll('.child-age-display').forEach(el => el.textContent = currentChildAge);
-      }
-      changeDropdown.classList.add('hidden');
-    });
-  }
+    addItem({
+      id: `${state.slug}-${Date.now()}`,
+      slug: state.slug,
+      title: `${state.title} (${selectedCoverType})`,
+      kind: 'book',
+      coverType: selectedCoverType,
+      image: state.photoUrl,
+      childName: state.childName,
+      childAge: state.childAge,
+      language: state.language,
+      dedication: state.dedication,
+      photoKey: state.photoKey,
+      qty: 1
+    })
+
+    window.location.href = '/cart'
+  })
+}
+
+// 5. Change Details Dropdown
+function initChangeDetailsDropdown() {
+  const toggleBtn = document.getElementById('btn-change-details')
+  const card = document.getElementById('reader-change-card')
+  const form = document.getElementById('reader-quick-edit-form')
+  if (!toggleBtn || !card) return
+
+  toggleBtn.addEventListener('click', (e) => {
+    e.stopPropagation()
+    card.hidden = !card.hidden
+  })
+  document.addEventListener('click', (e) => {
+    if (!card.hidden && !card.contains(e.target) && e.target !== toggleBtn) {
+      card.hidden = true
+    }
+  })
+
+  form?.addEventListener('submit', (e) => {
+    e.preventDefault()
+    const name = document.getElementById('edit-child-name')?.value?.trim()
+    const age = document.getElementById('edit-child-age')?.value
+    const language = document.getElementById('edit-language')?.value
+    if (name) state.childName = name
+    if (age) state.childAge = age
+    if (language) state.language = language
+
+    document.querySelectorAll('.reader-meta-text strong').forEach((el, i) => {
+      el.textContent = i === 0 ? state.childName : state.childAge
+    })
+    document.getElementById('cover-title-overlay')?.querySelector('.cover-title-name')?.replaceChildren(document.createTextNode(state.childName))
+    card.hidden = true
+  })
 }

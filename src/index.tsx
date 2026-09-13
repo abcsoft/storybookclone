@@ -13,6 +13,8 @@ import {
   cartPage,
   checkoutPage,
   myBooksPage,
+  myBookOrderDetailPage,
+  resetPasswordPage,
   blogIndex,
   blogPost,
   legalPage,
@@ -30,6 +32,7 @@ import {
   type CatalogQuery,
   type DiscountRow
 } from './db'
+import { money } from './data'
 import {
   attachUser,
   hashPassword,
@@ -57,6 +60,10 @@ import {
   type AiSettingsRow
 } from './admin'
 import { personalizedBookReaderPage } from './pages_reader'
+import { getCookie, setCookie } from 'hono/cookie'
+import { createOrder, verifyGuestOrderToken, type CreateOrderInput } from './orders'
+import { validatePhotoBytes, contentTypeFor, recordUpload, checkUploadOwnership, getUploadOwner, MAX_PHOTO_BYTES } from './uploads'
+import { requestPasswordReset, resetPassword } from './password-reset'
 
 type Bindings = {
   DB: D1Database
@@ -80,6 +87,15 @@ let booted = false
 export function __resetBootedForTests() {
   booted = false
 }
+// Scope note (pre-existing, not a Phase 1 change): this inline fallback only
+// ever covered the original migration 0001 tables — it was already out of
+// sync with 0002 (pdp_*)/0003 (ai_settings, pdf_requests) before Phase 1, and
+// Phase 1's own migration 0004 additions (photo_uploads, app_secrets,
+// password_reset_tokens, rate_limit_events, orders/pdf_requests new columns)
+// are deliberately NOT added here either. `migrations/` is the one
+// authoritative schema source — run `npm run db:migrate:local` (README) before
+// relying on anything past the original 7 tables. Reconciling or retiring
+// this fallback is a reasonable follow-up but is out of this phase's scope.
 export async function ensureSchema(db?: D1Database, bootstrap?: { email?: string; password?: string }) {
   if (!db || booted) return
   booted = true
@@ -239,6 +255,25 @@ app.use('*', async (c, next) => {
 })
 app.use('*', attachUser)
 
+// Every browser (guest or logged-in) gets a stable, opaque, httpOnly upload
+// ownership token. It has nothing to do with login — it's what lets order
+// creation reject a photo upload key that belongs to a DIFFERENT browser
+// ("foreign" key), without requiring an account just to personalize.
+const UPLOAD_OWNER_COOKIE = 'ww_upload'
+function getOrSetUploadOwnerToken(c: Context<{ Bindings: Bindings; Variables: Vars }>): string {
+  let token = getCookie(c, UPLOAD_OWNER_COOKIE)
+  if (!token) {
+    token = crypto.randomUUID()
+    setCookie(c, UPLOAD_OWNER_COOKIE, token, {
+      path: '/',
+      httpOnly: true,
+      sameSite: 'Lax',
+      maxAge: 60 * 60 * 24 * 30
+    })
+  }
+  return token
+}
+
 function html(c: any, title: string, body: string, active?: string, description?: string) {
   return c.html(page({ title, body, active, description }))
 }
@@ -378,13 +413,51 @@ app.get('/logout', async (c) => {
   return c.redirect('/')
 })
 
-app.post('/forgot-password', async (c) =>
-  html(c, 'Forgot Password - Wonder Wraps', authPage('forgot', 'If that email exists, reset instructions have been sent.'), 'my-books')
-)
+// Generic response regardless of whether the email exists — prevents account
+// enumeration via this form. requestPasswordReset() itself is rate-limited
+// and does the real work (token issuance + email) only when appropriate.
+const FORGOT_PASSWORD_GENERIC_MESSAGE = 'If that email has an account, we’ve sent password reset instructions to it.'
+app.post('/forgot-password', async (c) => {
+  const body = await c.req.parseBody()
+  const email = String(body.email || '')
+  const baseUrl = new URL(c.req.url).origin + '/reset-password'
+  await requestPasswordReset(c.env.DB, email, baseUrl)
+  return html(c, 'Forgot Password - Wonder Wraps', authPage('forgot', FORGOT_PASSWORD_GENERIC_MESSAGE), 'my-books')
+})
+
+app.get('/reset-password', (c) => {
+  const token = c.req.query('token') || ''
+  return html(c, 'Reset Password - Wonder Wraps', resetPasswordPage(token), 'my-books')
+})
+app.post('/reset-password', async (c) => {
+  const body = await c.req.parseBody()
+  const token = String(body.token || '')
+  const password = String(body.password || '')
+  const confirm = String(body.confirmPassword || '')
+  if (password !== confirm) {
+    return html(c, 'Reset Password - Wonder Wraps', resetPasswordPage(token, 'Passwords do not match.'), 'my-books')
+  }
+  const result = await resetPassword(c.env.DB, token, password)
+  if (!result.ok) {
+    const message = result.error === 'weak_password' ? 'Password must be at least 8 characters.' : 'This reset link is invalid or has expired. Please request a new one.'
+    return html(c, 'Reset Password - Wonder Wraps', resetPasswordPage(token, message), 'my-books')
+  }
+  return html(
+    c,
+    'Password reset - Wonder Wraps',
+    `<section class="auth"><div class="auth-form"><h1>Password updated</h1><p>Your password has been reset. Please log in with your new password.</p><a class="btn btn-purple" href="/login">Go to login</a></div></section>`,
+    'my-books'
+  )
+})
 
   app.get('/cart', (c) => html(c, 'Cart - Wonder Wraps', cartPage()))
   app.get('/checkout', (c) => html(c, 'Checkout - Wonder Wraps', checkoutPage(c.get('user'))))
   app.get('/my-books', (c) => html(c, 'My Books - Wonder Wraps', myBooksPage(!!c.get('user')), 'my-books'))
+  app.get('/my-books/:id', (c) => {
+    const user = c.get('user')
+    if (!user) return c.redirect('/login')
+    return html(c, `Order #${c.req.param('id')} - Wonder Wraps`, myBookOrderDetailPage(c.req.param('id')), 'my-books')
+  })
   app.get('/my/books', (c) => c.redirect('/my-books'))
   app.get('/profile', (c) => c.redirect('/my-books'))
 
@@ -415,31 +488,70 @@ app.post('/forgot-password', async (c) =>
       }
     }
 
+    const readOnly = q.readOnly === '1' || q.readonly === '1'
+    const photoKey = q.photoKey && q.photoKey.startsWith('uploads/') ? q.photoKey : undefined
+
     const readerHtml = personalizedBookReaderPage({
       slug,
       title,
       childName,
       childAge,
-      language: 'English',
+      language: q.lang || 'English',
+      dedication: q.dedication,
       coverType: (q.cover as any) === 'softcover' ? 'softcover' : 'hardcover',
       hardcoverPrice,
       softcoverPrice,
       coverImage: '/static/preview-book-cover-ref.webp',
-      spreadImage: '/static/preview-book-spread-ref.webp'
+      spreadImage: '/static/preview-book-spread-ref.webp',
+      photoUrl: photoKey ? `/photos/${photoKey}` : undefined,
+      photoKey,
+      readOnly,
+      orderItemId: q.orderItemId ? Number(q.orderItemId) : undefined
     })
 
     return html(c, `${title} - Wonder Wraps Customizer`, readerHtml, 'my-books')
   })
 
-app.get('/order-success', (c) => {
-  const id = c.req.query('id') || ''
+// Guest order confirmation. The order id in the URL is not itself an
+// authorization check — the token query param (an HMAC over the order id,
+// see src/orders.ts) is. Without a valid token this deliberately shows the
+// same generic page a stranger guessing sequential IDs would see.
+app.get('/order-success', async (c) => {
+  const id = Number(c.req.query('id') || '')
+  const token = c.req.query('token') || ''
+  const user = c.get('user')
+
+  let order: any = null
+  let items: any[] = []
+  if (id) {
+    const isOwner = user ? await c.env.DB.prepare('SELECT id FROM orders WHERE id = ? AND user_id = ?').bind(id, user.id).first() : null
+    const guestOk = !isOwner && (await verifyGuestOrderToken(c.env.DB, id, token))
+    if (isOwner || guestOk) {
+      order = await c.env.DB.prepare('SELECT * FROM orders WHERE id = ?').bind(id).first()
+      if (order) items = (await c.env.DB.prepare('SELECT * FROM order_items WHERE order_id = ?').bind(id).all()).results || []
+    }
+  }
+
+  if (!order) {
+    return html(
+      c,
+      'Order confirmed - Wonder Wraps',
+      `<section class="page-hero">
+        <h1>Thank you!</h1>
+        <p>${id ? `Order #${id} could not be shown here — check your confirmation link, or ` : 'Please check My Books, or '}<a href="/my-books">view My Books</a> if you have an account.</p>
+      </section>`
+    )
+  }
+
   return html(
     c,
     'Order confirmed - Wonder Wraps',
     `<section class="page-hero">
       <h1>Thank you!</h1>
-      <p>Your personalised order ${id ? '#' + id : ''} is being prepared. We’ll email a preview for approval before printing.</p>
-      <a class="btn" href="/my-books">View my books</a>
+      <p>Your personalised order #${order.id} is being prepared. We’ll email a preview for approval before printing.</p>
+      <p class="tiny muted">Status: ${String(order.status).replace(/_/g, ' ')} · ${items.length} item${items.length === 1 ? '' : 's'} · Total ${money(order.total)}</p>
+      ${!user ? `<p class="tiny">Bookmark this page to check back — guest orders are not linked to an account. <a class="link" href="/register">Create an account</a> to track it from My Books instead.</p>` : ''}
+      <a class="btn" href="${user ? '/my-books' : '/'}">${user ? 'View my books' : 'Continue shopping'}</a>
     </section>`
   )
 })
@@ -457,9 +569,30 @@ app.get('/privacy', (c) => c.redirect('/support/privacy-policy'))
 app.get('/terms', (c) => c.redirect('/support/terms-and-conditions'))
 
 // ---------- photos (R2) ----------
+// NEVER a permanently public URL: only the uploading browser (owner_token),
+// the admin, or a customer who owns an order_item referencing this exact
+// key may view it. Everyone else gets 404 (not 403, so a photo's existence
+// can't be probed either).
 app.get('/photos/:key{.+}', async (c) => {
   if (!c.env.PHOTOS) return c.notFound()
   const key = c.req.param('key')
+  const user = c.get('user')
+  const ownerToken = getCookie(c, UPLOAD_OWNER_COOKIE)
+
+  let authorized = user?.role === 'admin'
+  if (!authorized && ownerToken) {
+    const uploadOwner = await getUploadOwner(c.env.DB, key)
+    authorized = uploadOwner !== null && uploadOwner === ownerToken
+  }
+  if (!authorized && user) {
+    const owns = await c.env.DB
+      .prepare('SELECT 1 FROM order_items oi JOIN orders o ON o.id = oi.order_id WHERE oi.photo_key = ? AND o.user_id = ?')
+      .bind(key, user.id)
+      .first()
+    authorized = !!owns
+  }
+  if (!authorized) return c.notFound()
+
   const obj = await c.env.PHOTOS.get(key)
   if (!obj) return c.notFound()
   const headers = new Headers()
@@ -484,95 +617,110 @@ app.post('/api/newsletter', async (c) => {
   return c.json({ ok: true })
 })
 
-// Photo upload → R2 (5MB max, images only)
-app.post('/api/upload-photo', async (c) => {
+// Photo upload → R2, validated by real file bytes (not just declared
+// Content-Type), tracked in photo_uploads so order creation can enforce
+// ownership/expiry/single-use. Canonical: POST /api/v1/uploads/photo.
+// Legacy alias kept, tested: POST /api/upload-photo.
+async function handleUploadPhoto(c: Context<{ Bindings: Bindings; Variables: Vars }>) {
   const body = await c.req.parseBody()
   const file = body.photo
   if (!(file instanceof File) || file.size === 0) return c.json({ error: 'No photo received' }, 400)
-  if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) return c.json({ error: 'Please upload a JPG, PNG, or WEBP image' }, 400)
-  if (file.size > 5 * 1024 * 1024) return c.json({ error: 'Photo must be under 5MB' }, 400)
+  if (file.size > MAX_PHOTO_BYTES) return c.json({ error: 'Photo must be under 5MB' }, 400)
   if (!c.env.PHOTOS) return c.json({ error: 'Photo storage unavailable' }, 503)
-  const ext = (file.type.split('/')[1] || 'jpg').replace('jpeg', 'jpg')
-  const key = `uploads/${crypto.randomUUID()}.${ext}`
-  await c.env.PHOTOS.put(key, await file.arrayBuffer(), { httpMetadata: { contentType: file.type } })
-  return c.json({ ok: true, key, url: `/photos/${key}` })
-})
 
-// Live quote for the cart page / checkout (server-side pricing)
-app.post('/api/quote', async (c) => {
+  const bytes = new Uint8Array(await file.arrayBuffer())
+  const validation = validatePhotoBytes(bytes)
+  if (!validation.ok) {
+    const messages: Record<string, string> = {
+      too_small: 'That file is too small to be a real photo.',
+      too_large: 'Photo must be under 5MB.',
+      corrupt_or_unrecognized_image: 'That file is not a valid JPG, PNG, or WEBP image (its content did not match its name/type).',
+      dimensions_too_small: 'Photo resolution is too low — please use a larger image.',
+      dimensions_too_large: 'Photo resolution is too high — please use a smaller image.'
+    }
+    return c.json({ error: messages[validation.error] || 'Invalid photo.' }, 400)
+  }
+
+  const ownerToken = getOrSetUploadOwnerToken(c)
+  const ext = validation.image.format === 'jpeg' ? 'jpg' : validation.image.format
+  const key = `uploads/${crypto.randomUUID()}.${ext}`
+  const contentType = contentTypeFor(validation.image)
+  await c.env.PHOTOS.put(key, bytes, { httpMetadata: { contentType } })
+  await recordUpload(c.env.DB, {
+    key,
+    ownerToken,
+    contentType,
+    byteSize: bytes.byteLength,
+    width: validation.image.width,
+    height: validation.image.height
+  })
+  return c.json({ ok: true, key, url: `/photos/${key}` })
+}
+app.post('/api/v1/uploads/photo', handleUploadPhoto)
+app.post('/api/upload-photo', handleUploadPhoto)
+
+// Live quote for the cart page / checkout (server-side pricing — client
+// price/discount/total are never trusted). Canonical: POST /api/v1/cart/quote.
+// Legacy aliases kept, tested: POST /api/quote, POST /api/cart/quote (the
+// path the storefront JS called before this baseline existed, but the
+// server never implemented).
+async function handleQuote(c: Context<{ Bindings: Bindings; Variables: Vars }>) {
   const body = await c.req.json<{ items?: any[]; code?: string; shipping?: string }>()
   const items = Array.isArray(body.items) ? body.items : []
   if (!items.length) return c.json({ subtotal: 0, discount: 0, shipping: 0, total: 0, bookCount: 0 })
-  const quote = await quoteCart(c.env.DB, items, body.code)
+  const quoteResult = await quoteCart(c.env.DB, items, body.code)
   const ship = body.shipping ? shippingFor(String(body.shipping)).price : 0
-  const total = round2(quote.subtotal - quote.discount + ship)
+  const total = round2(quoteResult.subtotal - quoteResult.discount + ship)
   return c.json({
-    subtotal: quote.subtotal,
-    discount: quote.discount,
-    code: quote.appliedCode,
-    bookCount: quote.bookCount,
+    subtotal: quoteResult.subtotal,
+    discount: quoteResult.discount,
+    code: quoteResult.appliedCode,
+    bookCount: quoteResult.bookCount,
     shipping: ship,
     total,
-    invalid: quote.invalid
+    invalid: quoteResult.invalid
   })
-})
+}
+app.post('/api/v1/cart/quote', handleQuote)
+app.post('/api/quote', handleQuote)
+app.post('/api/cart/quote', handleQuote)
 
-// Place an order (guest or logged-in). Server recomputes ALL prices.
-app.post('/api/orders', async (c) => {
-  const body = await c.req.json<any>()
-  const items = Array.isArray(body.items) ? body.items : []
-  if (!items.length) return c.json({ error: 'Cart is empty' }, 400)
-  const invalidPersonalisation = items.find((item: any) => !String(item.childName || '').trim() || !String(item.photoKey || '').startsWith('uploads/'))
-  if (invalidPersonalisation) return c.json({ error: 'Each item needs a child name and uploaded photo.' }, 400)
-  const fullName = String(body.fullName || '').trim()
-  const email = String(body.email || '').toLowerCase().trim()
-  const address = String(body.address || '').trim()
-  const city = String(body.city || '').trim()
-  const country = String(body.country || '').trim()
-  if (!fullName || !email.includes('@') || !address || !city || !country) {
-    return c.json({ error: 'Please complete all shipping fields' }, 400)
-  }
-  const shipMethod = String(body.shippingMethod || 'standard')
-  const ship = shippingFor(shipMethod)
-  const quote = await quoteCart(c.env.DB, items, body.code)
-  if (quote.invalid.length) return c.json({ error: `Unknown product(s): ${quote.invalid.join(', ')}` }, 400)
-  const total = round2(quote.subtotal - quote.discount + ship.price)
+// Place an order (guest or logged-in). Server recomputes ALL prices, writes
+// order+items atomically, and is idempotent under an `Idempotency-Key`
+// header (falls back to a body field, then a server-generated key so a
+// caller that sends neither still gets a single valid order — just without
+// retry-safety). See src/orders.ts for the full contract.
+// Canonical: POST /api/v1/orders. Legacy alias kept, tested: POST /api/orders.
+async function handleCreateOrder(c: Context<{ Bindings: Bindings; Variables: Vars }>) {
+  const body = await c.req.json<CreateOrderInput>().catch(() => null)
+  if (!body) return c.json({ error: 'Invalid JSON body' }, 400)
+  const idempotencyKey = c.req.header('Idempotency-Key') || body.idempotencyKey
   const user = c.get('user')
+  const ownerToken = getOrSetUploadOwnerToken(c)
 
-  const r = await c.env.DB.prepare(
-    `INSERT INTO orders (user_id, full_name, email, address, city, country, shipping_method, shipping, subtotal, discount, discount_code, total, status)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending_preview')`
-  )
-    .bind(user?.id ?? null, fullName, email, address, city, country, shipMethod, ship.price, quote.subtotal, quote.discount, quote.appliedCode, total)
-    .run()
-  const orderId = Number(r.meta.last_row_id)
+  const result = await createOrder(c.env.DB, { ...body, idempotencyKey }, { userId: user?.id ?? null, uploadOwnerToken: ownerToken })
+  if (!result.ok) return c.json({ error: result.error }, result.status as any)
+  return c.json({ ok: true, id: result.orderId, guestToken: result.guestToken, replayed: result.replayed })
+}
+app.post('/api/v1/orders', handleCreateOrder)
+app.post('/api/orders', handleCreateOrder)
 
-  const itemStmts = items.map((it: any) => {
-    const meta = quote.priceMap.get(String(it.slug))!
-    return c.env.DB.prepare(
-      `INSERT INTO order_items (order_id, product_id, slug, title, kind, unit_price, qty, child_name, child_age, language, dedication, photo_key)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).bind(
-      orderId,
-      meta.id,
-      String(it.slug),
-      meta.title,
-      meta.kind,
-      meta.price,
-      Math.max(1, Math.min(10, Number(it.qty) || 1)),
-      String(it.childName || '').slice(0, 24),
-      it.childAge ? Number(it.childAge) : null,
-      String(it.language || 'English').slice(0, 40),
-      String(it.dedication || '').slice(0, 200),
-      String(it.photoKey || '').startsWith('uploads/') ? String(it.photoKey) : ''
-    )
-  })
-  if (itemStmts.length) await c.env.DB.batch(itemStmts)
-  return c.json({ ok: true, id: orderId })
+// Guest order access via HMAC capability token (never a bare sequential ID).
+app.get('/api/v1/orders/:id/guest', async (c) => {
+  const id = Number(c.req.param('id'))
+  const token = c.req.query('token') || ''
+  const ok = await verifyGuestOrderToken(c.env.DB, id, token)
+  if (!ok) return c.json({ error: 'Order not found' }, 404)
+  const order = await c.env.DB.prepare('SELECT * FROM orders WHERE id = ?').bind(id).first()
+  if (!order) return c.json({ error: 'Order not found' }, 404)
+  const items = (await c.env.DB.prepare('SELECT * FROM order_items WHERE order_id = ?').bind(id).all()).results || []
+  return c.json({ order, items })
 })
 
-// Logged-in customer's own orders
-app.get('/api/my/orders', async (c) => {
+// Logged-in customer's own orders — ownership enforced by user_id match,
+// never by the client-supplied order id alone. Canonical: /api/v1/my/orders[.../:id].
+// Legacy aliases kept, tested: /api/my/orders[.../:id].
+async function handleMyOrders(c: Context<{ Bindings: Bindings; Variables: Vars }>) {
   const auth = requireAuth(c)
   if (auth instanceof Response) return auth
   const orders = (
@@ -585,9 +733,8 @@ app.get('/api/my/orders', async (c) => {
       .all()
   ).results || []
   return c.json({ orders })
-})
-
-app.get('/api/my/orders/:id', async (c) => {
+}
+async function handleMyOrderDetail(c: Context<{ Bindings: Bindings; Variables: Vars }>) {
   const auth = requireAuth(c)
   if (auth instanceof Response) return auth
   const id = Number(c.req.param('id'))
@@ -597,10 +744,29 @@ app.get('/api/my/orders/:id', async (c) => {
     await c.env.DB.prepare('SELECT * FROM order_items WHERE order_id = ?').bind(id).all()
   ).results || []
   return c.json({ order, items })
-})
+}
+app.get('/api/v1/my/orders', handleMyOrders)
+app.get('/api/my/orders', handleMyOrders)
+app.get('/api/v1/my/orders/:id', handleMyOrderDetail)
+app.get('/api/my/orders/:id', handleMyOrderDetail)
 
 // Legacy endpoint kept for the demo: latest orders by email (no auth). Removed for privacy.
 app.get('/api/orders', (c) => c.json({ error: 'Login and use /api/my/orders' }, 401))
+
+// ---------- password reset (JSON API — same core logic as the SSR /forgot-password, /reset-password forms) ----------
+app.post('/api/v1/auth/forgot-password', async (c) => {
+  const body = await c.req.json<{ email?: string }>().catch(() => ({}) as any)
+  const baseUrl = new URL(c.req.url).origin + '/reset-password'
+  await requestPasswordReset(c.env.DB, body.email || '', baseUrl)
+  // Always the same response — no enumeration signal either way.
+  return c.json({ ok: true, message: FORGOT_PASSWORD_GENERIC_MESSAGE })
+})
+app.post('/api/v1/auth/reset-password', async (c) => {
+  const body = await c.req.json<{ token?: string; password?: string }>().catch(() => ({}) as any)
+  const result = await resetPassword(c.env.DB, body.token || '', body.password || '')
+  if (!result.ok) return c.json({ error: result.error }, 400)
+  return c.json({ ok: true })
+})
 
 // ================= ADMIN =================
 
@@ -1109,33 +1275,51 @@ app.post('/api/admin/test-ai-connection', async (c) => {
   }
 })
 
-// Public PDF request API
-app.post('/api/books/pdf-request', async (c) => {
-  const body = await c.req.json<any>()
+// Public PDF request API. This queues/records a request — it does NOT
+// generate a PDF (that pipeline is a later phase; see
+// STORYBOOKCLONE_COMPLETION_CODING_PACK.md Phase 7). Confirmed baseline
+// defect: pdf_requests had no `cover_type` column even though this handler
+// always tried to insert one, so every call 500'd (migration 0004 fixes the
+// schema; this also fixes the response wording to stop implying delivery).
+// Canonical: POST/GET /api/v1/books/pdf-requests[/:id].
+// Legacy alias kept, tested: POST /api/books/pdf-request.
+async function handleCreatePdfRequest(c: Context<{ Bindings: Bindings; Variables: Vars }>) {
+  const body = await c.req.json<any>().catch(() => ({}))
   const email = String(body.email || '').toLowerCase().trim()
   const bookSlug = String(body.bookSlug || '')
   const childName = String(body.childName || '')
   const childAge = Number(body.childAge || 5)
   const coverType = String(body.coverType || 'hardcover')
+  const orderItemId = body.orderItemId ? Number(body.orderItemId) : null
+  const user = c.get('user')
 
   if (!email || !email.includes('@')) {
-    return c.json({ success: false, message: 'Valid email is required.' }, 400)
+    return c.json({ success: false, error: 'Valid email is required.' }, 400)
   }
 
-  try {
-    await c.env.DB.prepare(`
-      INSERT INTO pdf_requests (email, book_slug, child_name, child_age, cover_type)
-      VALUES (?, ?, ?, ?, ?)
-    `).bind(email, bookSlug, childName, childAge, coverType).run()
+  const r = await c.env.DB.prepare(
+    `INSERT INTO pdf_requests (email, book_slug, child_name, child_age, cover_type, user_id, order_item_id, status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'queued')`
+  )
+    .bind(email, bookSlug, childName, childAge, coverType, user?.id ?? null, orderItemId)
+    .run()
 
-    return c.json({
-      success: true,
-      message: 'PDF copy request received. Digital storybook will be prepared and sent.'
-    })
-  } catch (e: any) {
-    return c.json({ success: false, message: e.message || 'Database error' }, 500)
-  }
-})
+  return c.json({
+    success: true,
+    id: Number(r.meta.last_row_id),
+    status: 'queued',
+    message: 'Request received and queued — we’ll email you once your digital copy is ready.'
+  })
+}
+async function handlePdfRequestStatus(c: Context<{ Bindings: Bindings; Variables: Vars }>) {
+  const id = Number(c.req.param('id'))
+  const row = await c.env.DB.prepare('SELECT id, status, book_slug, cover_type, created_at, updated_at FROM pdf_requests WHERE id = ?').bind(id).first()
+  if (!row) return c.json({ error: 'Not found' }, 404)
+  return c.json(row)
+}
+app.post('/api/v1/books/pdf-requests', handleCreatePdfRequest)
+app.post('/api/books/pdf-request', handleCreatePdfRequest)
+app.get('/api/v1/books/pdf-requests/:id', handlePdfRequestStatus)
 
 // AI Book Generator Route (Client calls this to generate/preview books)
 app.post('/api/generate-book', async (c) => {
@@ -1192,6 +1376,10 @@ function slugify(s: string) {
   )
 }
 
-app.notFound((c) => html(c, 'Not found - Wonder Wraps', notFoundPage()))
+// Confirmed baseline defect: this previously rendered the not-found page
+// with c.html() and no status, defaulting to 200 OK — every truly missing
+// route (and, worse, every access-denied /photos/:key response relying on
+// c.notFound()) was reporting success.
+app.notFound((c) => c.html(page({ title: 'Not found - Wonder Wraps', body: notFoundPage() }), 404))
 
 export default app

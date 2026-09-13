@@ -123,9 +123,8 @@ export function page(opts: {
       <p>WonderWraps © 2026 All rights reserved</p>
     </div>
   </footer>
-  <script src="/static/app.js"></script>
-  <script src="/static/pdp.js" defer></script>
-  <script src="/static/reader.js" defer></script>
+  <script type="module" src="/static/app.js"></script>
+  <script type="module" src="/static/pdp.js"></script>
 </body>
 </html>`
 }
