@@ -12,7 +12,7 @@
 import { chromium } from 'playwright'
 import jpegCodec from 'jpeg-js'
 import { spawn, execSync, execFileSync } from 'node:child_process'
-import { writeFileSync, mkdtempSync, rmSync } from 'node:fs'
+import { writeFileSync, mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -606,7 +606,75 @@ async function runDoubleSubmissionTest(browser, photoPath) {
   log('double-submit', 'browser-level double-submission race passed — exactly one logical order')
 }
 
+// Regression guard for a real incident: an unrelated Next.js app
+// ("MagicTale") was found bound to this machine's dev ports, silently
+// shadowing WonderWraps during local preview — not a code defect in this
+// repo, but exactly the class of failure a source-only review can never
+// catch (the code was fine; the wrong process was answering the request).
+// Two layers: (1) a fast, server-less check that THIS script is actually
+// running from the real storybookclone checkout, not some other project
+// directory; (2) a live-server check that the app actually answering HTTP
+// requests is genuinely WonderWraps, not a same-port impostor.
+function verifyRepoIdentity() {
+  log('identity', 'verifying this checkout is the real storybookclone repo (not run from the wrong working directory)')
+  const mustExist = ['migrations/0001_initial.sql', 'src/photo-policy.ts', 'src/orders.ts']
+  for (const rel of mustExist) {
+    if (!existsSync(join(root, rel))) fail('identity', `expected file missing — this does not look like the storybookclone checkout: ${rel}`)
+  }
+  const initialMigration = readFileSync(join(root, 'migrations/0001_initial.sql'), 'utf8')
+  if (!/order_items/.test(initialMigration)) fail('identity', 'migrations/0001_initial.sql does not define order_items — wrong repository')
+  const indexSrc = readFileSync(join(root, 'src/index.tsx'), 'utf8')
+  if (!/wonderwraps/i.test(indexSrc)) fail('identity', 'src/index.tsx does not mention WonderWraps — wrong repository')
+  log('identity', `confirmed real storybookclone checkout at ${root}`)
+}
+
+async function verifyAppIdentity(browser) {
+  log('identity', 'verifying the server actually answering HTTP is genuinely WonderWraps, not a same-port impostor')
+  const context = await browser.newContext()
+  const page = await context.newPage()
+
+  const checkRoute = async (route, assertions) => {
+    const res = await page.goto(`${BASE}${route}`, { waitUntil: 'domcontentloaded' })
+    const status = res.status()
+    const headers = res.headers()
+    const html = await page.content()
+    if (/magictale/i.test(html)) fail('identity', `"MagicTale" branding found on ${route} — wrong application is being served`)
+    if (/\/_next\//.test(html) || /next\.js/i.test(headers['x-powered-by'] || '')) {
+      fail('identity', `${route} shows Next.js fingerprints (/_next/ assets or X-Powered-By) — this is not the Hono/Workers WonderWraps app`)
+    }
+    assertions({ status, html })
+  }
+
+  await checkRoute('/', ({ status, html }) => {
+    if (status !== 200) fail('identity', `/ expected 200, got ${status}`)
+    if (!/wonderwraps/i.test(html)) fail('identity', '/ does not show WonderWraps branding')
+  })
+
+  await checkRoute('/login', ({ status, html }) => {
+    if (status !== 200) fail('identity', `/login expected 200, got ${status}`)
+    if (/admin panel|internal operator|two-factor authentication|TOTP/i.test(html)) fail('identity', '/login renders admin-looking content instead of the customer login')
+    if (/admin@magictale\.test/i.test(html)) fail('identity', '/login exposes a default admin credential placeholder')
+  })
+
+  await checkRoute('/admin/login', ({ status, html }) => {
+    if (status !== 200) fail('identity', `/admin/login expected 200, got ${status}`)
+    if (!/admin panel/i.test(html)) fail('identity', '/admin/login does not render the WonderWraps admin login')
+    if (!/action="\/admin\/login"/.test(html)) fail('identity', '/admin/login form does not submit to /admin/login')
+    if (/value="[^"]*@[^"]*"/.test(html)) fail('identity', '/admin/login pre-fills a default email/credential value')
+  })
+
+  const adminRes = await page.request.get(`${BASE}/admin`, { maxRedirects: 0 }).catch((e) => e)
+  const adminStatus = adminRes.status ? adminRes.status() : null
+  if (![301, 302, 303, 307, 308].includes(adminStatus)) fail('identity', `GET /admin while logged out: expected a redirect, got ${adminStatus}`)
+  const location = adminRes.headers()['location'] || ''
+  if (!location.includes('/admin/login')) fail('identity', `GET /admin while logged out redirected to "${location}", expected /admin/login`)
+
+  await context.close()
+  log('identity', 'confirmed: genuine WonderWraps app, correct route separation, no MagicTale contamination')
+}
+
 async function main() {
+  verifyRepoIdentity()
   killWhateverIsOnPort(PORT) // a previous crashed run may have left a server holding this port/D1 lock
   log('setup', 'resetting local D1 to a clean, seeded state')
   execSync('npm run db:reset', { cwd: root, stdio: 'inherit' })
@@ -635,6 +703,7 @@ async function main() {
 
   const browser = await chromium.launch()
   try {
+    await verifyAppIdentity(browser)
     await runGuestJourney(browser, photoPath)
     const { email: authEmail } = await runAuthenticatedJourney(browser, photoPath)
     await finishPasswordReset(browser, serverLogRef, authEmail)
