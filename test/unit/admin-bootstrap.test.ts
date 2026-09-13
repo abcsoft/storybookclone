@@ -21,7 +21,7 @@ describe('admin bootstrap has no production credential fallback', () => {
     expect(admin).toBeNull()
   })
 
-  it('never seeds the old known default credential (admin@wonderwraps.com / admin123)', async () => {
+  it('never seeds the historical default admin account', async () => {
     const db = createFakeD1()
     await ensureSchema(db, { email: 'owner@example.com', password: 'a-strong-owner-password' })
     const legacyDefault = await db

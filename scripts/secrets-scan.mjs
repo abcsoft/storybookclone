@@ -26,7 +26,11 @@ const IGNORE_FILES = new Set([
   'package-lock.json'
 ])
 
-const trackedFiles = execSync('git ls-files', { encoding: 'utf8' })
+// Scan tracked files AND untracked-but-not-gitignored files (not just what's
+// already staged/committed) — otherwise a brand-new file scanned before its
+// first `git add` produces a false "clean" that a later `git add -A` silently
+// invalidates. `--cached` + `--others --exclude-standard` covers both.
+const trackedFiles = execSync('git ls-files --cached --others --exclude-standard', { encoding: 'utf8' })
   .split('\n')
   .map((s) => s.trim())
   .filter(Boolean)
