@@ -27,7 +27,12 @@ const EXPECTED_TABLES = [
   'pdp_steps', 'pdp_photo_tips', 'pdp_magic', 'pdp_trust', 'pdp_reactions',
   'pdp_media', 'pdp_related', 'pdp_faqs', 'ai_settings', 'pdf_requests',
   'app_secrets', 'photo_uploads', 'password_reset_tokens', 'rate_limit_events',
-  'upload_claims', 'rate_limit_windows'
+  'upload_claims', 'rate_limit_windows',
+  // Phase 2 personalization domain (migrations 0010-0013)
+  'languages', 'product_localizations', 'book_templates', 'book_scenes', 'scene_placeholders',
+  'prospects', 'user_books', 'personalization_inputs', 'detected_faces',
+  'preview_versions', 'preview_assets', 'revision_requests', 'approvals', 'user_book_events',
+  'retention_failures'
 ]
 
 const EXPECTED_NEW_COLUMNS = [
@@ -37,10 +42,31 @@ const EXPECTED_NEW_COLUMNS = [
   ['pdf_requests', 'status'],
   ['pdf_requests', 'access_token_hash'],
   ['upload_claims', 'owner_token'],
-  ['pdf_requests', 'access_token_expires_at']
+  ['pdf_requests', 'access_token_expires_at'],
+  // Phase 2
+  ['photo_uploads', 'completion_token_hash'],
+  ['photo_uploads', 'completed_at'],
+  ['order_items', 'user_book_id'],
+  ['order_items', 'personalization_input_revision']
 ]
 
-const EXPECTED_TRIGGERS = ['trg_upload_claims_enforce_ownership']
+const EXPECTED_TRIGGERS = [
+  'trg_upload_claims_enforce_ownership',
+  // Phase 2
+  'trg_book_templates_identity_immutable',
+  'trg_book_templates_no_unpublish',
+  'trg_book_templates_no_revive',
+  'trg_book_scenes_immutable_once_published',
+  'trg_scene_placeholders_immutable_once_published',
+  'trg_detected_faces_no_update',
+  'trg_user_books_face_matches_upload',
+  'trg_personalization_inputs_no_update',
+  'trg_preview_versions_no_update',
+  'trg_preview_assets_no_update',
+  'trg_revision_requests_no_update',
+  'trg_approvals_no_update',
+  'trg_user_book_events_no_update'
+]
 
 function assertTriggers(db, label) {
   const rows = db.prepare("SELECT name FROM sqlite_master WHERE type = 'trigger'").all()
@@ -180,6 +206,64 @@ function assertTables(db, label) {
     process.exit(1)
   }
   console.log(`OK [existing rows survive the upgrade]: legacy ai_settings.api_key cleared; pre-existing upload_claims row intact (owner_token backfilled to ${JSON.stringify(claimRow.owner_token)}).`)
+}
+
+// 2d) Upgrade from the EXACT accepted Phase-1/0009 schema (0001-0009,
+// everything before Phase 2) — proves the four Phase 2 migrations
+// (0010-0013) apply cleanly on top of a real, previously-migrated Phase 1
+// database, not just an empty one.
+const ACCEPTED_PHASE_1_0009_MIGRATIONS = [
+  '0001_initial.sql', '0002_pdp_sections.sql', '0003_ai_settings.sql', '0004_phase1_commerce.sql',
+  '0005_atomic_claims_and_pdf_tokens.sql', '0006_db_enforced_upload_claim.sql', '0007_pdf_capability_expiry.sql',
+  '0008_clear_legacy_ai_api_key.sql', '0009_atomic_rate_limit.sql'
+]
+{
+  const missing = ACCEPTED_PHASE_1_0009_MIGRATIONS.filter((f) => !allFiles.includes(f))
+  if (missing.length) {
+    console.error(`FAIL [upgrade from accepted Phase 1/0009]: expected migration file(s) missing from migrations/: ${missing.join(', ')}`)
+    process.exit(1)
+  }
+  const newSince0009 = allFiles.filter((f) => !ACCEPTED_PHASE_1_0009_MIGRATIONS.includes(f))
+  const db = new DatabaseSync(':memory:')
+  applyMigrationSet(db, ACCEPTED_PHASE_1_0009_MIGRATIONS, 'accepted Phase 1/0009 baseline')
+  applyMigrationSet(db, newSince0009, 'upgrade since Phase 1/0009 (Phase 2: 0010+)')
+  assertTables(db, 'upgrade from accepted Phase 1/0009 schema')
+  assertTriggers(db, 'upgrade from accepted Phase 1/0009 schema')
+}
+
+// 2e) Existing users/orders/uploads survive the Phase 2 upgrade untouched —
+// Phase 2's migrations are purely additive for every pre-existing table.
+{
+  const newSince0009 = allFiles.filter((f) => !ACCEPTED_PHASE_1_0009_MIGRATIONS.includes(f))
+  const db = new DatabaseSync(':memory:')
+  applyMigrationSet(db, ACCEPTED_PHASE_1_0009_MIGRATIONS, 'pre-Phase-2 baseline for survival check')
+  db.exec(`INSERT INTO users (name, email, password_hash) VALUES ('Existing Customer', 'existing@example.com', 'hash123')`)
+  db.exec(`INSERT INTO products (slug, title, price, image) VALUES ('existing-book', 'Existing Book', 19.99, 'x.webp')`)
+  db.exec(
+    `INSERT INTO orders (user_id, full_name, email, address, city, country, subtotal, total, idempotency_key) VALUES (1, 'Existing Customer', 'existing@example.com', '1 Rd', 'City', 'USA', 10, 10, 'pre-phase2-idem')`
+  )
+  db.exec(
+    `INSERT INTO order_items (order_id, slug, title, unit_price, child_name) VALUES (1, 'existing-book', 'Existing Book', 19.99, 'Kiddo')`
+  )
+  db.exec(
+    `INSERT INTO photo_uploads (upload_key, owner_token, content_type, byte_size, width, height, expires_at) VALUES ('uploads/pre-phase2.jpg', 'owner-x', 'image/jpeg', 12345, 900, 900, 9999999999)`
+  )
+
+  applyMigrationSet(db, newSince0009, 'Phase 2 upgrade over existing data')
+
+  const user = db.prepare("SELECT id, email FROM users WHERE email = 'existing@example.com'").get()
+  const order = db.prepare("SELECT id, user_id FROM orders WHERE idempotency_key = 'pre-phase2-idem'").get()
+  const item = db.prepare("SELECT id, user_book_id FROM order_items WHERE order_id = ?").get(order?.id)
+  const upload = db.prepare("SELECT upload_key, completed_at FROM photo_uploads WHERE upload_key = 'uploads/pre-phase2.jpg'").get()
+  if (!user || !order || !item || !upload) {
+    console.error('FAIL [existing users/orders/uploads survive Phase 2]: a pre-existing row went missing after the upgrade')
+    process.exit(1)
+  }
+  if (item.user_book_id !== null) {
+    console.error('FAIL [existing users/orders/uploads survive Phase 2]: a pre-Phase-2 order_item unexpectedly got a non-NULL user_book_id')
+    process.exit(1)
+  }
+  console.log('OK [existing users/orders/uploads survive Phase 2]: all pre-existing rows intact, new columns NULL as expected.')
 }
 
 // 3) Repeated migration behavior — `wrangler d1 migrations apply` tracks

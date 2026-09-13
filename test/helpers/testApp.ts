@@ -27,6 +27,7 @@ export type TestEnv = {
   ENVIRONMENT?: string
   GUEST_ORDER_TOKEN_SECRET?: string
   GUEST_ORDER_TOKEN_SECRET_PREV?: string
+  FACE_ANALYSIS_PROVIDER?: string
 }
 
 export function freshEnv(overrides: Partial<TestEnv> = {}): TestEnv {
@@ -38,6 +39,11 @@ export function freshEnv(overrides: Partial<TestEnv> = {}): TestEnv {
     // production value, and tests that specifically exercise the
     // missing-secret/fail-closed path override this to `undefined`.
     GUEST_ORDER_TOKEN_SECRET: 'test-only-guest-order-token-secret-' + Math.random().toString(36).slice(2),
+    // Phase 2 face analysis: the deterministic fake, never the real
+    // fail-closed default — see src/personalization/face-analysis.ts.
+    // Tests exercising the disabled/fail-closed path override this back
+    // to undefined explicitly.
+    FACE_ANALYSIS_PROVIDER: 'deterministic-fake',
     ...overrides
   }
 }

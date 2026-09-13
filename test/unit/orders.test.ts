@@ -1,12 +1,17 @@
 import { describe, it, expect } from 'vitest'
-import { migratedFakeD1 } from '../helpers/testApp'
+import { migratedFakeD1, makeValidJpegBytes } from '../helpers/testApp'
 import { createOrder, hashOrderPayload, type CreateOrderInput } from '../../src/orders'
 import { recordUpload, checkUploadOwnership } from '../../src/uploads'
 import type { RotatingSecrets } from '../../src/secrets'
+import { createUserBook, patchPersonalization } from '../../src/personalization/user-books'
+import { initiateUpload, completeUpload } from '../../src/personalization/uploads'
+import { withFaceCountTrailer } from '../../src/personalization/face-analysis'
+import { applyAnalysisOutcome, attachInitialPhoto, beginPhotoAnalysis } from '../../src/personalization/state-machine'
+import type { Owner } from '../../src/personalization/ownership'
 
 const OWNER = 'browser-owner-token-1'
 const SECRETS: RotatingSecrets = { current: 'orders-test-secret-' + Math.random().toString(36) }
-const ctx = (overrides: Partial<{ userId: number | null; uploadOwnerToken: string; secrets: RotatingSecrets }> = {}) => ({
+const ctx = (overrides: Partial<{ userId: number | null; uploadOwnerToken: string; secrets: RotatingSecrets; personalizationOwner?: Owner | null }> = {}) => ({
   userId: null,
   uploadOwnerToken: OWNER,
   secrets: SECRETS,
@@ -372,5 +377,141 @@ describe('createOrder — atomicity', () => {
     ).rejects.toThrow()
     const after = await db.prepare('SELECT COUNT(*) AS n FROM orders').first<{ n: number }>()
     expect(after!.n).toBe(before!.n) // no partial commit
+  })
+})
+
+// ---- Phase 2: authoritative user_book -> order integration ----
+
+async function readyUserBook(db: D1Database, owner: Owner, slug: string) {
+  const book = await createUserBook(db, owner, { productSlug: slug })
+  const bytes = withFaceCountTrailer(makeValidJpegBytes(900, 900), 1)
+  const initiated = await initiateUpload(db, owner, { contentType: 'image/jpeg', byteSize: bytes.byteLength })
+  await completeUpload(db, owner, initiated.uploadKey, initiated.completionToken, bytes)
+  const result = await patchPersonalization(db, owner, book.public_id, {
+    childName: 'Real Name',
+    childAge: 6,
+    languageCode: 'en',
+    dedication: 'For real',
+    photoUploadKey: initiated.uploadKey
+  })
+  // patchPersonalization only starts analysis — simulate it completing with the one face just like the /analysis route would.
+  await db
+    .prepare('INSERT INTO detected_faces (id, upload_key, sort_order, bbox_x, bbox_y, bbox_w, bbox_h, confidence) VALUES (?, ?, 0, 0.1,0.1,0.2,0.2,0.9)')
+    .bind('face-ready', initiated.uploadKey)
+    .run()
+  await applyAnalysisOutcome(db, result.book, { actorType: 'system', actorId: null }, { faces: 1, faceId: 'face-ready' })
+  return book.public_id
+}
+
+describe('createOrder — authoritative user_book integration (Phase 2)', () => {
+  it('a ready_to_generate user_book snapshots its REAL personalization into order_items and binds user_book_id/revision', async () => {
+    const db = migratedFakeD1()
+    await seedProduct(db, 'ub-book-1')
+    const owner: Owner = { type: 'user', userId: 1 }
+    await db.prepare("INSERT INTO users (id, name, email, password_hash) VALUES (1,'A','a@example.com','h')").run()
+    const publicId = await readyUserBook(db, owner, 'ub-book-1')
+
+    const result = await createOrder(
+      db,
+      baseInput({ items: [{ slug: 'ub-book-1', qty: 1, userBookId: publicId } as any] }),
+      ctx({ personalizationOwner: owner })
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    const item = await db.prepare('SELECT * FROM order_items WHERE order_id = ?').bind(result.orderId).first<any>()
+    expect(item.child_name).toBe('Real Name')
+    expect(item.language).toBe('English')
+    expect(item.dedication).toBe('For real')
+    expect(item.user_book_id).toBeTruthy()
+    expect(item.personalization_input_revision).toBe(1)
+  })
+
+  it('forged childName/childAge/language/photoKey alongside a real userBookId are ALL ignored — authoritative values win', async () => {
+    const db = migratedFakeD1()
+    await seedProduct(db, 'ub-book-2')
+    const owner: Owner = { type: 'user', userId: 1 }
+    await db.prepare("INSERT INTO users (id, name, email, password_hash) VALUES (1,'A','a@example.com','h')").run()
+    const publicId = await readyUserBook(db, owner, 'ub-book-2')
+
+    const result = await createOrder(
+      db,
+      baseInput({
+        items: [
+          {
+            slug: 'ub-book-2',
+            qty: 1,
+            userBookId: publicId,
+            childName: 'FORGED NAME',
+            childAge: 99,
+            language: 'Klingon',
+            photoKey: 'uploads/not-mine.jpg'
+          } as any
+        ]
+      }),
+      ctx({ personalizationOwner: owner })
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    const item = await db.prepare('SELECT * FROM order_items WHERE order_id = ?').bind(result.orderId).first<any>()
+    expect(item.child_name).toBe('Real Name')
+    expect(item.child_age).toBe(6)
+    expect(item.language).toBe('English')
+    expect(item.photo_key).not.toBe('uploads/not-mine.jpg')
+  })
+
+  it('a foreign userBookId (belongs to another user) is rejected', async () => {
+    const db = migratedFakeD1()
+    await seedProduct(db, 'ub-book-3')
+    const ownerA: Owner = { type: 'user', userId: 1 }
+    const ownerB: Owner = { type: 'user', userId: 2 }
+    await db.prepare("INSERT INTO users (id, name, email, password_hash) VALUES (1,'A','a@example.com','h'),(2,'B','b@example.com','h')").run()
+    const publicId = await readyUserBook(db, ownerA, 'ub-book-3')
+
+    const result = await createOrder(db, baseInput({ items: [{ slug: 'ub-book-3', qty: 1, userBookId: publicId } as any] }), ctx({ personalizationOwner: ownerB }))
+    expect(result.ok).toBe(false)
+  })
+
+  it('a nonexistent userBookId is rejected', async () => {
+    const db = migratedFakeD1()
+    await seedProduct(db, 'ub-book-4')
+    const owner: Owner = { type: 'user', userId: 1 }
+    await db.prepare("INSERT INTO users (id, name, email, password_hash) VALUES (1,'A','a@example.com','h')").run()
+
+    const result = await createOrder(db, baseInput({ items: [{ slug: 'ub-book-4', qty: 1, userBookId: 'ub_does_not_exist' } as any] }), ctx({ personalizationOwner: owner }))
+    expect(result.ok).toBe(false)
+  })
+
+  it('a userBookId whose product does not match the item slug is rejected', async () => {
+    const db = migratedFakeD1()
+    await seedProduct(db, 'ub-book-5a')
+    await seedProduct(db, 'ub-book-5b')
+    const owner: Owner = { type: 'user', userId: 1 }
+    await db.prepare("INSERT INTO users (id, name, email, password_hash) VALUES (1,'A','a@example.com','h')").run()
+    const publicId = await readyUserBook(db, owner, 'ub-book-5a')
+
+    const result = await createOrder(db, baseInput({ items: [{ slug: 'ub-book-5b', qty: 1, userBookId: publicId } as any] }), ctx({ personalizationOwner: owner }))
+    expect(result.ok).toBe(false)
+  })
+
+  it('a userBookId that is not yet ready_to_generate (still draft) is rejected at checkout', async () => {
+    const db = migratedFakeD1()
+    await seedProduct(db, 'ub-book-6')
+    const owner: Owner = { type: 'user', userId: 1 }
+    await db.prepare("INSERT INTO users (id, name, email, password_hash) VALUES (1,'A','a@example.com','h')").run()
+    const book = await createUserBook(db, owner, { productSlug: 'ub-book-6' })
+
+    const result = await createOrder(db, baseInput({ items: [{ slug: 'ub-book-6', qty: 1, userBookId: book.public_id } as any] }), ctx({ personalizationOwner: owner }))
+    expect(result.ok).toBe(false)
+  })
+
+  it('a userBookId with no resolved personalizationOwner in ctx is rejected (never trusts a client-only claim of ownership)', async () => {
+    const db = migratedFakeD1()
+    await seedProduct(db, 'ub-book-7')
+    const owner: Owner = { type: 'user', userId: 1 }
+    await db.prepare("INSERT INTO users (id, name, email, password_hash) VALUES (1,'A','a@example.com','h')").run()
+    const publicId = await readyUserBook(db, owner, 'ub-book-7')
+
+    const result = await createOrder(db, baseInput({ items: [{ slug: 'ub-book-7', qty: 1, userBookId: publicId } as any] }), ctx({ personalizationOwner: null }))
+    expect(result.ok).toBe(false)
   })
 })
