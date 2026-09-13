@@ -6,7 +6,7 @@ import { hashPassword } from './auth'
 import { destroyAllSessionsForUser } from './auth'
 import { sha256Hex } from './secrets'
 import { getEmailAdapter, FailClosedEmailAdapter } from './email'
-import { isRateLimited as isRateLimitedShared, recordRateLimitEvent } from './rate-limit'
+import { consumeRateLimit } from './rate-limit'
 
 const RESET_TOKEN_TTL_SECONDS = 30 * 60 // 30 minutes
 const RATE_LIMIT_MAX = 3
@@ -14,10 +14,6 @@ const RATE_LIMIT_WINDOW_SECONDS = 60 * 60 // 1 hour
 
 function toHex(buf: Uint8Array) {
   return [...buf].map((x) => x.toString(16).padStart(2, '0')).join('')
-}
-
-function isRateLimited(db: D1Database, bucket: string): Promise<boolean> {
-  return isRateLimitedShared(db, bucket, { max: RATE_LIMIT_MAX, windowSeconds: RATE_LIMIT_WINDOW_SECONDS })
 }
 
 /**
@@ -30,10 +26,12 @@ export async function requestPasswordReset(db: D1Database, email: string, resetU
   if (!normalized.includes('@')) return
   const bucket = `forgot-password:${normalized}`
 
-  // Record the attempt regardless of outcome so rate-limit state can't be
-  // used to distinguish "no such account" from "account exists".
-  const limited = await isRateLimited(db, bucket)
-  await recordRateLimitEvent(db, bucket)
+  // Consumed unconditionally, regardless of outcome, so rate-limit state
+  // can't be used to distinguish "no such account" from "account exists".
+  // One atomic INSERT...ON CONFLICT...RETURNING (src/rate-limit.ts) — no
+  // separate check-then-record round trip for a concurrent request to
+  // land in between.
+  const { limited } = await consumeRateLimit(db, bucket, { max: RATE_LIMIT_MAX, windowSeconds: RATE_LIMIT_WINDOW_SECONDS })
   if (limited) return
 
   const user = await db.prepare('SELECT id, email FROM users WHERE email = ?').bind(normalized).first<{ id: number; email: string }>()

@@ -257,6 +257,18 @@ export async function createOrder(
 // secret lives only in the GUEST_ORDER_TOKEN_SECRET(_PREV) worker bindings
 // (see src/secrets.ts), never the database.
 //
+// What the nonce does NOT do: defend against a COMPROMISED signing secret.
+// If GUEST_ORDER_TOKEN_SECRET itself leaks (exposed some other way — a
+// misconfigured log, a compromised deploy pipeline), an attacker holding
+// it can compute a valid HMAC over any (orderId, issuedAt, expiresAt,
+// nonce) of their own choosing and forge a fully valid token for ANY
+// order. The nonce only stops predicting/replaying a token without
+// deriving its own valid signature; it adds no protection once the secret
+// is known. The real defenses for that scenario are keeping the secret
+// out of the database (above) and bounded GUEST_ORDER_TOKEN_SECRET_PREV
+// rotation (see resolveGuestOrderTokenSecrets in src/secrets.ts) so a
+// leaked secret can actually be retired.
+//
 // IMPORTANT: signGuestOrderToken() is only ever called from inside
 // createOrder() above (order creation, or replaying an idempotent retry of
 // THIS caller's own already-succeeded order) — never from a route that

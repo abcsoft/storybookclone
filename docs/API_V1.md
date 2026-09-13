@@ -137,6 +137,17 @@ unauthenticated: knowing/guessing a sequential order id alone proves
 nothing, and a D1 export alone can't forge a token (the signing secret
 isn't in the database).
 
+**What the nonce does and does not protect against.** The nonce makes
+signing non-deterministic — two tokens for the same order are never byte-
+identical, so an attacker cannot predict or replay a token without having
+derived its signature themselves. It is NOT a defense against a
+compromised signing secret: if `GUEST_ORDER_TOKEN_SECRET` itself leaks,
+whoever holds it can compute a valid HMAC over any order id/issued/expiry/
+nonce of their own choosing and forge a fully valid token for any order.
+The real defenses for that scenario are keeping the secret out of the
+database (above) and the bounded `GUEST_ORDER_TOKEN_SECRET_PREV` rotation
+described above, which lets a leaked secret actually be retired.
+
 Legacy alias (kept, tested): `POST /api/orders` — identical behavior.
 
 ## GET /api/v1/orders/:id/guest?token=
@@ -189,19 +200,31 @@ request, it does not generate a PDF** (that pipeline is Phase 7). The
 response and the stored `status` are always `"queued"` in this baseline;
 never claim `"ready"`/`"sent"` here. Validated before anything is written:
 - `coverType` (if supplied) must be exactly `"hardcover"` or `"softcover"`.
-- `bookSlug` must name a real, currently-active product.
-- `orderItemId` (if supplied) must resolve to a real `order_items` row the
-  caller can actually prove ownership of: the authenticated session user
-  (via `orders.user_id`), or — for a guest — a `guestOrderToken` that
-  verifies against that exact order (same mechanism as `POST
-  /api/v1/orders`'s `guestToken`, see above). A missing/wrong/foreign
-  `orderItemId` is rejected with the same generic `400` regardless of
-  which of those is true — the response never confirms whether the id
-  exists at all.
+- **`orderItemId`, when supplied, is authoritative**: once ownership
+  verifies (below), `bookSlug`/`childName`/`childAge` are OVERWRITTEN from
+  the real `order_items` row — any client-supplied values for those fields
+  are simply discarded, never merged or trusted. This also means the
+  `active`-product check is intentionally SKIPPED for this path: a
+  customer's legitimately purchased item must remain requestable even
+  after the product is later hidden from the storefront. Ownership: the
+  authenticated session user (via `orders.user_id`), or — for a guest — a
+  `guestOrderToken` that verifies against that exact order (same mechanism
+  as `POST /api/v1/orders`'s `guestToken`, see above). A missing/wrong/
+  foreign `orderItemId` is rejected with the same generic `400` regardless
+  of which of those is true — the response never confirms whether the id
+  exists at all — and this check happens BEFORE the rate limiter is
+  touched (see below).
+- Without `orderItemId` (a generic/speculative preview request, not tied
+  to a purchase): `bookSlug` must name a real, currently-active product,
+  taken as submitted.
 - The submitted `email` is contact info only — it is NEVER used to decide
   ownership of anything above.
-- Rate limited per email bucket (`pdf-request:<email>`, `rate_limit_events`
-  — same DB-backed mechanism as forgot-password): 5 requests/hour → `429`.
+- Rate limited per normalized-and-hashed email bucket
+  (`pdf-request:<lower-cased email>`, SHA-256'd before it ever touches the
+  database — see "Atomic rate limiting" below): 5 requests/hour → `429`.
+  Consumed only AFTER the checks above pass, so a request that was never
+  going to be authorized (bad coverType, foreign orderItemId) cannot burn
+  through someone else's quota.
 
 → `{ success: true, id, status: "queued", message }`
 
@@ -221,6 +244,38 @@ correct-but-expired token — gets `404` (not `403`, same reasoning as guest
 order access). Response is deliberately minimal: `{ id, status, book_slug,
 cover_type, created_at, updated_at }` — no email, no child name, no token
 material of any kind.
+
+### Guest capability token transport (order-success → reader → PDF request)
+`/order-success` (guest view) renders a "reader / request PDF" link per
+item. That link's `href` never carries the guest order token as a query
+parameter — a small inline script appends it as a URL **fragment**
+(`#gt=<token>`) right before the page becomes interactive, reusing the
+SAME token this page's own URL already carries (`?token=`). A fragment is
+never sent to the server and never appears in a `Referer` header, unlike a
+query string. `public/static/reader.js` reads `location.hash` once on
+load, holds the value in a module-scope JS variable only (never
+`localStorage`/`sessionStorage`, never logged, never written into any DOM
+attribute), and immediately calls `history.replaceState()` to strip the
+fragment from the visible URL. That captured value is sent as
+`guestOrderToken` in the `POST /api/v1/books/pdf-requests` body when the
+reader page's `orderItemId` belongs to a guest order. Both `/order-success`
+and `/my/books/:slug` also send `Referrer-Policy: no-referrer` as defense
+in depth.
+
+### Atomic rate limiting (`src/rate-limit.ts`, migration `0009`)
+Both this endpoint and `POST /api/v1/auth/forgot-password` share one
+primitive: `consumeRateLimit(db, bucketKey, {max, windowSeconds})`, a
+single `INSERT INTO rate_limit_windows (bucket_hash, window_start, count)
+VALUES (?, ?, 1) ON CONFLICT(bucket_hash, window_start) DO UPDATE SET
+count = count + 1 RETURNING count` statement — one atomic round trip, not
+a separate `COUNT(*)` read followed by an `INSERT`. The earlier
+`rate_limit_events` design (still present as a table, no longer written
+to) had a real gap between those two steps where genuinely concurrent
+requests (real Workers concurrency) could both read a pre-increment count
+and collectively exceed the limit; this closes that gap by making the
+increment and the read-back one operation. `bucket_hash` is a SHA-256 hash
+of the normalized bucket key (e.g. `pdf-request:<lower-cased email>`) —
+the raw email is never stored in this table.
 
 ## GET /api/v1/admin/pdf-requests/:id
 🔒 Admin-only — a *separate* endpoint from the one above, not the same

@@ -491,6 +491,106 @@ describe('pdf-requests — creation validation, expiry, ownership, admin endpoin
       expect(anonRes.status).not.toBe(200)
     })
   })
+
+  describe('authoritative order item — server derives book/personalization from the DB, never trusts the client', () => {
+    it('a forged bookSlug and forged childName alongside a real, owned orderItemId are IGNORED — the stored row uses the real order item data', async () => {
+      const jar = await registerAndLogin(`pdf-forge-${Date.now()}@example.com`)
+      const { orderItemId } = await placeOrderAndGetItem(jar, `pdf-forge-idem-${Date.now()}`)
+
+      const res = await app.request(
+        '/api/v1/books/pdf-requests',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Cookie: jar.header() },
+          body: JSON.stringify({
+            email: 'x@example.com',
+            orderItemId,
+            bookSlug: 'a-completely-different-forged-slug',
+            childName: 'Forged Child Name',
+            childAge: 99
+          })
+        },
+        env
+      )
+      expect(res.status).toBe(200)
+      const created = await res.json()
+      const row = await env.DB.prepare('SELECT book_slug, child_name, child_age FROM pdf_requests WHERE id = ?').bind(created.id).first<{ book_slug: string; child_name: string; child_age: number }>()
+      expect(row!.book_slug).toBe('girls-sticker-pack') // the REAL slug from order_items, not the forged one
+      expect(row!.child_name).toBe('Gando') // the REAL child name from order_items
+      expect(row!.child_age).not.toBe(99)
+    })
+
+    it('does not break PDF-request access for a legitimately purchased item whose product has since been deactivated (hidden from the storefront)', async () => {
+      const jar = await registerAndLogin(`pdf-hidden-product-${Date.now()}@example.com`)
+      const { orderItemId } = await placeOrderAndGetItem(jar, `pdf-hidden-idem-${Date.now()}`)
+
+      // Hide the product from the storefront AFTER the purchase — exactly
+      // the scenario getProductBySlug()'s `active = 1` filter would
+      // otherwise wrongly block.
+      await env.DB.prepare("UPDATE products SET active = 0 WHERE slug = 'girls-sticker-pack'").run()
+
+      const res = await app.request(
+        '/api/v1/books/pdf-requests',
+        { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: jar.header() }, body: JSON.stringify({ email: 'x@example.com', orderItemId }) },
+        env
+      )
+      expect(res.status).toBe(200)
+      const created = await res.json()
+      expect(created.success).toBe(true)
+
+      // Restore for any later test in this file that relies on the product being active.
+      await env.DB.prepare("UPDATE products SET active = 1 WHERE slug = 'girls-sticker-pack'").run()
+    })
+  })
+
+  describe('rate limiting — atomic, does not let an unauthorized request consume someone else\'s quota', () => {
+    it('a request with a FOREIGN/invalid orderItemId (rejected for ownership) does not consume the victim email\'s rate-limit quota', async () => {
+      const victimEmail = `pdf-victim-${Date.now()}@example.com`
+      // Burn the request on a bogus orderItemId — this must be rejected
+      // for ownership BEFORE any rate limit is touched.
+      const forged = await app.request(
+        '/api/v1/books/pdf-requests',
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: victimEmail, bookSlug: 'girls-sticker-pack', orderItemId: 999999 }) },
+        env
+      )
+      expect(forged.status).toBe(400)
+
+      // The victim's email must still have its FULL quota (5/hour) available.
+      let lastStatus = 0
+      for (let i = 0; i < 5; i++) {
+        const res = await app.request(
+          '/api/v1/books/pdf-requests',
+          { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: victimEmail, bookSlug: 'girls-sticker-pack' }) },
+          env
+        )
+        lastStatus = res.status
+      }
+      expect(lastStatus).toBe(200) // the 5th LEGITIMATE request still succeeds — the forged one above didn't eat into the quota
+    })
+
+    it('concurrent requests for the same bucket cannot collectively exceed the limit (genuine Promise.all concurrency, not sequential awaits)', async () => {
+      // Warm up the catalog's lazy auto-seed with one request first — it's
+      // unrelated to rate limiting (a fresh env's products table seeds on
+      // first real request) and firing it concurrently with the batch
+      // below would itself race and isn't what this test is proving.
+      await app.request('/', {}, env)
+
+      const email = `pdf-concurrent-${Date.now()}@example.com`
+      const requests = Array.from({ length: 10 }, () =>
+        app.request(
+          '/api/v1/books/pdf-requests',
+          { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, bookSlug: 'girls-sticker-pack' }) },
+          env
+        )
+      )
+      const results = await Promise.all(requests)
+      const succeeded = results.filter((r) => r.status === 200).length
+      const limited = results.filter((r) => r.status === 429).length
+      expect(succeeded).toBe(5) // exactly the configured max, never more, even under real concurrency
+      expect(limited).toBe(5)
+      expect(succeeded + limited).toBe(10)
+    })
+  })
 })
 
 describe('admin AI settings — no provider key ever stored in D1, honest "test connection", generate-book honestly disabled', () => {

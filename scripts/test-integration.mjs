@@ -27,7 +27,7 @@ const EXPECTED_TABLES = [
   'pdp_steps', 'pdp_photo_tips', 'pdp_magic', 'pdp_trust', 'pdp_reactions',
   'pdp_media', 'pdp_related', 'pdp_faqs', 'ai_settings', 'pdf_requests',
   'app_secrets', 'photo_uploads', 'password_reset_tokens', 'rate_limit_events',
-  'upload_claims'
+  'upload_claims', 'rate_limit_windows'
 ]
 
 const EXPECTED_NEW_COLUMNS = [

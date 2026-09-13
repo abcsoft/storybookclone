@@ -1,6 +1,6 @@
 import { Hono, type Context } from 'hono'
 import { cors } from 'hono/cors'
-import { page } from './layout'
+import { page, esc } from './layout'
 import {
   homePage,
   booksCatalog,
@@ -66,7 +66,7 @@ import { resolveGuestOrderTokenSecrets, MissingSecretError, sha256Hex, timingSaf
 import { validatePhotoBytes, contentTypeFor, recordUpload, checkUploadOwnership, getUploadOwner, MAX_PHOTO_BYTES } from './uploads'
 import { PHOTO_POLICY, photoPolicySummary } from './photo-policy'
 import { requestPasswordReset, resetPassword } from './password-reset'
-import { isRateLimited, recordRateLimitEvent } from './rate-limit'
+import { consumeRateLimit } from './rate-limit'
 
 type Bindings = {
   DB: D1Database
@@ -486,9 +486,14 @@ app.post('/reset-password', async (c) => {
 
   // WonderWraps Reader & Customization Page (/my/books/:slug) matching reference UI
   app.get('/my/books/:slug', async (c) => {
+    // A guest order's capability token can arrive here via the URL
+    // fragment (see public/static/reader.js) — fragments are never sent
+    // to the server, so this header is defense in depth for any other
+    // sensitive query param (e.g. photoKey) this page's URL does carry.
+    c.header('Referrer-Policy', 'no-referrer')
     const slug = c.req.param('slug')
     const q = c.req.query()
-    
+
     // Fetch AI & pricing settings from D1
     const ai = await c.env.DB.prepare('SELECT * FROM ai_settings WHERE id = 1').first<any>()
     const hardcoverPrice = ai?.hardcover_price ?? 49.20
@@ -540,6 +545,12 @@ app.post('/reset-password', async (c) => {
 // see src/orders.ts) is. Without a valid token this deliberately shows the
 // same generic page a stranger guessing sequential IDs would see.
 app.get('/order-success', async (c) => {
+  // This page's own URL carries the guest capability token as a query
+  // param (?token=) — that's a pre-existing, already-reviewed design.
+  // Referrer-Policy here is defense in depth: it stops that token from
+  // ever leaking to a third-party resource's server via a Referer header
+  // if one were ever loaded from this page.
+  c.header('Referrer-Policy', 'no-referrer')
   const id = Number(c.req.query('id') || '')
   const token = c.req.query('token') || ''
   const user = c.get('user')
@@ -576,6 +587,30 @@ app.get('/order-success', async (c) => {
     )
   }
 
+  // Per-item link into the reader/PDF-request page. The href's query
+  // string here carries only non-sensitive identifiers (orderItemId, slug,
+  // display fields for the reader's own preview) — never the guest
+  // capability token. For a guest view (no session ownership), a tiny
+  // inline script appends the token as a URL FRAGMENT (`#gt=...`) — never
+  // a query param — to each link right before the page is interactive,
+  // reusing the SAME token this page's own URL already carries (?token=
+  // above); the reader page reads it from the fragment once, then scrubs
+  // it (see public/static/reader.js). A fragment is never sent to the
+  // server and never appears in a Referer header, unlike a query param.
+  const readerLinks = items
+    .map((it: any) => {
+      const params = new URLSearchParams({
+        orderItemId: String(it.id),
+        name: it.child_name || '',
+        age: String(it.child_age || ''),
+        lang: it.language || 'English'
+      })
+      if (it.photo_key) params.set('photoKey', it.photo_key)
+      const href = `/my/books/${encodeURIComponent(it.slug)}?${params.toString()}`
+      return `<li class="order-success-item"><span>${esc(it.title || it.slug)}${it.child_name ? ` — ${esc(it.child_name)}` : ''}</span> <a class="link reader-link" href="${href}" data-order-item-id="${it.id}">Open reader / request PDF →</a></li>`
+    })
+    .join('')
+
   return html(
     c,
     'Order confirmed - Wonder Wraps',
@@ -583,9 +618,28 @@ app.get('/order-success', async (c) => {
       <h1>Thank you!</h1>
       <p>Your personalised order #${order.id} is being prepared. We’ll email a preview for approval before printing.</p>
       <p class="tiny muted">Status: ${String(order.status).replace(/_/g, ' ')} · ${items.length} item${items.length === 1 ? '' : 's'} · Total ${money(order.total)}</p>
+      ${readerLinks ? `<ul class="order-success-items">${readerLinks}</ul>` : ''}
       ${!user ? `<p class="tiny">Bookmark this page to check back — guest orders are not linked to an account. <a class="link" href="/register">Create an account</a> to track it from My Books instead.</p>` : ''}
       <a class="btn" href="${user ? '/my-books' : '/'}">${user ? 'View my books' : 'Continue shopping'}</a>
-    </section>`
+    </section>
+    ${
+      !user
+        ? `<script>
+      // Guest view only: append this page's OWN guest token (already in
+      // this page's URL, ?token=...) as a URL FRAGMENT on each reader
+      // link — never re-rendered server-side, never put in a query
+      // param, never logged. Runs once; nothing here persists the token.
+      (function () {
+        var params = new URLSearchParams(window.location.search)
+        var token = params.get('token')
+        if (!token) return
+        document.querySelectorAll('a.reader-link').forEach(function (a) {
+          a.href = a.getAttribute('href') + '#gt=' + encodeURIComponent(token)
+        })
+      })()
+    </script>`
+        : ''
+    }`
   )
 })
 
@@ -1343,9 +1397,15 @@ const PDF_REQUEST_RATE_LIMIT = { max: 5, windowSeconds: 60 * 60 }
 async function handleCreatePdfRequest(c: Context<{ Bindings: Bindings; Variables: Vars }>) {
   const body = await c.req.json<any>().catch(() => ({}))
   const email = String(body.email || '').toLowerCase().trim()
-  const bookSlug = String(body.bookSlug || '')
-  const childName = String(body.childName || '')
-  const childAge = Number(body.childAge || 5)
+  // bookSlug/childName/childAge below are the CLIENT-SUPPLIED values —
+  // used only when there is no orderItemId at all (a generic/speculative
+  // preview request, not tied to a real purchase). The moment a real
+  // orderItemId is supplied and its ownership verifies, these are
+  // OVERWRITTEN from the order_items row itself, never trusted from the
+  // client — see "authoritative order item" below.
+  let bookSlug = String(body.bookSlug || '')
+  let childName = String(body.childName || '')
+  let childAge = Number(body.childAge || 5)
   const coverType = String(body.coverType || 'hardcover')
   const orderItemId = body.orderItemId ? Number(body.orderItemId) : null
   const user = c.get('user')
@@ -1354,30 +1414,25 @@ async function handleCreatePdfRequest(c: Context<{ Bindings: Bindings; Variables
     return c.json({ success: false, error: 'Valid email is required.' }, 400)
   }
   // The submitted email is contact info only — it is NEVER used to decide
-  // who may reference an order item below. Ownership is decided solely by
-  // the session user id (authenticated) or a verified guest order
-  // capability token (guest); an attacker who knows/guesses someone else's
-  // email cannot use it to attach their PDF request to that person's order.
+  // who may reference an order item below, and never consulted for rate
+  // limiting until AFTER ownership is proven (see below) — an attacker who
+  // knows/guesses someone else's email cannot use it to attach a request
+  // to that person's order, and cannot burn through that email's rate
+  // limit quota with requests that were never going to be authorized.
   if (!PDF_REQUEST_COVER_TYPES.has(coverType)) {
     return c.json({ success: false, error: `coverType must be one of: ${[...PDF_REQUEST_COVER_TYPES].join(', ')}.` }, 400)
   }
-  if (!bookSlug || !(await getProductBySlug(c.env.DB, bookSlug))) {
-    return c.json({ success: false, error: 'Unknown or inactive book.' }, 400)
-  }
-
-  // Rate limit by email bucket — same DB-backed pattern as forgot-password
-  // (src/password-reset.ts); Workers isolates are ephemeral, so an
-  // in-memory limiter would not actually limit anything.
-  const bucket = `pdf-request:${email}`
-  if (await isRateLimited(c.env.DB, bucket, PDF_REQUEST_RATE_LIMIT)) {
-    return c.json({ success: false, error: 'Too many requests — please try again later.' }, 429)
-  }
-  await recordRateLimitEvent(c.env.DB, bucket)
 
   if (orderItemId) {
-    const itemRow = await c.env.DB.prepare('SELECT oi.id, oi.order_id, o.user_id FROM order_items oi JOIN orders o ON o.id = oi.order_id WHERE oi.id = ?')
+    // Authoritative order item: derive book/personalization fields from
+    // the DB row the caller actually owns, never from the client-supplied
+    // duplicates above (which are simply discarded here, not merged or
+    // trusted for a mismatch check — the simplest safe option).
+    const itemRow = await c.env.DB.prepare(
+      'SELECT oi.id, oi.order_id, oi.slug, oi.child_name, oi.child_age, o.user_id FROM order_items oi JOIN orders o ON o.id = oi.order_id WHERE oi.id = ?'
+    )
       .bind(orderItemId)
-      .first<{ id: number; order_id: number; user_id: number | null }>()
+      .first<{ id: number; order_id: number; slug: string; child_name: string | null; child_age: number | null; user_id: number | null }>()
     // Generic rejection for every "not yours" shape (doesn't exist, belongs
     // to someone else, belongs to an account when you're a guest, or your
     // guest capability token doesn't check out) — do not let the response
@@ -1399,7 +1454,34 @@ async function handleCreatePdfRequest(c: Context<{ Bindings: Bindings; Variables
         }
       }
     }
-    if (!orderItemOwned) return c.json({ success: false, error: 'That order item could not be verified.' }, 400)
+    if (!orderItemOwned || !itemRow) return c.json({ success: false, error: 'That order item could not be verified.' }, 400)
+
+    // Ownership proven — now safe to derive the real fields. Deliberately
+    // does NOT require the product to still be `active`: a customer who
+    // legitimately bought a book that was later hidden from the storefront
+    // must not lose access to their own purchase's PDF request just
+    // because it's no longer for sale.
+    bookSlug = itemRow.slug
+    childName = itemRow.child_name || ''
+    childAge = itemRow.child_age || childAge
+  } else {
+    // No specific purchase referenced — a generic/speculative preview
+    // request. This path DOES require a currently active product, since
+    // there is no historical-purchase record to fall back on.
+    if (!bookSlug || !(await getProductBySlug(c.env.DB, bookSlug))) {
+      return c.json({ success: false, error: 'Unknown or inactive book.' }, 400)
+    }
+  }
+
+  // Rate limit consumed ONLY after the request above is known to be
+  // legitimate (valid coverType, and — when orderItemId was supplied —
+  // proven ownership). One atomic INSERT...ON CONFLICT...RETURNING
+  // (src/rate-limit.ts), hashed bucket — no raw email persisted, no
+  // separate check-then-record gap for a concurrent request to land in.
+  const bucket = `pdf-request:${email}`
+  const { limited } = await consumeRateLimit(c.env.DB, bucket, PDF_REQUEST_RATE_LIMIT)
+  if (limited) {
+    return c.json({ success: false, error: 'Too many requests — please try again later.' }, 429)
   }
 
   // A random capability token, shown ONLY in this response (only its

@@ -1,7 +1,12 @@
-// Server-generated, DB-persisted secrets (e.g. the HMAC key used to sign
-// guest order-access tokens). Never a hard-coded literal in source: created
-// once on first use with Web Crypto randomness, then reused. See Phase 0's
-// admin-credential fix for the same pattern applied to admin bootstrap.
+// Crypto primitives (HMAC signing/verification, hashing, constant-time
+// compare) plus the resolver for the guest-order-token signing key(s).
+// STALE-COMMENT FIX: this file used to generate and persist that signing
+// key in D1's app_secrets table on first use — it does NOT do that
+// anymore (see the note below resolveGuestOrderTokenSecrets()). The
+// signing key lives ONLY in Cloudflare Worker secret bindings
+// (GUEST_ORDER_TOKEN_SECRET / _PREV), resolved fresh from env on every
+// request, never generated or stored by this module. Nothing in this file
+// writes to D1.
 function toHex(buf: ArrayBuffer | Uint8Array) {
   const b = buf instanceof Uint8Array ? buf : new Uint8Array(buf)
   return [...b].map((x) => x.toString(16).padStart(2, '0')).join('')

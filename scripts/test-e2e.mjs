@@ -287,6 +287,60 @@ async function runGuestJourney(browser, photoPath) {
   const crossRes2 = await page.request.get(`${BASE}/api/v1/orders/${orderId}/guest?token=${second.guestToken}`)
   if (crossRes2.status() !== 404) fail('guest.8b', `order B's token against order A: expected 404, got ${crossRes2.status()}`)
 
+  // Guest PDF UI journey: order-success -> reader (via the page's own
+  // reader link, capability token carried in the URL FRAGMENT only) ->
+  // PDF request -> token-protected status. `page` is still on
+  // /order-success?id=&token= from guest.5b's reload above.
+  log('guest.9', 'open the reader page via the order-success reader link (fragment-carried capability token)')
+  const readerLink = page.locator('a.reader-link').first()
+  await readerLink.waitFor({ state: 'visible' })
+  const hrefBefore = await readerLink.getAttribute('href')
+  if (!hrefBefore || !hrefBefore.includes('#gt=')) fail('guest.9', `expected the reader link to carry a #gt= fragment, got: ${hrefBefore}`)
+  if (hrefBefore.includes('token=')) fail('guest.9', `guest capability token leaked into the reader link's query string: ${hrefBefore}`)
+  await readerLink.click()
+  await page.waitForURL(/\/my\/books\//)
+  await page.waitForSelector('#pdf-request-form')
+
+  const urlAfterLoad = await page.evaluate(() => window.location.href)
+  if (urlAfterLoad.includes('#gt=')) fail('guest.9', `guest capability token was not scrubbed from the URL after capture: ${urlAfterLoad}`)
+  if (/[?&](token|gt)=/.test(urlAfterLoad)) fail('guest.9', `guest capability token leaked into a query parameter: ${urlAfterLoad}`)
+  const localStorageDump = await page.evaluate(() => { try { return JSON.stringify(localStorage) } catch { return '{}' } })
+  if (localStorageDump.includes(guestToken.slice(0, 24))) fail('guest.9', 'guest capability token found in localStorage')
+
+  log('guest.10', 'submit a PDF request from the reader page as a guest, using the captured capability token')
+  await page.fill('#pdf-email', email)
+  const [pdfResponse] = await Promise.all([
+    page.waitForResponse((r) => r.url().includes('/api/v1/books/pdf-requests') && r.request().method() === 'POST'),
+    page.click('#btn-pdf-submit')
+  ])
+  const pdfCreated = await pdfResponse.json()
+  if (pdfCreated.status !== 'queued') fail('guest.10', `expected an honestly queued PDF request, got: ${JSON.stringify(pdfCreated)}`)
+  if (!pdfCreated.token) fail('guest.10', 'guest PDF request did not return a status-access token')
+
+  log('guest.11', 'PDF request status is token-protected: valid token works, missing/tampered/another-order tokens all fail')
+  const validPdfStatus = await page.request.get(`${BASE}/api/v1/books/pdf-requests/${pdfCreated.id}?token=${pdfCreated.token}`)
+  if (validPdfStatus.status() !== 200) fail('guest.11a', `valid pdf token: expected 200, got ${validPdfStatus.status()}`)
+
+  const missingPdfStatus = await page.request.get(`${BASE}/api/v1/books/pdf-requests/${pdfCreated.id}`)
+  if (missingPdfStatus.status() !== 404) fail('guest.11b', `missing pdf token: expected 404, got ${missingPdfStatus.status()}`)
+
+  const tamperedPdfToken = (pdfCreated.token[0] === 'a' ? 'b' : 'a') + pdfCreated.token.slice(1)
+  const tamperedPdfStatus = await page.request.get(`${BASE}/api/v1/books/pdf-requests/${pdfCreated.id}?token=${tamperedPdfToken}`)
+  if (tamperedPdfStatus.status() !== 404) fail('guest.11c', `tampered pdf token: expected 404, got ${tamperedPdfStatus.status()}`)
+
+  const otherPdfRes = await page.request.post(`${BASE}/api/v1/books/pdf-requests`, {
+    headers: { 'Content-Type': 'application/json' },
+    data: { email: `e2e-other-pdf-${runId}@example.com`, bookSlug: 'the-portugals-new-legend' }
+  })
+  const otherPdf = await otherPdfRes.json()
+  const crossPdfStatus = await page.request.get(`${BASE}/api/v1/books/pdf-requests/${pdfCreated.id}?token=${otherPdf.token}`)
+  if (crossPdfStatus.status() !== 404) fail('guest.11d', `a DIFFERENT PDF request's token against this one: expected 404, got ${crossPdfStatus.status()}`)
+
+  log('guest.12', 'an expired PDF capability token is denied, even though it was valid moments earlier')
+  queryD1(`UPDATE pdf_requests SET access_token_expires_at = ${Math.floor(Date.now() / 1000) - 10} WHERE id = ${Number(pdfCreated.id)};`)
+  const expiredPdfStatus = await page.request.get(`${BASE}/api/v1/books/pdf-requests/${pdfCreated.id}?token=${pdfCreated.token}`)
+  if (expiredPdfStatus.status() !== 404) fail('guest.12', `expired pdf token: expected 404, got ${expiredPdfStatus.status()}`)
+
   assertClean(diag, 'guest')
   await context.close()
   log('guest', 'guest checkout journey passed')

@@ -12,6 +12,32 @@ const state = Object.assign(
 )
 let selectedCoverType = 'hardcover'
 
+// ---- Guest order capability token (if this reader was opened from a
+// guest order confirmation link) ----
+// Captured from the URL FRAGMENT only, never a query parameter: fragments
+// are never sent to the server and never appear in a Referer header, so
+// this never touches a server access log or a third-party resource's
+// request. Held in memory only (this module-scope variable) — never
+// localStorage/sessionStorage, never console-logged, never written into
+// any DOM attribute. The URL is scrubbed via history.replaceState()
+// immediately after reading it, so it doesn't linger in the visible
+// address bar or in the browser history entry's stored URL text.
+let guestOrderToken = null
+;(function captureGuestOrderTokenFromFragment() {
+  const hash = window.location.hash || ''
+  const match = hash.match(/(?:^#|[&#])gt=([^&]+)/)
+  if (!match) return
+  try {
+    guestOrderToken = decodeURIComponent(match[1])
+  } catch {
+    guestOrderToken = null
+  }
+  if (guestOrderToken) {
+    const cleanUrl = window.location.pathname + window.location.search
+    window.history.replaceState(window.history.state, '', cleanUrl)
+  }
+})()
+
 document.addEventListener('DOMContentLoaded', () => {
   initCoverOptionSelector()
   initPageFlip()
@@ -80,7 +106,12 @@ function initPdfRequestForm() {
       childName: state.childName,
       childAge: state.childAge,
       coverType: selectedCoverType,
-      orderItemId: state.orderItemId || undefined
+      orderItemId: state.orderItemId || undefined,
+      // Only meaningful when this order item belongs to a guest order (no
+      // account) — the server derives the real book/child data from the
+      // order item itself once this token verifies; it ignores this field
+      // entirely for a logged-in owner (session ownership takes priority).
+      guestOrderToken: guestOrderToken || undefined
     })
     if (result.ok) {
       // Honest status: a request was queued, not "sent" — no PDF is
