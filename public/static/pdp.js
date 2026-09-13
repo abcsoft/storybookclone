@@ -2,7 +2,7 @@
 // ES module — imports the canonical cart store and the centralized API client
 // instead of touching localStorage / fetch directly (Phase 1 defects #1/#3).
 import { addItem } from './cart.js'
-import { uploadPhoto, getPhotoPolicy } from './api.js'
+import { getPhotoPolicy, createUserBook, initiatePhotoUpload, completePhotoUpload, getUploadAnalysis, selectFace, patchPersonalization } from './api.js'
 
 (function () {
   // ----- gallery slider -----
@@ -87,11 +87,20 @@ import { uploadPhoto, getPhotoPolicy } from './api.js'
   const avatarEmpty = document.getElementById('avatar-empty')
   const photoStatus = document.getElementById('upload-status')
 
-  // The one piece of state the "Confirm order" step actually needs: a
-  // server-issued upload key. Nothing else (no base64) is ever persisted.
+  // Phase 2 personalization state. `userBookId` is the ONLY identifier the
+  // cart/checkout ever sees for this personalization — never a raw photo,
+  // never a guest capability. Created once per page load (idempotency key
+  // below makes a page reload/duplicate click resolve to the SAME book,
+  // never a duplicate).
+  const productSlug = document.getElementById('personalise-form')?.dataset.slug || ''
+  const userBookIdempotencyKey = `pdp-${productSlug}-${crypto.randomUUID()}`
+  let userBookId = null
   let uploadedPhotoKey = null
   let uploadedPhotoUrl = null
   let uploadInFlight = false
+  let faceSelectionRequired = false
+  let selectedFaceId = null
+  let availableFaces = []
 
   function setPhotoStatus(text, isError) {
     if (!photoStatus) return
@@ -103,9 +112,80 @@ import { uploadPhoto, getPhotoPolicy } from './api.js'
   function updateConfirmAvailability() {
     const btn = document.getElementById('btn-confirm-order')
     if (!btn) return
-    const ready = !!uploadedPhotoKey && !uploadInFlight
+    const ready = !!uploadedPhotoKey && !uploadInFlight && !faceSelectionRequired
     btn.disabled = !ready
-    btn.title = ready ? '' : (uploadInFlight ? 'Uploading photo…' : 'Upload a photo to continue')
+    btn.title = ready ? '' : uploadInFlight ? 'Uploading photo…' : faceSelectionRequired ? 'Choose which face is your child' : 'Upload a photo to continue'
+  }
+
+  async function ensureUserBook() {
+    if (userBookId) return userBookId
+    const result = await createUserBook(productSlug, userBookIdempotencyKey)
+    if (result.ok) userBookId = result.data.id
+    return userBookId
+  }
+
+  function renderFacePicker(faces) {
+    const panel = document.getElementById('face-select-panel')
+    const grid = document.getElementById('face-select-grid')
+    if (!panel || !grid) return
+    grid.innerHTML = ''
+    faces.forEach((face, i) => {
+      const btn = document.createElement('button')
+      btn.type = 'button'
+      btn.className = 'face-select-option'
+      btn.dataset.faceId = face.id
+      btn.innerHTML = `<i class="fas fa-user"></i> Face ${i + 1}`
+      btn.addEventListener('click', async () => {
+        const res = await selectFace(uploadedPhotoKey, userBookId, face.id)
+        if (res.ok) {
+          selectedFaceId = face.id
+          faceSelectionRequired = false
+          Array.from(grid.children).forEach((c) => c.classList.remove('selected'))
+          btn.classList.add('selected')
+          panel.hidden = true
+          updateConfirmAvailability()
+        } else {
+          setPhotoStatus(res.error || 'Could not select that face — please try again.', true)
+        }
+      })
+      grid.appendChild(btn)
+    })
+    panel.hidden = false
+  }
+
+  async function runAnalysis(uploadKey) {
+    const statusEl = document.getElementById('analysis-status')
+    const res = await getUploadAnalysis(uploadKey)
+    if (!res.ok || !res.data) {
+      if (statusEl) {
+        statusEl.hidden = false
+        statusEl.textContent = 'Photo analysis is unavailable right now — you can still continue.'
+      }
+      faceSelectionRequired = false
+      return
+    }
+    if (res.data.status === 'unavailable') {
+      if (statusEl) {
+        statusEl.hidden = false
+        statusEl.textContent = res.data.message || 'Photo analysis is unavailable right now — you can still continue.'
+      }
+      faceSelectionRequired = false
+      return
+    }
+    availableFaces = res.data.faces || []
+    faceSelectionRequired = !!res.data.faceSelectionRequired
+    if (availableFaces.length === 0) {
+      setPhotoStatus('We could not find a clear face in that photo. Please upload a different photo.', true)
+      uploadedPhotoKey = null
+      uploadedPhotoUrl = null
+    } else if (faceSelectionRequired) {
+      renderFacePicker(availableFaces)
+    } else {
+      selectedFaceId = availableFaces[0]?.id || null
+      const panel = document.getElementById('face-select-panel')
+      if (panel) panel.hidden = true
+    }
+    updateConfirmAvailability()
   }
 
   if (avatarContainer && photoInput) {
@@ -177,14 +257,37 @@ import { uploadPhoto, getPhotoPolicy } from './api.js'
         }
       }
 
-      const result = await uploadPhoto(file)
+      // Two-phase upload (Phase 2): declare intent, then send real bytes
+      // against the one-time completion capability that step returns.
+      const initiated = await initiatePhotoUpload(file.type, file.size)
+      if (!initiated.ok) {
+        uploadInFlight = false
+        setPhotoStatus(initiated.error || 'Upload failed — please try a different photo.', true)
+        if (photoPreview) photoPreview.style.display = 'none'
+        if (avatarEmpty) avatarEmpty.style.display = ''
+        updateConfirmAvailability()
+        return
+      }
+      const completed = await completePhotoUpload(initiated.data.uploadId, initiated.data.completionToken, file)
       uploadInFlight = false
-      if (result.ok) {
-        uploadedPhotoKey = result.data.key
-        uploadedPhotoUrl = result.data.url
+      if (completed.ok) {
+        uploadedPhotoKey = initiated.data.uploadId
+        // Display-only: no public URL for a private photo exists server-side
+        // (by design — see Phase 2 privacy rules). The local blob: preview
+        // is reused purely for cart/UI display and never sent to the server.
+        uploadedPhotoUrl = objectUrl
         setPhotoStatus('Photo uploaded ✓', false)
+        selectedFaceId = null
+        faceSelectionRequired = false
+        // Create the user_book now so a page reload/duplicate click still
+        // resolves to the SAME book (idempotency key). Face analysis itself
+        // only runs after personalization is saved (see form submit below) —
+        // the book must first reach awaiting_photo_analysis via
+        // attachInitialPhoto/beginPhotoAnalysis before /analysis has
+        // anything to apply its outcome to.
+        await ensureUserBook()
       } else {
-        setPhotoStatus(result.error || 'Upload failed — please try a different photo.', true)
+        setPhotoStatus(completed.error || 'Upload failed — please try a different photo.', true)
         if (photoPreview) photoPreview.style.display = 'none'
         if (avatarEmpty) avatarEmpty.style.display = ''
       }
@@ -229,117 +332,76 @@ import { uploadPhoto, getPhotoPolicy } from './api.js'
     if (e.target === modal) closeModal()
   })
 
-  // Pages story data for Portugal book and generic books
-  const bookPages = [
-    {
-      chapter: 'CHAPTER 1',
-      title: 'The Dream of the Final',
-      text: (name) => `Months of sweat and practice in the wind and rain have led to this single moment. The stadium lights shine bright over Lisbon as <strong>${name}</strong> steps onto the pitch wearing the legendary number 7 jersey!`,
-      quote: '“Believe in every pass, because today a new legend is born!”',
-      art: '/static/img/cover-portugal.webp',
-      caption: (name) => `Hero of Portugal: ${name}`
-    },
-    {
-      chapter: 'CHAPTER 2',
-      title: 'The Golden Touch',
-      text: (name) => `With the crowd cheering their name, <strong>${name}</strong> dribbles past two defenders with unstoppable grace and vision. Every touch is pure magic!`,
-      quote: '“Courage isn\'t just in the legs—it\'s in the heart of a champion.”',
-      art: '/static/img/hero.webp',
-      caption: (name) => `Unstoppable Wonder: ${name}`
-    },
-    {
-      chapter: 'CHAPTER 3',
-      title: 'The Winning Goal',
-      text: (name) => `90th minute. The ball curves into the top corner—GOOOAL! <strong>${name}</strong> lifts the golden trophy high into the Lisbon sky as confetti rains down!`,
-      quote: '“A champion never gives up, and a hero always inspires!”',
-      art: '/static/img/cta-reading.webp',
-      caption: (name) => `Champion of Champions: ${name}`
-    },
-    {
-      chapter: 'CHAPTER 4',
-      title: 'A Story to Keep Forever',
-      text: (name) => `From the stadiums of Portugal to bedtime memories, <strong>${name}</strong>\'s courage will be celebrated in this heirloom keepsake book for years to come.`,
-      quote: '“The greatest adventures start with a brave heart.”',
-      art: '/static/img/step-delivered.png',
-      caption: (name) => `The Legend: ${name}`
-    }
-  ]
-
-  let curPage = 0
-  const renderModalPage = (idx) => {
-    curPage = Math.max(0, Math.min(bookPages.length - 1, idx))
-    const p = bookPages[curPage]
-    const childName = (nameInput?.value || 'gando').trim()
-
-    const elChapter = document.getElementById('preview-chapter')
-    const elHeadline = document.getElementById('preview-page-headline')
-    const elStoryText = document.getElementById('preview-story-text')
-    const elQuote = document.getElementById('preview-quote-text')
-    const elArt = document.getElementById('preview-page-art')
-    const elCaption = document.getElementById('preview-art-caption')
-    const elLeftNum = document.getElementById('preview-page-num-left')
-    const elRightNum = document.getElementById('preview-page-num-right')
-
-    if (elChapter) elChapter.textContent = p.chapter
-    if (elHeadline) elHeadline.textContent = p.title
-    if (elStoryText) elStoryText.innerHTML = p.text(childName)
-    if (elQuote) elQuote.textContent = p.quote
-    if (elArt) elArt.src = p.art
-    if (elCaption) elCaption.textContent = p.caption(childName)
-    if (elLeftNum) elLeftNum.textContent = `Page ${curPage * 2 + 1}`
-    if (elRightNum) elRightNum.textContent = `Page ${curPage * 2 + 2}`
-
-    const btnPrev = document.getElementById('btn-prev-page')
-    const btnNext = document.getElementById('btn-next-page')
-    if (btnPrev) btnPrev.disabled = curPage === 0
-    if (btnNext) btnNext.disabled = curPage === bookPages.length - 1
-
-    document.querySelectorAll('.book-nav-dots .nav-dot').forEach((d, i) => {
-      d.classList.toggle('active', i === curPage)
-    })
-  }
-
-  document.getElementById('btn-prev-page')?.addEventListener('click', () => renderModalPage(curPage - 1))
-  document.getElementById('btn-next-page')?.addEventListener('click', () => renderModalPage(curPage + 1))
-  document.querySelectorAll('.book-nav-dots .nav-dot').forEach((d, i) => {
-    d.addEventListener('click', () => renderModalPage(i))
-  })
-
-  // Handle Form Submission / Preview Book CTA
+  // Handle Form Submission -> save the REAL personalization revision on the
+  // server (Section 5/6), then show the honest review modal. No fabricated
+  // "finished pages" — see src/pages_pdp.ts's review-note copy.
   if (form) {
-    form.addEventListener('submit', (e) => {
+    form.addEventListener('submit', async (e) => {
       e.preventDefault()
       if (!uploadedPhotoKey) {
-        setPhotoStatus('Please upload a photo before previewing.', true)
+        setPhotoStatus('Please upload a photo before continuing.', true)
         document.getElementById('personalise')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
         return
       }
-      const childName = (nameInput?.value || 'gando').trim()
-      const childAge = ageInput?.value || '6'
-      const lang = document.getElementById('lang')?.value || 'English'
+      if (faceSelectionRequired) {
+        setPhotoStatus('Please choose which face is your child before continuing.', true)
+        return
+      }
+      const bookId = await ensureUserBook()
+      if (!bookId) {
+        setPhotoStatus('Could not start personalisation — please try again.', true)
+        return
+      }
 
-      // Update Modal Header
+      const childName = (nameInput?.value || 'gando').trim()
+      const childAge = Number(ageInput?.value || 6)
+      const language = document.getElementById('lang')?.value || 'en'
+      const dedication = document.getElementById('dedication')?.value || ''
+
+      const saved = await patchPersonalization(bookId, {
+        childName,
+        childAge,
+        languageCode: language,
+        dedication,
+        photoUploadKey: uploadedPhotoKey
+      })
+      if (!saved.ok) {
+        setPhotoStatus(saved.error || 'Could not save personalisation — please try again.', true)
+        return
+      }
+
+      // Only now does the book sit in awaiting_photo_analysis (patch above
+      // just attached the photo) — this is the one call that actually
+      // records detected faces and advances the state machine.
+      await runAnalysis(uploadedPhotoKey)
+      if (availableFaces.length === 0) {
+        // runAnalysis already reset uploadedPhotoKey/Url and showed an error.
+        return
+      }
+
       const elModalName = document.getElementById('modal-child-name')
       const elModalAge = document.getElementById('modal-child-age')
       const elModalLang = document.getElementById('modal-book-lang')
       if (elModalName) elModalName.textContent = childName
-      if (elModalAge) elModalAge.textContent = childAge
-      if (elModalLang) elModalLang.textContent = lang
+      if (elModalAge) elModalAge.textContent = String(childAge)
+      if (elModalLang) elModalLang.textContent = document.getElementById('lang')?.selectedOptions?.[0]?.textContent || language
 
-      // Update face overlay in modal
       const previewImg = document.getElementById('preview-child-face')
-      if (previewImg && photoPreview) {
-        previewImg.src = photoPreview.src
-      }
+      if (previewImg && photoPreview) previewImg.src = photoPreview.src
+      const elDedication = document.getElementById('preview-dedication')
+      if (elDedication) elDedication.textContent = dedication || '—'
 
-      renderModalPage(0)
       openModal()
     })
   }
 
-  // Modal Confirm Order -> Add to Cart (real, validated item only)
+  // Modal Confirm -> Add to Cart. Only an opaque userBookId is authoritative;
+  // the other fields here are non-authoritative display data for the cart/
+  // checkout UI — the server always re-reads the real personalization by
+  // userBookId at order time (src/orders.ts), so a forged value here changes
+  // nothing.
   btnConfirm?.addEventListener('click', async () => {
-    if (!uploadedPhotoKey) {
+    if (!uploadedPhotoKey || !userBookId) {
       setPhotoStatus('Please upload a photo before adding to cart.', true)
       return
     }
@@ -348,7 +410,8 @@ import { uploadPhoto, getPhotoPolicy } from './api.js'
 
     const childName = (nameInput?.value || 'gando').trim()
     const childAge = ageInput?.value || '6'
-    const language = document.getElementById('lang')?.value || 'English'
+    const langSelect = document.getElementById('lang')
+    const languageLabel = langSelect?.selectedOptions?.[0]?.textContent || langSelect?.value || 'English'
 
     const item = {
       id: `${form?.dataset.slug || 'book'}-${Date.now()}`,
@@ -356,11 +419,10 @@ import { uploadPhoto, getPhotoPolicy } from './api.js'
       title: form?.dataset.title || "The Portugal's New Legend",
       image: uploadedPhotoUrl || form?.dataset.image || '/static/img/cover-portugal.webp',
       kind: form?.dataset.kind || 'book',
+      userBookId,
       childName,
       childAge,
-      language,
-      dedication: document.getElementById('dedication')?.value || '',
-      photoKey: uploadedPhotoKey,
+      language: languageLabel,
       qty: 1
     }
 

@@ -17,8 +17,14 @@ async function request(path, opts) {
     /* empty/non-JSON body is fine for some responses */
   }
   if (!res.ok) {
-    const error = (data && (data.error || data.message)) || `Request failed (${res.status})`
-    return { ok: false, status: res.status, error, data }
+    // Two shapes seen here: legacy routes return a plain string error/message;
+    // the Phase 2 canonical shape (src/personalization/types.ts) nests it as
+    // data.error = { code, message, fields?, requestId } — always resolve to
+    // a plain human-readable string for display.
+    const errObj = data && data.error
+    const message = typeof errObj === 'string' ? errObj : errObj?.message || data?.message || `Request failed (${res.status})`
+    const fields = typeof errObj === 'object' ? errObj?.fields : undefined
+    return { ok: false, status: res.status, error: message, fields, data }
   }
   return { ok: true, status: res.status, data }
 }
@@ -39,6 +45,57 @@ export async function getPhotoPolicy() {
   const res = await request('/api/v1/uploads/photo-policy', { method: 'GET' })
   if (res.ok) cachedPhotoPolicy = res.data
   return res.ok ? res.data : null
+}
+
+// ---- Phase 2 personalization domain ----
+export function createUserBook(productSlug, idempotencyKey) {
+  return request('/api/v1/user-books', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}) },
+    body: JSON.stringify({ productSlug })
+  })
+}
+
+export function getUserBook(id) {
+  return request('/api/v1/user-books/' + encodeURIComponent(id))
+}
+
+export function patchPersonalization(id, fields) {
+  const headers = { 'Content-Type': 'application/json' }
+  if (fields.expectedVersion !== undefined) headers['If-Match'] = String(fields.expectedVersion)
+  return request('/api/v1/user-books/' + encodeURIComponent(id) + '/personalization', { method: 'PATCH', headers, body: JSON.stringify(fields) })
+}
+
+export function getPersonalizationSchema(productSlug) {
+  return request('/api/v1/products/' + encodeURIComponent(productSlug) + '/personalization-schema')
+}
+
+export function initiatePhotoUpload(contentType, byteSize) {
+  return request('/api/v1/uploads/photo/initiate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ contentType, byteSize })
+  })
+}
+
+export function completePhotoUpload(uploadId, completionToken, file) {
+  const fd = new FormData()
+  fd.append('uploadId', uploadId)
+  fd.append('completionToken', completionToken)
+  fd.append('photo', file)
+  return request('/api/v1/uploads/photo/complete', { method: 'POST', body: fd })
+}
+
+export function getUploadAnalysis(uploadId) {
+  return request('/api/v1/uploads/' + encodeURIComponent(uploadId) + '/analysis')
+}
+
+export function selectFace(uploadId, userBookId, faceId) {
+  return request('/api/v1/uploads/' + encodeURIComponent(uploadId) + '/select-face', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ userBookId, faceId })
+  })
 }
 
 export function quote(items, code, shipping) {

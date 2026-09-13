@@ -3,6 +3,12 @@
 // All sections are data-driven from the per-product PDP rows so admins can edit them.
 import type { Product } from './db'
 import { money, languages } from './data'
+
+// BCP-47 codes for the `languages` display list above, in the SAME order —
+// mirrors the seed rows in migrations/0010_personalization_catalog_domain.sql.
+// The <select> below submits the code (what the Phase 2 domain validates
+// against the `languages` table) while still showing the friendly name.
+const LANGUAGE_CODES = ['en', 'es', 'pt-BR', 'ar', 'fr', 'tr', 'de', 'it', 'nl', 'sq']
 import { esc, stars } from './layout'
 import type {
   GalleryItem,
@@ -246,7 +252,7 @@ export function productDetailPage(d: PdpData, pathPrefix: string) {
               <label for="lang" class="pdp-field-label">Book Language</label>
               <div class="pdp-select-wrapper">
                 <select id="lang" name="language" class="pdp-input pdp-select">
-                  ${languages.map(l => `<option value="${esc(l)}" ${l === 'English' ? 'selected' : ''}>${esc(l)}</option>`).join('')}
+                  ${languages.map((l, i) => `<option value="${esc(LANGUAGE_CODES[i] || 'en')}" ${l === 'English' ? 'selected' : ''}>${esc(l)}</option>`).join('')}
                 </select>
                 <i class="fas fa-chevron-down pdp-select-arrow" aria-hidden="true"></i>
               </div>
@@ -299,63 +305,42 @@ export function productDetailPage(d: PdpData, pathPrefix: string) {
     </div>
   </section>
 
-  <!-- Interactive Storybook Live Preview Modal -->
+  <!-- Review Your Personalisation Modal — honest by design: this shows
+       exactly what will be saved (name/age/language/dedication/photo), and
+       a face-selection step when your photo has more than one face. It
+       does NOT show a generated storybook preview — illustrated pages
+       don't exist yet; that pipeline is a later phase (see
+       docs/PHASE_2_PERSONALIZATION_DOMAIN.md). -->
   <div id="book-preview-modal" class="book-modal-backdrop" hidden>
     <div class="book-modal-dialog">
       <header class="book-modal-header">
         <div class="book-modal-title-wrap">
-          <span class="book-modal-badge">✨ Live Book Preview</span>
+          <span class="book-modal-badge">Review your details</span>
           <h3 id="modal-book-title">${esc(p.title)}</h3>
-          <p class="book-modal-sub">Personalised for <strong id="modal-child-name">gando</strong> (Age <span id="modal-child-age">6</span>) · <span id="modal-book-lang">English</span></p>
+          <p class="book-modal-sub">For <strong id="modal-child-name">gando</strong> (Age <span id="modal-child-age">6</span>) · <span id="modal-book-lang">English</span></p>
         </div>
-        <button type="button" class="book-modal-close" id="modal-close-btn" aria-label="Close preview">&times;</button>
+        <button type="button" class="book-modal-close" id="modal-close-btn" aria-label="Close">&times;</button>
       </header>
 
       <div class="book-modal-body">
-        <div class="book-preview-stage">
-          <div class="book-page-spread" id="book-page-spread">
-            <!-- Left page: Story text -->
-            <div class="book-page book-page-left">
-              <div class="book-page-corner"></div>
-              <div class="book-story-content">
-                <span class="book-chapter-tag" id="preview-chapter">CHAPTER 1</span>
-                <h4 id="preview-page-headline">The Dream of the Final</h4>
-                <p id="preview-story-text">Months of sweat and practice in the wind and rain have led to this single moment. The stadium lights shine bright over Lisbon as <strong>gando</strong> steps onto the pitch wearing the legendary number 7 jersey!</p>
-                <div class="book-quote-box">
-                  <i class="fas fa-quote-left"></i>
-                  <span id="preview-quote-text">“Believe in every pass, because today a new legend is born!”</span>
-                </div>
-              </div>
-              <div class="book-page-num" id="preview-page-num-left">Page 1</div>
+        <div class="book-preview-stage review-stage">
+          <div class="review-summary">
+            <div class="review-photo-wrap">
+              <img src="/static/img/avatar-sample.png" alt="Uploaded photo" id="preview-child-face" class="review-photo">
             </div>
-
-            <!-- Right page: Illustrated art with child's face -->
-            <div class="book-page book-page-right">
-              <div class="book-art-wrapper">
-                <img src="${esc(p.image)}" alt="Story page illustration" id="preview-page-art" class="book-art-img">
-                <div class="book-hero-face-overlay" id="preview-face-overlay">
-                  <div class="book-face-halo"></div>
-                  <img src="/static/img/avatar-sample.png" alt="Hero face" id="preview-child-face" class="book-child-face">
-                </div>
-                <div class="book-art-caption">
-                  <i class="fas fa-star"></i> <span id="preview-art-caption">Hero of Portugal: gando</span>
-                </div>
-              </div>
-              <div class="book-page-num" id="preview-page-num-right">Page 2</div>
-            </div>
+            <dl class="review-fields">
+              <div><dt>Dedication</dt><dd id="preview-dedication">—</dd></div>
+              <div><dt>Cover</dt><dd id="preview-cover">Hardcover</dd></div>
+            </dl>
+            <p class="review-note"><i class="fas fa-circle-info"></i> We securely save these details for review. Illustrated pages and a finished preview are prepared in a later step — you'll be notified once that's ready.</p>
           </div>
 
-          <!-- Page Navigation -->
-          <div class="book-nav-bar">
-            <button type="button" class="btn-book-nav" id="btn-prev-page" disabled><i class="fas fa-arrow-left"></i> Previous</button>
-            <div class="book-nav-dots" id="book-nav-dots">
-              <button class="nav-dot active" data-page="0">1</button>
-              <button class="nav-dot" data-page="1">2</button>
-              <button class="nav-dot" data-page="2">3</button>
-              <button class="nav-dot" data-page="3">4</button>
-            </div>
-            <button type="button" class="btn-book-nav" id="btn-next-page">Next <i class="fas fa-arrow-right"></i></button>
+          <!-- Face selection — shown only when analysis finds more than one face -->
+          <div class="review-face-select" id="face-select-panel" hidden>
+            <h4><i class="fas fa-user-check"></i> We found more than one face — which one is your child?</h4>
+            <div class="face-select-grid" id="face-select-grid"></div>
           </div>
+          <p class="review-status" id="analysis-status" hidden></p>
         </div>
       </div>
 

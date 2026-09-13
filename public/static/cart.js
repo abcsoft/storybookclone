@@ -5,13 +5,22 @@
 // from a product page ever showed up in the cart. Every page now imports
 // this module instead of touching localStorage directly.
 //
-// Schema (v1): an array of
+// Schema (v1, legacy): an array of
 //   { id, slug, title, kind, image?, price?, qty, childName, childAge?,
 //     language?, dedication?, photoKey }
 // `photoKey` MUST be a real server-issued upload key ("uploads/..."), never
-// a base64/data: URL — this module actively strips any data: URL fields it
-// finds (defense in depth against a bug reintroducing that) and drops any
-// item that lacks a valid photoKey/childName as malformed.
+// a base64/data: URL.
+//
+// Schema (v2, Phase 2): { id, slug, title, kind, image?, qty, userBookId,
+//   childName?, childAge?, language? } — `userBookId` is the ONLY
+// authoritative field; childName/childAge/language/image here are
+// non-authoritative display data only. The server always re-reads the real
+// personalization by userBookId at order time (src/orders.ts) — nothing
+// forged in a cart item can change what actually gets ordered.
+//
+// Either way this module actively strips any data: URL fields it finds
+// (defense in depth against a base64-photo bug reintroducing that) and drops
+// any item that matches neither shape as malformed.
 
 export const CART_KEY = 'ww_cart_v1'
 const LEGACY_KEYS = ['wonderwraps_cart', 'ww_cart']
@@ -24,6 +33,10 @@ export function isValidItem(item) {
   if (!isPlainObject(item)) return false
   if (typeof item.slug !== 'string' || !item.slug) return false
   if (typeof item.title !== 'string' || !item.title) return false
+  // Phase 2 shape: an opaque userBookId is enough on its own — it's the
+  // authoritative reference, everything else on the item is display-only.
+  if (typeof item.userBookId === 'string' && item.userBookId) return true
+  // Legacy (pre-Phase-2) shape: requires a real server-issued photoKey.
   if (typeof item.childName !== 'string' || !item.childName.trim()) return false
   if (typeof item.photoKey !== 'string' || item.photoKey.indexOf('uploads/') !== 0) return false
   return true
@@ -39,6 +52,7 @@ function sanitize(item) {
 }
 
 function itemIdentity(item) {
+  if (item.userBookId) return [item.slug, item.userBookId].join('|')
   return [item.slug, item.childName, item.childAge, item.language, item.dedication, item.photoKey].join('|')
 }
 
