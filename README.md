@@ -61,7 +61,25 @@ A full-stack clone of [wonderwraps.com](https://wonderwraps.com/) — personaliz
 ## Recent UI and flow updates
 - Product pages now mirror the reference flow with a sticky gallery, sale pricing, review summary, benefits, upload dropzone, expandable photo tips, privacy messaging, and a three-step personalisation section.
 - `/books/girls-sticker-pack` now renders the sticker product page directly, matching the reference URL while preserving `/stickers/girls-sticker-pack`.
-- Personalisation requires a child name and successfully uploaded JPG, PNG, or WEBP photo before an item can enter the cart; the order API validates this server-side too.
+- Personalisation requires a child name and a successfully uploaded photo (JPG or PNG, 800–4000px, ≤10MB — see `src/photo-policy.ts` / `GET /api/v1/uploads/photo-policy`) before an item can enter the cart; the order API validates this server-side too, with a real image decode, not just a header check.
+
+## Local environment setup
+Copy this into a `.dev.vars` file at the project root (gitignored — never committed):
+```
+ENVIRONMENT=development
+```
+This unlocks local-only fallbacks: the guest-order-token signing secret (a
+deterministic dev-only value — see `src/secrets.ts`) and the console email
+adapter (prints password-reset links to this terminal instead of sending
+real email — no provider is integrated yet, see `docs/EMAIL_PROVIDER.md`).
+Without it, guest checkout and forgot-password correctly **fail closed**
+even locally — that's the same safe default a real deployment gets.
+
+In a deployed environment, set a real `GUEST_ORDER_TOKEN_SECRET` instead:
+`wrangler secret put GUEST_ORDER_TOKEN_SECRET` (a long random string —
+never `ENVIRONMENT=development` in production). `GUEST_ORDER_TOKEN_SECRET_PREV`
+supports rotation without breaking outstanding guest order links; see
+`docs/API_V1.md`.
 
 ## Local admin bootstrap
 There is **no default admin account**. To get one on your local D1:
@@ -77,7 +95,7 @@ This writes directly to your local `.wrangler` D1 state only (`--remote` is refu
 | `npm run typecheck` | `tsc --noEmit` — must report zero errors |
 | `npm test` | Unit tests (Vitest): password hashing, authorization separation, cart migration/validation, upload byte-signature validation, order idempotency/atomicity, guest-token tampering, password-reset tokens, and more — see `test/unit/` |
 | `npm run test:integration` | Migration smoke test — applies every file in `migrations/` to an empty DB and to an already-migrated ("existing baseline") DB using Node's built-in SQLite, and asserts every expected table/column exists |
-| `npm run test:e2e` | Real end-to-end browser test (Chromium via Playwright) against a real local `wrangler dev` + local D1/R2 — drives product → personalize → upload → cart → checkout → order → My Books → PDF request → forgot/reset password |
+| `npm run test:e2e` | Three real, separate browser journeys (Chromium via Playwright, real local `wrangler dev` + local D1/R2): a **guest** checkout (never logs in — verifies `user_id IS NULL`, the signed guest link, and tampered/cross-order token denial), an **authenticated** checkout (My Books, cross-customer denial, PDF request, forgot/reset password), and a **browser-level double-submission race** (two genuinely concurrent same-Idempotency-Key requests from the page's own JS, proving exactly one order/claim results) |
 | `npm run secrets:scan` | Pattern-based scan of tracked files for hash/key/token-shaped secrets |
 | `npm run check` | Runs all of the above plus `npm run build` — the CI-equivalent local gate |
 | `node scripts/audit-frontend.mjs <label>` | Live-browser visual/functional audit of every public + admin route at desktop and mobile widths — see `docs/FRONTEND_AUDIT.md` |

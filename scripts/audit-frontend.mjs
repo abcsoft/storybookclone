@@ -34,18 +34,24 @@ const PUBLIC_ROUTES = [
   ['/login', 'login'],
   ['/register', 'register'],
   ['/forgot-password', 'forgot-password'],
+  ['/reset-password?token=audit-invalid-token', 'reset-password'],
   ['/my-books', 'my-books'],
+  ['/my/books/the-portugals-new-legend', 'reader'],
   ['/faqs', 'faqs'],
   ['/support', 'support'],
   ['/contact', 'contact'],
   ['/blog', 'blog']
 ]
+// /reset-password?token=... intentionally uses an invalid token — this is
+// the generic "invalid or expired link" state a real expired/reused/wrong
+// link would show; it's a real page state to visually verify, not an error.
 
 const ADMIN_ROUTES = [
   ['/admin/login', 'admin-login'],
   ['/admin', 'admin-dashboard'],
   ['/admin/orders', 'admin-orders'],
   ['/admin/products', 'admin-products'],
+  ['/admin/products/new', 'admin-product-new'],
   ['/admin/discounts', 'admin-discounts'],
   ['/admin/users', 'admin-users'],
   ['/admin/messages', 'admin-messages'],
@@ -204,6 +210,7 @@ async function main() {
       await page.click('button[type=submit]')
       await page.waitForURL(BASE + '/admin', { timeout: 10000 }).catch(() => {})
       let firstProductLink = null
+      let firstOrderLink = null
       for (const [path, name] of ADMIN_ROUTES) {
         await visit(page, path, name, label, findings)
         if (path === '/admin/products') {
@@ -213,11 +220,25 @@ async function main() {
             .getAttribute('href')
             .catch(() => null)
         }
+        if (path === '/admin/orders') {
+          firstOrderLink = await page
+            .locator('table.a-table a[href^="/admin/orders/"]')
+            .first()
+            .getAttribute('href')
+            .catch(() => null)
+        }
       }
       // one representative product-detail + PDP editor screenshot
       if (firstProductLink) {
         await visit(page, firstProductLink, 'admin-product-detail', label, findings)
         await visit(page, firstProductLink.replace(/\/$/, '') + '/pdp', 'admin-product-pdp', label, findings)
+      }
+      // one representative order-detail screenshot, if any order exists yet
+      // (a freshly-reset DB has none — that's expected, not a finding).
+      if (firstOrderLink) {
+        await visit(page, firstOrderLink, 'admin-order-detail', label, findings)
+      } else {
+        log(`no orders exist in this run's DB yet — skipping admin/orders/:id screenshot (not a finding)`)
       }
       await context.close()
     }

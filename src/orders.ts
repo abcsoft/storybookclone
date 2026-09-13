@@ -1,9 +1,11 @@
-// Order creation: server-authoritative pricing, atomic order+items writes,
-// idempotent replay of duplicate submissions, and guest order access via an
-// unforgeable HMAC-signed capability token (never a bare sequential ID).
+// Order creation: server-authoritative pricing, atomic order+items+photo-
+// claim writes, idempotent replay of duplicate submissions, and guest order
+// access via an unforgeable HMAC-signed capability token (never a bare
+// sequential ID). Signing secrets come from environment bindings — see
+// src/secrets.ts resolveGuestOrderTokenSecrets() — never the database.
 import { quoteCart, shippingFor, round2, type CartLine } from './db'
-import { checkUploadOwnership, markUploadsConsumed } from './uploads'
-import { getOrCreateSecret, hmacSha256Hex, timingSafeEqual, sha256Hex } from './secrets'
+import { checkUploadOwnership } from './uploads'
+import { sha256Hex, signWithRotation, verifyWithRotation, type RotatingSecrets } from './secrets'
 
 export type OrderItemInput = {
   slug: string
@@ -55,7 +57,7 @@ export async function hashOrderPayload(input: CreateOrderInput): Promise<string>
 export async function createOrder(
   db: D1Database,
   input: CreateOrderInput,
-  ctx: { userId: number | null; uploadOwnerToken: string }
+  ctx: { userId: number | null; uploadOwnerToken: string; secrets: RotatingSecrets }
 ): Promise<CreateOrderResult> {
   const items = Array.isArray(input.items) ? input.items : []
   if (!items.length) return { ok: false, status: 400, error: 'Cart is empty.' }
@@ -85,8 +87,8 @@ export async function createOrder(
 
   // Idempotent replay: same key seen before — short-circuit BEFORE
   // (re-)validating uploads. A legitimate retry of an already-succeeded
-  // order must not fail just because its photo was already marked consumed
-  // by the first, successful attempt.
+  // order must not fail just because its photo was already claimed by the
+  // first, successful attempt.
   const existing = await db
     .prepare('SELECT id, idempotency_payload_hash, email FROM orders WHERE idempotency_key = ?')
     .bind(idempotencyKey)
@@ -95,13 +97,16 @@ export async function createOrder(
     if (existing.idempotency_payload_hash !== payloadHash) {
       return { ok: false, status: 409, error: 'This idempotency key was already used with different order details.' }
     }
-    return { ok: true, orderId: existing.id, guestToken: await signGuestOrderToken(db, existing.id), replayed: true }
+    return { ok: true, orderId: existing.id, guestToken: await signGuestOrderToken(ctx.secrets, existing.id), replayed: true }
   }
 
   for (const item of items) {
     if (!String(item.childName || '').trim()) return { ok: false, status: 400, error: 'Each item needs a child name.' }
     const key = String(item.photoKey || '')
     if (!key.startsWith('uploads/')) return { ok: false, status: 400, error: 'Each item needs an uploaded photo.' }
+    // Fast pre-check for the common (non-racing) bad-request case — the
+    // atomic upload_claims insert in the batch below is the real,
+    // race-proof authority (see the concurrency comment further down).
     const check = await checkUploadOwnership(db, key, ctx.uploadOwnerToken)
     if (!check.ok) {
       const messages: Record<string, string> = {
@@ -155,41 +160,69 @@ export async function createOrder(
       )
   })
 
+  // Atomic photo claiming: one item in the SAME order may legitimately
+  // reuse a photoKey (e.g. a matching sticker pack added alongside a book —
+  // see the cart cross-sell), so claim/consume each UNIQUE key once, not
+  // once per item.
+  const uniquePhotoKeys = [...new Set(items.map((it) => String(it.photoKey)))]
+  // upload_claims.upload_key is PRIMARY KEY: if a DIFFERENT, concurrently-
+  // committing order already claimed one of these keys, this INSERT hits a
+  // UNIQUE-constraint violation, which fails the WHOLE db.batch() — order
+  // and item rows included — atomically. That closes the TOCTOU window the
+  // old two-step "insert order, then separately mark uploads consumed"
+  // flow had: exactly one of two concurrent checkouts racing for the same
+  // photo can ever win.
+  const claimStmts = uniquePhotoKeys.map((key) =>
+    db
+      .prepare(`INSERT INTO upload_claims (upload_key, order_id) VALUES (?, (SELECT id FROM orders WHERE idempotency_key = ?))`)
+      .bind(key, idempotencyKey)
+  )
+  const consumeStmts = uniquePhotoKeys.map((key) => db.prepare('UPDATE photo_uploads SET consumed_at = CURRENT_TIMESTAMP WHERE upload_key = ?').bind(key))
+
   try {
-    await db.batch([orderStmt, ...itemStmts])
+    await db.batch([orderStmt, ...itemStmts, ...claimStmts, ...consumeStmts])
   } catch (err) {
-    // Race: another request with the same idempotency key committed first
-    // (UNIQUE constraint on orders.idempotency_key). Replay its result
-    // instead of surfacing a spurious failure to a legitimate retry.
-    const raced = await db
+    // Two distinct races can land here — diagnose in priority order so the
+    // caller gets a deterministic, specific error either way.
+
+    // 1) Someone else committed the SAME idempotency key first (a genuine
+    // duplicate submission/retry) — replay their result.
+    const racedOrder = await db
       .prepare('SELECT id, idempotency_payload_hash FROM orders WHERE idempotency_key = ?')
       .bind(idempotencyKey)
       .first<{ id: number; idempotency_payload_hash: string | null }>()
-    if (raced) {
-      if (raced.idempotency_payload_hash !== payloadHash) {
+    if (racedOrder) {
+      if (racedOrder.idempotency_payload_hash !== payloadHash) {
         return { ok: false, status: 409, error: 'This idempotency key was already used with different order details.' }
       }
-      return { ok: true, orderId: raced.id, guestToken: await signGuestOrderToken(db, raced.id), replayed: true }
+      return { ok: true, orderId: racedOrder.id, guestToken: await signGuestOrderToken(ctx.secrets, racedOrder.id), replayed: true }
     }
+
+    // 2) A DIFFERENT idempotency key (a different, concurrent checkout) won
+    // the race to claim one of these photos first — deterministic conflict,
+    // not a duplicate of our own request.
+    for (const key of uniquePhotoKeys) {
+      const claimed = await db.prepare('SELECT order_id FROM upload_claims WHERE upload_key = ?').bind(key).first<{ order_id: number }>()
+      if (claimed) {
+        return { ok: false, status: 409, error: "One item's uploaded photo was just claimed by another order — please re-upload the photo and try again." }
+      }
+    }
+
     throw err
   }
 
   const created = await db.prepare('SELECT id FROM orders WHERE idempotency_key = ?').bind(idempotencyKey).first<{ id: number }>()
   const orderId = created!.id
-  await markUploadsConsumed(db, items.map((i) => String(i.photoKey)))
 
-  return { ok: true, orderId, guestToken: await signGuestOrderToken(db, orderId), replayed: false }
+  return { ok: true, orderId, guestToken: await signGuestOrderToken(ctx.secrets, orderId), replayed: false }
 }
 
 // ---- guest order access (HMAC capability token, not a bare sequential ID) ----
 
-export async function signGuestOrderToken(db: D1Database, orderId: number): Promise<string> {
-  const secret = await getOrCreateSecret(db, 'order_access_secret')
-  return hmacSha256Hex(secret, `order:${orderId}`)
+export async function signGuestOrderToken(secrets: RotatingSecrets, orderId: number): Promise<string> {
+  return signWithRotation(secrets, `order:${orderId}`)
 }
 
-export async function verifyGuestOrderToken(db: D1Database, orderId: number, token: string): Promise<boolean> {
-  if (!token) return false
-  const expected = await signGuestOrderToken(db, orderId)
-  return timingSafeEqual(expected, token)
+export async function verifyGuestOrderToken(secrets: RotatingSecrets, orderId: number, token: string): Promise<boolean> {
+  return verifyWithRotation(secrets, `order:${orderId}`, token)
 }

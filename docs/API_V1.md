@@ -12,11 +12,29 @@ returned as a plain number of major currency units (matches the existing
 work happens). Cookies used: `ww_session` (auth, httpOnly), `ww_upload`
 (upload-ownership correlation, httpOnly, works for guests).
 
+## GET /api/v1/uploads/photo-policy
+Public. Returns the one authoritative set of upload limits — `src/photo-policy.ts` —
+that this endpoint, the frontend's own copy/validation, and admin display
+all read from. → `{ allowedFormats: ["jpeg","png"], minDimensionPx: 800, maxDimensionPx: 4000, maxMB: 10 }`
+
 ## POST /api/v1/uploads/photo
-`multipart/form-data`, field `photo` (JPEG/PNG/WEBP, ≤5MB). Validated by
-real file signature + parsed pixel dimensions (100–8000px), not the declared
-Content-Type/extension. Issues (or reuses) the `ww_upload` owner-token
-cookie and records the upload in `photo_uploads` (24h TTL, single-use).
+`multipart/form-data`, field `photo`. Current policy (see the endpoint
+above, or `src/photo-policy.ts`): **JPEG or PNG only**, 800–4000px per side,
+≤10MB. Validated by a REAL decode (`src/image-decode.ts`) — not just magic
+bytes/header parsing: jpeg-js (pure JS, no WASM) for JPEG; a hand-written
+chunk-parsing + CRC32-checked + `DecompressionStream('deflate')`-based
+decoder for PNG. Rejects truncated files, malformed chunks/CRCs, corrupt
+entropy data, unsupported variants (interlaced/palette/non-8-bit PNG), and
+header-vs-decoded dimension mismatches — not just a plausible-looking
+header. WEBP is intentionally not accepted; see the comment atop
+`src/photo-policy.ts` for why (Workers refuses runtime `WebAssembly.compile()`
+on fetched bytes, confirmed against a real `wrangler dev` Worker — no
+Workers-compatible pure-JS WEBP decoder exists to fall back to).
+
+Issues (or reuses) the `ww_upload` owner-token cookie and records the
+upload in `photo_uploads` (24h TTL). "Consumed" (single-use) is now
+enforced atomically at order-creation time via `upload_claims` — see
+POST /api/v1/orders below — not by a separate post-order update.
 → `{ ok: true, key: "uploads/<uuid>.<ext>", url: "/photos/<key>" }`
 
 Legacy alias (kept, tested): `POST /api/upload-photo` — identical behavior.
@@ -46,9 +64,21 @@ Body:
 `paymentMethod` must be an explicit test/manual value — this baseline does
 not call a real payment provider (Phase 4). Every `photoKey` must be a real,
 unexpired, unconsumed upload owned by the requesting browser/session (see
-`ww_upload` above) or the whole order is rejected. Order + all order_items
-are written in a single atomic `db.batch()` (D1's implicit-transaction
-guarantee) — never a bare INSERT followed by a separate items INSERT.
+`ww_upload` above) or the whole order is rejected.
+
+**Atomic write, including photo claiming.** The order row, every
+`order_items` row, AND a claim row per unique `photoKey` (`upload_claims`,
+`upload_key` PRIMARY KEY) are written in ONE atomic `db.batch()` — never a
+bare order INSERT followed by separate items/consumption updates. This is
+what closes a real TOCTOU race: if two different checkouts (different
+`Idempotency-Key`s) concurrently try to claim the same photo, the second
+one's `upload_claims` insert hits the UNIQUE constraint, which fails —
+and rolls back — that entire batch (its order and item rows included).
+Exactly one of the two can ever win; the loser gets a deterministic `409`
+(or, depending on timing, a `400` from the faster pre-check — both are
+safe). One order MAY legitimately reuse the same `photoKey` across
+multiple of its OWN items (e.g. a matching sticker pack) — claimed once,
+not once per item.
 
 Same `Idempotency-Key` + same body → replays the original order (`replayed:
 true`, same `id`), including under real concurrent double-submission. Same
@@ -56,8 +86,15 @@ key + a *different* body → `409`.
 
 → `{ ok: true, id: <order id>, guestToken: "<hex>", replayed: boolean }`
 
-`guestToken` is an HMAC-SHA256 capability token over the order id (secret
-generated once, stored in `app_secrets`) — it is what makes
+`guestToken` is an HMAC-SHA256 capability token over the order id, signed
+with `GUEST_ORDER_TOKEN_SECRET` — a **Cloudflare Worker secret binding**,
+never the database (a prior iteration of this baseline generated and
+stored this key in D1's `app_secrets` table; that design is retired — see
+`src/secrets.ts`). Missing the secret in a non-development environment
+fails closed (`503` on order creation, `404`/generic-page on guest access)
+rather than falling back to anything guessable. `GUEST_ORDER_TOKEN_SECRET_PREV`
+supports rotation: tokens signed under the old secret keep verifying while
+both are set; remove `_PREV` to finish the rotation. This is what makes
 `/order-success?id=&token=` and `GET /api/v1/orders/:id/guest` safe to be
 unauthenticated: knowing/guessing a sequential order id alone proves
 nothing.
@@ -83,11 +120,17 @@ Legacy aliases (kept, tested): `GET /api/my/orders`, `GET /api/my/orders/:id`.
 
 ## POST /api/v1/auth/forgot-password
 Body: `{ email }`. Always `{ ok: true, message: "generic..." }` regardless
-of whether the account exists — enumeration protection. Rate-limited
-per-email (3/hour, `rate_limit_events`) — also silent when limited. Sends
-via the pluggable email adapter (`src/email.ts`): `ConsoleEmailAdapter`
-locally (prints the reset link to server stdout — there is no real email
-provider integrated in this baseline), `FakeEmailAdapter` in tests.
+of whether the account exists, whether it was rate-limited (3/hour per
+email, `rate_limit_events`), or whether email sending is even configured —
+enumeration protection and honest "we can't do this right now" fail-closed
+behavior look identical from the outside. Adapter selection
+(`src/email.ts` `getEmailAdapter(environment)`): `ConsoleEmailAdapter`
+ONLY when `ENVIRONMENT === 'development'` (prints the reset link to server
+stdout — there is still no real email provider integrated, see
+`docs/EMAIL_PROVIDER.md` for the Phase 5 plan); `FakeEmailAdapter` in
+tests; otherwise `FailClosedEmailAdapter` — no token is even created, and
+nothing is ever logged, if no real adapter is configured for the current
+environment.
 
 ## POST /api/v1/auth/reset-password
 Body: `{ token, password }`. `token` is checked as a SHA-256 hash lookup
@@ -109,13 +152,22 @@ response and the stored `status` are always `"queued"` in this baseline;
 never claim `"ready"`/`"sent"` here.
 → `{ success: true, id, status: "queued", message }`
 
-## GET /api/v1/books/pdf-requests/:id
+**Response includes a `token`** — a random capability token whose SHA-256
+hash alone is stored (`pdf_requests.access_token_hash`); shown only in this
+one response.
+
+## GET /api/v1/books/pdf-requests/:id?token=
+Not a bare sequential id: authorized only for the admin role, the
+authenticated owner (`user_id` match), or a request carrying the `token`
+returned at creation. Anyone else → `404` (not `403`, same reasoning as
+guest order access). Response never includes email or other PII.
 → `{ id, status, book_slug, cover_type, created_at, updated_at }`
 
 Legacy alias (kept, tested): `POST /api/books/pdf-request` — this was the
 confirmed Phase 0/1 baseline defect where `pdf_requests` had no `cover_type`
 column even though this handler always tried to insert one, so every call
-500'd. Migration `0004_phase1_commerce.sql` fixes the schema.
+500'd. Migration `0004_phase1_commerce.sql` fixes the schema; migration
+`0005` adds `access_token_hash`.
 
 ## GET /photos/:key
 Never a permanently public URL. Authorized only for: the admin role; the

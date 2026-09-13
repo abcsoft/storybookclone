@@ -2,8 +2,16 @@ import { describe, it, expect } from 'vitest'
 import { migratedFakeD1 } from '../helpers/testApp'
 import { createOrder, hashOrderPayload, type CreateOrderInput } from '../../src/orders'
 import { recordUpload } from '../../src/uploads'
+import type { RotatingSecrets } from '../../src/secrets'
 
 const OWNER = 'browser-owner-token-1'
+const SECRETS: RotatingSecrets = { current: 'orders-test-secret-' + Math.random().toString(36) }
+const ctx = (overrides: Partial<{ userId: number | null; uploadOwnerToken: string; secrets: RotatingSecrets }> = {}) => ({
+  userId: null,
+  uploadOwnerToken: OWNER,
+  secrets: SECRETS,
+  ...overrides
+})
 
 async function seedProduct(db: D1Database, slug = 'the-portugals-new-legend', price = 34.99) {
   await db
@@ -16,7 +24,7 @@ async function seedProduct(db: D1Database, slug = 'the-portugals-new-legend', pr
 }
 
 async function seedUpload(db: D1Database, key = 'uploads/test-photo.jpg', ownerToken = OWNER) {
-  await recordUpload(db, { key, ownerToken, contentType: 'image/jpeg', byteSize: 12345, width: 800, height: 600 })
+  await recordUpload(db, { key, ownerToken, contentType: 'image/jpeg', byteSize: 12345, width: 900, height: 900 })
 }
 
 function baseInput(overrides: Partial<CreateOrderInput> = {}): CreateOrderInput {
@@ -46,7 +54,7 @@ describe('createOrder — server-authoritative pricing', () => {
     tampered.items[0].price = 0.01
     tampered.items[0].unitPrice = 0.01
 
-    const result = await createOrder(db, tampered, { userId: null, uploadOwnerToken: OWNER })
+    const result = await createOrder(db, tampered, ctx())
     expect(result.ok).toBe(true)
     if (result.ok) {
       const row = await db.prepare('SELECT total, subtotal, discount FROM orders WHERE id = ?').bind(result.orderId).first<any>()
@@ -59,10 +67,7 @@ describe('createOrder — server-authoritative pricing', () => {
   it('rejects an unknown product slug', async () => {
     const db = migratedFakeD1()
     await seedUpload(db)
-    const result = await createOrder(db, baseInput({ items: [{ slug: 'does-not-exist', childName: 'Gando', photoKey: 'uploads/test-photo.jpg' }] }), {
-      userId: null,
-      uploadOwnerToken: OWNER
-    })
+    const result = await createOrder(db, baseInput({ items: [{ slug: 'does-not-exist', childName: 'Gando', photoKey: 'uploads/test-photo.jpg' }] }), ctx())
     expect(result.ok).toBe(false)
   })
 })
@@ -71,10 +76,7 @@ describe('createOrder — upload key validation', () => {
   it('rejects a missing/unknown upload key', async () => {
     const db = migratedFakeD1()
     await seedProduct(db)
-    const result = await createOrder(db, baseInput({ items: [{ slug: 'the-portugals-new-legend', childName: 'Gando', photoKey: 'uploads/never-uploaded.jpg' }] }), {
-      userId: null,
-      uploadOwnerToken: OWNER
-    })
+    const result = await createOrder(db, baseInput({ items: [{ slug: 'the-portugals-new-legend', childName: 'Gando', photoKey: 'uploads/never-uploaded.jpg' }] }), ctx())
     expect(result.ok).toBe(false)
     if (!result.ok) expect(result.error).toMatch(/not found/i)
   })
@@ -83,7 +85,7 @@ describe('createOrder — upload key validation', () => {
     const db = migratedFakeD1()
     await seedProduct(db)
     await seedUpload(db, 'uploads/test-photo.jpg', 'someone-elses-owner-token')
-    const result = await createOrder(db, baseInput(), { userId: null, uploadOwnerToken: OWNER })
+    const result = await createOrder(db, baseInput(), ctx())
     expect(result.ok).toBe(false)
     if (!result.ok) expect(result.error).toMatch(/does not belong/i)
   })
@@ -93,22 +95,46 @@ describe('createOrder — upload key validation', () => {
     await seedProduct(db)
     await db
       .prepare('INSERT INTO photo_uploads (upload_key, owner_token, content_type, byte_size, width, height, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
-      .bind('uploads/test-photo.jpg', OWNER, 'image/jpeg', 100, 800, 600, Math.floor(Date.now() / 1000) - 10)
+      .bind('uploads/test-photo.jpg', OWNER, 'image/jpeg', 100, 900, 900, Math.floor(Date.now() / 1000) - 10)
       .run()
-    const result = await createOrder(db, baseInput(), { userId: null, uploadOwnerToken: OWNER })
+    const result = await createOrder(db, baseInput(), ctx())
     expect(result.ok).toBe(false)
     if (!result.ok) expect(result.error).toMatch(/expired/i)
   })
 
-  it('rejects reusing an already-consumed upload key across two orders', async () => {
+  it('rejects reusing an already-consumed upload key across two SEQUENTIAL orders', async () => {
     const db = migratedFakeD1()
     await seedProduct(db)
     await seedUpload(db)
-    const first = await createOrder(db, baseInput({ idempotencyKey: 'order-1' }), { userId: null, uploadOwnerToken: OWNER })
+    const first = await createOrder(db, baseInput({ idempotencyKey: 'order-1' }), ctx())
     expect(first.ok).toBe(true)
-    const second = await createOrder(db, baseInput({ idempotencyKey: 'order-2' }), { userId: null, uploadOwnerToken: OWNER })
+    const second = await createOrder(db, baseInput({ idempotencyKey: 'order-2' }), ctx())
     expect(second.ok).toBe(false)
     if (!second.ok) expect(second.error).toMatch(/already used/i)
+  })
+
+  it('one order MAY reuse the same photoKey across two of its own items (e.g. a matching cross-sell)', async () => {
+    const db = migratedFakeD1()
+    await seedProduct(db, 'book-x')
+    await seedProduct(db, 'sticker-x')
+    await seedUpload(db)
+    const result = await createOrder(
+      db,
+      baseInput({
+        items: [
+          { slug: 'book-x', childName: 'Gando', childAge: 6, photoKey: 'uploads/test-photo.jpg' },
+          { slug: 'sticker-x', childName: 'Gando', childAge: 6, photoKey: 'uploads/test-photo.jpg' }
+        ]
+      }),
+      ctx()
+    )
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      const items = await db.prepare('SELECT COUNT(*) AS n FROM order_items WHERE order_id = ?').bind(result.orderId).first<{ n: number }>()
+      expect(items!.n).toBe(2)
+      const claims = await db.prepare('SELECT COUNT(*) AS n FROM upload_claims WHERE upload_key = ?').bind('uploads/test-photo.jpg').first<{ n: number }>()
+      expect(claims!.n).toBe(1) // claimed once, not once per item
+    }
   })
 })
 
@@ -119,8 +145,8 @@ describe('createOrder — idempotency', () => {
     await seedUpload(db)
     const input = baseInput({ idempotencyKey: 'same-key-1' })
 
-    const first = await createOrder(db, input, { userId: null, uploadOwnerToken: OWNER })
-    const second = await createOrder(db, input, { userId: null, uploadOwnerToken: OWNER })
+    const first = await createOrder(db, input, ctx())
+    const second = await createOrder(db, input, ctx())
 
     expect(first.ok).toBe(true)
     expect(second.ok).toBe(true)
@@ -138,10 +164,10 @@ describe('createOrder — idempotency', () => {
     await seedUpload(db)
     const key = 'same-key-conflict'
 
-    const first = await createOrder(db, baseInput({ idempotencyKey: key }), { userId: null, uploadOwnerToken: OWNER })
+    const first = await createOrder(db, baseInput({ idempotencyKey: key }), ctx())
     expect(first.ok).toBe(true)
 
-    const conflicting = await createOrder(db, baseInput({ idempotencyKey: key, city: 'A Totally Different City' }), { userId: null, uploadOwnerToken: OWNER })
+    const conflicting = await createOrder(db, baseInput({ idempotencyKey: key, city: 'A Totally Different City' }), ctx())
     expect(conflicting.ok).toBe(false)
     if (!conflicting.ok) expect(conflicting.status).toBe(409)
 
@@ -155,10 +181,7 @@ describe('createOrder — idempotency', () => {
     await seedUpload(db)
     const input = baseInput({ idempotencyKey: 'concurrent-key' })
 
-    const [a, b] = await Promise.all([
-      createOrder(db, input, { userId: null, uploadOwnerToken: OWNER }),
-      createOrder(db, input, { userId: null, uploadOwnerToken: OWNER })
-    ])
+    const [a, b] = await Promise.all([createOrder(db, input, ctx()), createOrder(db, input, ctx())])
     expect(a.ok).toBe(true)
     expect(b.ok).toBe(true)
     if (a.ok && b.ok) expect(a.orderId).toBe(b.orderId)
@@ -171,6 +194,75 @@ describe('createOrder — idempotency', () => {
     const a = await hashOrderPayload(baseInput({ idempotencyKey: 'key-a' }))
     const b = await hashOrderPayload(baseInput({ idempotencyKey: 'key-b' }))
     expect(a).toBe(b)
+  })
+})
+
+describe('createOrder — atomic photo claiming under concurrency (TOCTOU regression)', () => {
+  it('two DIFFERENT idempotency keys racing for the SAME photo: exactly one order wins, the other gets a deterministic conflict', async () => {
+    const db = migratedFakeD1()
+    await seedProduct(db, 'book-race')
+    await seedUpload(db, 'uploads/contested-photo.jpg')
+
+    const inputA = baseInput({ idempotencyKey: 'racer-a', items: [{ slug: 'book-race', childName: 'Kid A', childAge: 5, photoKey: 'uploads/contested-photo.jpg' }] })
+    const inputB = baseInput({ idempotencyKey: 'racer-b', items: [{ slug: 'book-race', childName: 'Kid B', childAge: 6, photoKey: 'uploads/contested-photo.jpg' }] })
+
+    const [a, b] = await Promise.all([createOrder(db, inputA, ctx()), createOrder(db, inputB, ctx())])
+
+    const results = [a, b]
+    const winners = results.filter((r) => r.ok)
+    const losers = results.filter((r) => !r.ok)
+    expect(winners).toHaveLength(1)
+    expect(losers).toHaveLength(1)
+    if (losers[0] && !losers[0].ok) {
+      // Depending on exactly where the two tasks interleave, the loser is
+      // rejected either by the fast pre-check (already consumed, 400) or by
+      // the atomic upload_claims insert itself (409) — both are safe,
+      // deterministic outcomes; the invariant that actually matters is
+      // "exactly one order/claim/item exists", asserted below.
+      expect([400, 409]).toContain(losers[0].status)
+    }
+
+    // Exactly one order exists, exactly one claim row for the photo, and no
+    // orphaned/rolled-back order row was left behind for the loser.
+    const orderCount = await db.prepare('SELECT COUNT(*) AS n FROM orders').first<{ n: number }>()
+    expect(orderCount!.n).toBe(1)
+    const claimCount = await db.prepare('SELECT COUNT(*) AS n FROM upload_claims WHERE upload_key = ?').bind('uploads/contested-photo.jpg').first<{ n: number }>()
+    expect(claimCount!.n).toBe(1)
+    const itemCount = await db.prepare('SELECT COUNT(*) AS n FROM order_items').first<{ n: number }>()
+    expect(itemCount!.n).toBe(1) // the loser's item row must not exist either — whole batch rolled back together
+  })
+
+  it('proves the DB-level guarantee directly: a second atomic claim insert for an already-claimed key fails and rolls back its whole batch', async () => {
+    // A lower-level, timing-independent proof of the exact mechanism
+    // createOrder relies on — bypasses application pre-checks entirely and
+    // drives the same schema constraint (upload_claims.upload_key PRIMARY
+    // KEY) that closes the TOCTOU window.
+    const db = migratedFakeD1()
+    await seedProduct(db, 'book-direct')
+    await seedUpload(db, 'uploads/direct-race.jpg')
+
+    await db.batch([
+      db.prepare("INSERT INTO orders (full_name, email, address, city, country, subtotal, total, idempotency_key) VALUES ('A','a@example.com','x','y','z',1,1,'direct-a')"),
+      db
+        .prepare(`INSERT INTO upload_claims (upload_key, order_id) VALUES (?, (SELECT id FROM orders WHERE idempotency_key = ?))`)
+        .bind('uploads/direct-race.jpg', 'direct-a')
+    ])
+
+    await expect(
+      db.batch([
+        db.prepare("INSERT INTO orders (full_name, email, address, city, country, subtotal, total, idempotency_key) VALUES ('B','b@example.com','x','y','z',1,1,'direct-b')"),
+        db
+          .prepare(`INSERT INTO upload_claims (upload_key, order_id) VALUES (?, (SELECT id FROM orders WHERE idempotency_key = ?))`)
+          .bind('uploads/direct-race.jpg', 'direct-b')
+      ])
+    ).rejects.toThrow()
+
+    // The second batch's order insert must have rolled back too — atomic,
+    // not just the claims row.
+    const orderB = await db.prepare("SELECT id FROM orders WHERE idempotency_key = 'direct-b'").first()
+    expect(orderB).toBeNull()
+    const claims = await db.prepare('SELECT COUNT(*) AS n FROM upload_claims WHERE upload_key = ?').bind('uploads/direct-race.jpg').first<{ n: number }>()
+    expect(claims!.n).toBe(1)
   })
 })
 

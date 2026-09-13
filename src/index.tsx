@@ -62,7 +62,9 @@ import {
 import { personalizedBookReaderPage } from './pages_reader'
 import { getCookie, setCookie } from 'hono/cookie'
 import { createOrder, verifyGuestOrderToken, type CreateOrderInput } from './orders'
+import { resolveGuestOrderTokenSecrets, MissingSecretError, sha256Hex, timingSafeEqual } from './secrets'
 import { validatePhotoBytes, contentTypeFor, recordUpload, checkUploadOwnership, getUploadOwner, MAX_PHOTO_BYTES } from './uploads'
+import { PHOTO_POLICY, photoPolicySummary } from './photo-policy'
 import { requestPasswordReset, resetPassword } from './password-reset'
 
 type Bindings = {
@@ -73,6 +75,16 @@ type Bindings = {
   // platform secret in deployed environments. See README "Local admin bootstrap".
   ADMIN_BOOTSTRAP_EMAIL?: string
   ADMIN_BOOTSTRAP_PASSWORD?: string
+  // 'development' unlocks local-only fallbacks (guest-order-token secret,
+  // the console email adapter) that must never be reachable in production.
+  // Leave unset in any deployed environment — absence means production
+  // rules apply (fail closed), which is the safe default.
+  ENVIRONMENT?: string
+  // Required in production: signs/verifies guest order-access and PDF
+  // request-status capability tokens. `wrangler secret put
+  // GUEST_ORDER_TOKEN_SECRET`. _PREV supports rotation — see src/secrets.ts.
+  GUEST_ORDER_TOKEN_SECRET?: string
+  GUEST_ORDER_TOKEN_SECRET_PREV?: string
 }
 type Vars = { user: AuthUser | null }
 
@@ -421,7 +433,7 @@ app.post('/forgot-password', async (c) => {
   const body = await c.req.parseBody()
   const email = String(body.email || '')
   const baseUrl = new URL(c.req.url).origin + '/reset-password'
-  await requestPasswordReset(c.env.DB, email, baseUrl)
+  await requestPasswordReset(c.env.DB, email, baseUrl, c.env.ENVIRONMENT)
   return html(c, 'Forgot Password - Wonder Wraps', authPage('forgot', FORGOT_PASSWORD_GENERIC_MESSAGE), 'my-books')
 })
 
@@ -525,7 +537,16 @@ app.get('/order-success', async (c) => {
   let items: any[] = []
   if (id) {
     const isOwner = user ? await c.env.DB.prepare('SELECT id FROM orders WHERE id = ? AND user_id = ?').bind(id, user.id).first() : null
-    const guestOk = !isOwner && (await verifyGuestOrderToken(c.env.DB, id, token))
+    let guestOk = false
+    if (!isOwner && token) {
+      try {
+        guestOk = await verifyGuestOrderToken(resolveGuestOrderTokenSecrets(c.env), id, token)
+      } catch (err) {
+        if (!(err instanceof MissingSecretError)) throw err
+        // Fail closed: no signing secret configured means no guest token
+        // can be verified — treat as "not authorized", not a crash.
+      }
+    }
     if (isOwner || guestOk) {
       order = await c.env.DB.prepare('SELECT * FROM orders WHERE id = ?').bind(id).first()
       if (order) items = (await c.env.DB.prepare('SELECT * FROM order_items WHERE order_id = ?').bind(id).all()).results || []
@@ -625,18 +646,21 @@ async function handleUploadPhoto(c: Context<{ Bindings: Bindings; Variables: Var
   const body = await c.req.parseBody()
   const file = body.photo
   if (!(file instanceof File) || file.size === 0) return c.json({ error: 'No photo received' }, 400)
-  if (file.size > MAX_PHOTO_BYTES) return c.json({ error: 'Photo must be under 5MB' }, 400)
+  if (file.size > MAX_PHOTO_BYTES) return c.json({ error: `Photo must be under ${Math.round(MAX_PHOTO_BYTES / (1024 * 1024))}MB` }, 400)
   if (!c.env.PHOTOS) return c.json({ error: 'Photo storage unavailable' }, 503)
 
   const bytes = new Uint8Array(await file.arrayBuffer())
-  const validation = validatePhotoBytes(bytes)
+  const validation = await validatePhotoBytes(bytes)
   if (!validation.ok) {
     const messages: Record<string, string> = {
       too_small: 'That file is too small to be a real photo.',
-      too_large: 'Photo must be under 5MB.',
-      corrupt_or_unrecognized_image: 'That file is not a valid JPG, PNG, or WEBP image (its content did not match its name/type).',
-      dimensions_too_small: 'Photo resolution is too low — please use a larger image.',
-      dimensions_too_large: 'Photo resolution is too high — please use a smaller image.'
+      too_large: `Photo must be under ${Math.round(MAX_PHOTO_BYTES / (1024 * 1024))}MB.`,
+      unrecognized_format: `Please upload a ${PHOTO_POLICY.allowedFormats.join(' or ').toUpperCase()} image.`,
+      corrupt_or_unrecognized_image: 'That file is not a valid, complete image — it may be corrupted or truncated.',
+      dimension_mismatch: 'That file is not a valid, complete image — it may be corrupted or truncated.',
+      unsupported_variant: 'That image uses a format variant we don\'t support (e.g. interlaced or indexed-color PNG). Please export as a standard JPG or PNG.',
+      dimensions_too_small: `Photo resolution is too low — please use an image at least ${PHOTO_POLICY.minDimensionPx}×${PHOTO_POLICY.minDimensionPx}px.`,
+      dimensions_too_large: `Photo resolution is too high — please use an image no larger than ${PHOTO_POLICY.maxDimensionPx}×${PHOTO_POLICY.maxDimensionPx}px.`
     }
     return c.json({ error: messages[validation.error] || 'Invalid photo.' }, 400)
   }
@@ -658,6 +682,10 @@ async function handleUploadPhoto(c: Context<{ Bindings: Bindings; Variables: Var
 }
 app.post('/api/v1/uploads/photo', handleUploadPhoto)
 app.post('/api/upload-photo', handleUploadPhoto)
+
+// Public — the one place the frontend reads size/dimension/format limits
+// from, so UI copy can never drift from what the server actually enforces.
+app.get('/api/v1/uploads/photo-policy', (c) => c.json(photoPolicySummary()))
 
 // Live quote for the cart page / checkout (server-side pricing — client
 // price/discount/total are never trusted). Canonical: POST /api/v1/cart/quote.
@@ -698,7 +726,17 @@ async function handleCreateOrder(c: Context<{ Bindings: Bindings; Variables: Var
   const user = c.get('user')
   const ownerToken = getOrSetUploadOwnerToken(c)
 
-  const result = await createOrder(c.env.DB, { ...body, idempotencyKey }, { userId: user?.id ?? null, uploadOwnerToken: ownerToken })
+  let secrets
+  try {
+    secrets = resolveGuestOrderTokenSecrets(c.env)
+  } catch (err) {
+    if (err instanceof MissingSecretError) {
+      return c.json({ error: 'Checkout is temporarily unavailable (server misconfigured). Please try again shortly.' }, 503)
+    }
+    throw err
+  }
+
+  const result = await createOrder(c.env.DB, { ...body, idempotencyKey }, { userId: user?.id ?? null, uploadOwnerToken: ownerToken, secrets })
   if (!result.ok) return c.json({ error: result.error }, result.status as any)
   return c.json({ ok: true, id: result.orderId, guestToken: result.guestToken, replayed: result.replayed })
 }
@@ -709,7 +747,12 @@ app.post('/api/orders', handleCreateOrder)
 app.get('/api/v1/orders/:id/guest', async (c) => {
   const id = Number(c.req.param('id'))
   const token = c.req.query('token') || ''
-  const ok = await verifyGuestOrderToken(c.env.DB, id, token)
+  let ok = false
+  try {
+    ok = await verifyGuestOrderToken(resolveGuestOrderTokenSecrets(c.env), id, token)
+  } catch (err) {
+    if (!(err instanceof MissingSecretError)) throw err
+  }
   if (!ok) return c.json({ error: 'Order not found' }, 404)
   const order = await c.env.DB.prepare('SELECT * FROM orders WHERE id = ?').bind(id).first()
   if (!order) return c.json({ error: 'Order not found' }, 404)
@@ -757,7 +800,7 @@ app.get('/api/orders', (c) => c.json({ error: 'Login and use /api/my/orders' }, 
 app.post('/api/v1/auth/forgot-password', async (c) => {
   const body = await c.req.json<{ email?: string }>().catch(() => ({}) as any)
   const baseUrl = new URL(c.req.url).origin + '/reset-password'
-  await requestPasswordReset(c.env.DB, body.email || '', baseUrl)
+  await requestPasswordReset(c.env.DB, body.email || '', baseUrl, c.env.ENVIRONMENT)
   // Always the same response — no enumeration signal either way.
   return c.json({ ok: true, message: FORGOT_PASSWORD_GENERIC_MESSAGE })
 })
@@ -1191,7 +1234,12 @@ app.post('/admin/ai-settings', async (c) => {
   const b = await c.req.parseBody()
   const provider = String(b.api_provider || 'wonderwraps')
   const endpoint = String(b.api_endpoint || 'https://api.wonderwraps.com/v1/generate-book').trim()
-  const apiKey = String(b.api_key || '').trim()
+  // The form never renders the current key back (see adminAiSettings) — a
+  // blank submission means "leave it unchanged", not "clear it", so a save
+  // triggered by editing an unrelated field doesn't wipe out the key.
+  const submittedApiKey = String(b.api_key || '').trim()
+  const existing = await c.env.DB.prepare('SELECT api_key FROM ai_settings WHERE id = 1').first<{ api_key: string }>()
+  const apiKey = submittedApiKey || existing?.api_key || ''
   const model = String(b.model || 'wonderwraps-v2').trim()
   const stylePreset = String(b.style_preset || 'fairytale-watercolour')
   const promptTemplate = String(b.prompt_template || '')
@@ -1245,7 +1293,8 @@ app.post('/api/admin/test-ai-connection', async (c) => {
   }
 
   try {
-    // If testing OpenAI
+    // OpenAI is the one provider this actually calls for real — a genuine
+    // connectivity check, not a simulation.
     if (provider === 'openai' && apiKey) {
       const resp = await fetch('https://api.openai.com/v1/models', {
         headers: { 'Authorization': `Bearer ${apiKey}` }
@@ -1258,17 +1307,16 @@ app.post('/api/admin/test-ai-connection', async (c) => {
       }
     }
 
-    // Generic ping or simulation test
-    if (endpoint.includes('wonderwraps.com') || endpoint.includes('api.')) {
-      return c.json({
-        success: true,
-        message: `Endpoint "${endpoint}" is reachable and formatted correctly for provider "${provider || 'wonderwraps'}".`
-      })
-    }
-
+    // Confirmed review finding: every other provider previously returned a
+    // hard-coded "success" here without ever making a real request — a
+    // misconfigured or entirely fake endpoint would report as verified.
+    // There is no real generation pipeline calling this endpoint yet
+    // (Phase 3), so an honest "not tested" is the only truthful response
+    // until a real adapter exists to test against.
     return c.json({
-      success: true,
-      message: `Connection test passed for ${provider || 'custom'} at ${endpoint}`
+      success: false,
+      notTested: true,
+      message: `No real connection test is implemented for provider "${provider || 'custom'}" yet — this baseline does not call it for anything (see Phase 3 in STORYBOOKCLONE_COMPLETION_CODING_PACK.md). Configure OpenAI to exercise a real test, or treat this as "not configured/not tested", not "working".`
     })
   } catch (err: any) {
     return c.json({ success: false, message: `Connection test error: ${err.message}` })
@@ -1297,25 +1345,58 @@ async function handleCreatePdfRequest(c: Context<{ Bindings: Bindings; Variables
     return c.json({ success: false, error: 'Valid email is required.' }, 400)
   }
 
+  // A random capability token, shown ONLY in this response (only its
+  // SHA-256 hash is stored) — this is what lets an unauthenticated guest
+  // check their own request's status without exposing every request to
+  // anyone who can guess/enumerate a sequential id (confirmed baseline gap).
+  const rawToken = [...crypto.getRandomValues(new Uint8Array(24))].map((b) => b.toString(16).padStart(2, '0')).join('')
+  const tokenHash = await sha256Hex(rawToken)
+
   const r = await c.env.DB.prepare(
-    `INSERT INTO pdf_requests (email, book_slug, child_name, child_age, cover_type, user_id, order_item_id, status)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 'queued')`
+    `INSERT INTO pdf_requests (email, book_slug, child_name, child_age, cover_type, user_id, order_item_id, status, access_token_hash)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?)`
   )
-    .bind(email, bookSlug, childName, childAge, coverType, user?.id ?? null, orderItemId)
+    .bind(email, bookSlug, childName, childAge, coverType, user?.id ?? null, orderItemId, tokenHash)
     .run()
 
   return c.json({
     success: true,
     id: Number(r.meta.last_row_id),
     status: 'queued',
+    token: rawToken,
     message: 'Request received and queued — we’ll email you once your digital copy is ready.'
   })
 }
+// Never a bare sequential id: the caller must be the admin, the
+// authenticated owner (user_id match), or present the capability token
+// returned at creation. Anyone else gets 404 (not 403 — existence isn't
+// confirmed either, same reasoning as guest order access). The response
+// never includes email or other PII.
 async function handlePdfRequestStatus(c: Context<{ Bindings: Bindings; Variables: Vars }>) {
   const id = Number(c.req.param('id'))
-  const row = await c.env.DB.prepare('SELECT id, status, book_slug, cover_type, created_at, updated_at FROM pdf_requests WHERE id = ?').bind(id).first()
+  const token = c.req.query('token') || ''
+  const user = c.get('user')
+
+  const row = await c.env.DB.prepare('SELECT id, status, book_slug, cover_type, user_id, access_token_hash, created_at, updated_at FROM pdf_requests WHERE id = ?').bind(id).first<{
+    id: number
+    status: string
+    book_slug: string
+    cover_type: string
+    user_id: number | null
+    access_token_hash: string | null
+    created_at: string
+    updated_at: string
+  }>()
   if (!row) return c.json({ error: 'Not found' }, 404)
-  return c.json(row)
+
+  let authorized = user?.role === 'admin' || (!!user && row.user_id === user.id)
+  if (!authorized && token && row.access_token_hash) {
+    authorized = timingSafeEqual(await sha256Hex(token), row.access_token_hash)
+  }
+  if (!authorized) return c.json({ error: 'Not found' }, 404)
+
+  const { access_token_hash: _drop, user_id: _drop2, ...safe } = row
+  return c.json(safe)
 }
 app.post('/api/v1/books/pdf-requests', handleCreatePdfRequest)
 app.post('/api/books/pdf-request', handleCreatePdfRequest)

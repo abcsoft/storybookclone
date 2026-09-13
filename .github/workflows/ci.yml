@@ -39,5 +39,14 @@ jobs:
       - name: Install Chromium (for the real-browser e2e journey)
         run: npx playwright install --with-deps chromium
 
+      - name: Local dev environment bindings for the e2e local server
+        # .dev.vars is gitignored (it's local-machine config, not a secret
+        # to commit) — CI needs its own copy so the spawned local wrangler
+        # dev server unlocks the same local-only fallbacks a developer's
+        # own .dev.vars would (guest-order-token secret, console email
+        # adapter). ENVIRONMENT=development here describes *this
+        # ephemeral CI-local server*, not a real deployment.
+        run: echo "ENVIRONMENT=development" > .dev.vars
+
       - name: End-to-end browser journey (real Chromium against local D1/R2)
         run: npm run test:e2e

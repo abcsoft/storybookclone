@@ -22,7 +22,8 @@
     "check": "npm run typecheck && npm run test && npm run test:integration && npm run secrets:scan && npm run build && npm run test:e2e"
   },
   "dependencies": {
-    "hono": "^4.13.5"
+    "hono": "^4.13.5",
+    "jpeg-js": "^0.4.4"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260911.1",

@@ -79,12 +79,34 @@ data, and the bootstrap script's own crash).
 
 **Result:** `audit-evidence/before/findings.json` — 6 horizontal-overflow
 findings, 0 console/network errors. `audit-evidence/after/findings.json` —
-**0 findings** across all 15 public routes × 2 viewports, all 8 admin
-routes + product detail/PDP editor × 2 viewports, and the cross-role check.
-Screenshots for every route/viewport/state are in `audit-evidence/` locally
-(gitignored — browse them directly; this environment's Artifact publish
-path was blocked by the session's own permission policy, see the final
-report).
+**0 findings** across all 17 public routes × 2 viewports (route list
+expanded in a corrective round to also cover `/reset-password`, the reader
+page `/my/books/:slug`, and — under admin — `/admin/products/new`) and 9
+admin routes + product detail/PDP editor × 2 viewports, plus the cross-role
+check. `/admin/orders/:id` is only screenshotted when at least one order
+already exists in that run's freshly-reset DB (it doesn't by default —
+this audit script doesn't place an order itself; `test:e2e`'s guest and
+authenticated journeys are what actually prove that page against real
+data). Screenshots for every route/viewport/state are in `audit-evidence/`
+locally (gitignored — browse them directly; this environment's Artifact
+publish path was blocked by the session's own permission policy after 5
+images, see the final report).
+
+### Corrective round: "Test connection" honesty + API key display
+A GitHub review of the first round found the admin AI settings "Test
+connection" button claimed success for any endpoint containing `api.` or
+`wonderwraps.com`, and for every other unrecognized provider, without ever
+making a real request. Only the OpenAI branch (which does call
+`https://api.openai.com/v1/models` for real) was honest. Fixed: every
+other provider now returns `{ success: false, notTested: true }` with an
+explanation, never a fabricated "connected". Also: the API key field no
+longer echoes the saved key back into the page's HTML (a `value="..."`
+attribute is visible in page source regardless of the input's
+`type="password"` masking) — it now renders blank with a "saved, leave
+blank to keep it" placeholder, and the save handler was fixed to actually
+preserve the existing key when the field is submitted blank (it would
+previously have been overwritten with an empty string on any unrelated
+settings change).
 
 ## Cross-role access control (confirmed)
 

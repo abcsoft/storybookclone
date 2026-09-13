@@ -430,7 +430,8 @@ export function adminAiSettings(settings: AiSettingsRow, flash?: string) {
 
       <div class="a-grid2">
         <label>API Key / Bearer Secret Token
-          <input name="api_key" type="password" value="${esc(settings.api_key || '')}" placeholder="sk-live-… or ww_sec_…" autocomplete="off">
+          <input name="api_key" type="password" value="" placeholder="${settings.api_key ? '•••• saved — leave blank to keep it, or enter a new key to replace it' : 'sk-live-… or ww_sec_…'}" autocomplete="off">
+          <span class="tiny muted">Not used by any real generation call yet — see Phase 3. Never shown back once saved; leaving this blank keeps the current key.</span>
         </label>
         <label>AI Model Identifier
           <input name="model" value="${esc(settings.model || 'wonderwraps-v2')}" placeholder="e.g. wonderwraps-v2, dall-e-3, instantid-v1">

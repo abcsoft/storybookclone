@@ -5,7 +5,7 @@
 import { hashPassword } from './auth'
 import { destroyAllSessionsForUser } from './auth'
 import { sha256Hex } from './secrets'
-import { getEmailAdapter } from './email'
+import { getEmailAdapter, FailClosedEmailAdapter } from './email'
 
 const RESET_TOKEN_TTL_SECONDS = 30 * 60 // 30 minutes
 const RATE_LIMIT_MAX = 3
@@ -33,7 +33,7 @@ async function recordRateLimitEvent(db: D1Database, bucket: string) {
  * the caller must always reply with the same generic message regardless of
  * whether an account exists, was rate-limited, or a reset email was sent.
  */
-export async function requestPasswordReset(db: D1Database, email: string, resetUrlBase: string): Promise<void> {
+export async function requestPasswordReset(db: D1Database, email: string, resetUrlBase: string, environment: string | undefined): Promise<void> {
   const normalized = String(email || '').toLowerCase().trim()
   if (!normalized.includes('@')) return
   const bucket = `forgot-password:${normalized}`
@@ -47,6 +47,18 @@ export async function requestPasswordReset(db: D1Database, email: string, resetU
   const user = await db.prepare('SELECT id, email FROM users WHERE email = ?').bind(normalized).first<{ id: number; email: string }>()
   if (!user) return
 
+  const adapter = getEmailAdapter(environment)
+  if (adapter instanceof FailClosedEmailAdapter) {
+    // Fail closed BEFORE creating any token: an unsendable reset link is
+    // worse than no reset link (a live, valid token nobody received, whose
+    // only trace anywhere would be this exact log line if we generated it
+    // anyway). The caller still returns the same generic response either
+    // way — this is a server-side operational signal, not a user-visible
+    // one, and it never includes a token or any other secret.
+    console.error('[password-reset] no email adapter configured for this environment — request dropped, no token created')
+    return
+  }
+
   const rawToken = toHex(crypto.getRandomValues(new Uint8Array(32)))
   const tokenHash = await sha256Hex(rawToken)
   const expiresAt = Math.floor(Date.now() / 1000) + RESET_TOKEN_TTL_SECONDS
@@ -55,7 +67,7 @@ export async function requestPasswordReset(db: D1Database, email: string, resetU
     .bind(user.id, tokenHash, expiresAt)
     .run()
 
-  await getEmailAdapter().send({
+  await adapter.send({
     to: user.email,
     subject: 'Reset your WonderWraps password',
     text: `Reset your password: ${resetUrlBase}?token=${rawToken}\nThis link expires in 30 minutes and can only be used once. If you didn't request this, you can ignore this email.`

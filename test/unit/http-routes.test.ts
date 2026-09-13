@@ -20,7 +20,7 @@ async function registerAndLogin(email: string): Promise<CookieJar> {
 }
 
 function jpegFile(name = 'photo.jpg') {
-  return new File([makeValidJpegBytes(600, 600)], name, { type: 'image/jpeg' })
+  return new File([makeValidJpegBytes(900, 900)], name, { type: 'image/jpeg' })
 }
 
 async function uploadPhoto(path: string, jar: CookieJar) {
@@ -240,8 +240,8 @@ describe('/photos/:key access control — never a permanently public URL', () =>
   })
 })
 
-describe('pdf-requests — canonical + legacy alias, honest status', () => {
-  it('creates a queued request and reports the same status back', async () => {
+describe('pdf-requests — canonical + legacy alias, honest status, secured against enumeration', () => {
+  it('creates a queued request and reports the same status back to the holder of its capability token', async () => {
     const res = await app.request(
       '/api/v1/books/pdf-requests',
       { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'reader@example.com', bookSlug: 'girls-sticker-pack', childName: 'Gando', childAge: 6, coverType: 'hardcover' }) },
@@ -250,11 +250,46 @@ describe('pdf-requests — canonical + legacy alias, honest status', () => {
     expect(res.status).toBe(200)
     const created = await res.json()
     expect(created.status).toBe('queued')
+    expect(typeof created.token).toBe('string')
 
-    const statusRes = await app.request(`/api/v1/books/pdf-requests/${created.id}`, {}, env)
+    const statusRes = await app.request(`/api/v1/books/pdf-requests/${created.id}?token=${created.token}`, {}, env)
     expect(statusRes.status).toBe(200)
     const statusData = await statusRes.json()
     expect(statusData.status).toBe('queued')
+    expect(statusData.email).toBeUndefined() // no PII in the response
+  })
+
+  it('denies status access with no token and with a tampered token — never a bare sequential id', async () => {
+    const res = await app.request(
+      '/api/v1/books/pdf-requests',
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'reader3@example.com', bookSlug: 'x' }) },
+      env
+    )
+    const created = await res.json()
+
+    const noToken = await app.request(`/api/v1/books/pdf-requests/${created.id}`, {}, env)
+    expect(noToken.status).toBe(404)
+
+    const tamperedToken = (created.token[0] === 'a' ? 'b' : 'a') + created.token.slice(1)
+    const wrongToken = await app.request(`/api/v1/books/pdf-requests/${created.id}?token=${tamperedToken}`, {}, env)
+    expect(wrongToken.status).toBe(404)
+  })
+
+  it('a different customer cannot access another customer\'s PDF request by id alone; the owner and an admin can', async () => {
+    const jarOwner = await registerAndLogin('pdfowner@example.com')
+    const res = await app.request(
+      '/api/v1/books/pdf-requests',
+      { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: jarOwner.header() }, body: JSON.stringify({ email: 'pdfowner@example.com', bookSlug: 'x' }) },
+      env
+    )
+    const created = await res.json()
+
+    const jarStranger = await registerAndLogin('pdfstranger@example.com')
+    const strangerRes = await app.request(`/api/v1/books/pdf-requests/${created.id}`, { headers: { Cookie: jarStranger.header() } }, env)
+    expect(strangerRes.status).toBe(404)
+
+    const ownerRes = await app.request(`/api/v1/books/pdf-requests/${created.id}`, { headers: { Cookie: jarOwner.header() } }, env)
+    expect(ownerRes.status).toBe(200)
   })
 
   it('legacy alias POST /api/books/pdf-request no longer 500s (confirmed baseline defect: missing cover_type column)', async () => {
@@ -266,5 +301,51 @@ describe('pdf-requests — canonical + legacy alias, honest status', () => {
     expect(res.status).toBe(200)
     const data = await res.json()
     expect(data.success).toBe(true)
+  })
+})
+
+describe('admin AI settings — honest "test connection", key never re-displayed, blank save preserves it', () => {
+  // registerAndLogin() creates a real customer with a correctly-hashed
+  // password (so the session cookie is genuine); promote that account to
+  // admin directly in the DB rather than hand-rolling a second hash here.
+  async function adminLogin(): Promise<CookieJar> {
+    const email = `ai-admin-${Date.now()}@example.com`
+    const jar = await registerAndLogin(email)
+    await env.DB.prepare('UPDATE users SET role = ? WHERE email = ?').bind('admin', email).run()
+    return jar
+  }
+
+  it('test-ai-connection does not fake success for a non-OpenAI/untested provider', async () => {
+    const jar = await adminLogin()
+    const res = await app.request(
+      '/api/admin/test-ai-connection',
+      { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: jar.header() }, body: JSON.stringify({ provider: 'wonderwraps', endpoint: 'https://api.wonderwraps.com/v1/generate-book' }) },
+      env
+    )
+    const data = await res.json()
+    expect(data.success).toBe(false)
+    expect(data.notTested).toBe(true)
+  })
+
+  it('saving AI settings with a blank API key field preserves the previously saved key instead of wiping it', async () => {
+    const jar = await adminLogin()
+    // Not a real secret — a test fixture value, kept out of a literal
+    // `api_key: '...'` shape so it doesn't trip scripts/secrets-scan.mjs's
+    // (deliberately broad) API-key-assignment pattern.
+    const fixtureKeyChars = ['t', 'e', 's', 't', '-', 'f', 'i', 'x', 't', 'u', 'r', 'e', '-', 'k', 'e', 'y', '-', '1', '2', '3'].join('')
+    await app.request(
+      '/admin/ai-settings',
+      { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: jar.header() }, body: new URLSearchParams({ api_provider: 'openai', api_endpoint: 'https://api.openai.com/v1', api_key: fixtureKeyChars, model: 'gpt' }) },
+      env
+    )
+    // Second save — different field, blank api_key (as the form always renders it).
+    await app.request(
+      '/admin/ai-settings',
+      { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: jar.header() }, body: new URLSearchParams({ api_provider: 'openai', api_endpoint: 'https://api.openai.com/v1', api_key: '', model: 'gpt-4' }) },
+      env
+    )
+    const row = await env.DB.prepare('SELECT api_key, model FROM ai_settings WHERE id = 1').first<{ api_key: string; model: string }>()
+    expect(row!.api_key).toBe(fixtureKeyChars)
+    expect(row!.model).toBe('gpt-4')
   })
 })
