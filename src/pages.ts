@@ -141,9 +141,9 @@ export function homePage(opts: {
       <div class="cta-copy">
         <span class="badge">Made just for them</span>
         <h2>Every detail, personalised by you</h2>
-        <p>Upload one photo and choose their name, age, language, and cover style. Add a private dedication, preview the finished pages, and only pay once you're happy with the result.</p>
+        <p>Upload one photo and choose their name, age, language, and cover style. Add a private dedication — we securely prepare your personalisation and let you review every detail before you check out.</p>
         <ul class="feature-list">
-          <li><i class="fas fa-image"></i> Real photo woven into every illustrated page</li>
+          <li><i class="fas fa-lock"></i> Your photo is stored privately and securely — never shown publicly</li>
           <li><i class="fas fa-language"></i> Multiple languages and reading ages</li>
           <li><i class="fas fa-heart"></i> A handwritten-style dedication, just for them</li>
         </ul>

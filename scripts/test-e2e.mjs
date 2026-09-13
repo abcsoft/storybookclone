@@ -21,6 +21,13 @@ const root = dirname(dirname(fileURLToPath(import.meta.url)))
 const PORT = 8799
 const BASE = `http://127.0.0.1:${PORT}`
 const runId = Date.now()
+// Phase 2's server-side child-name validation only allows letters/marks/
+// space/apostrophe/period/hyphen (src/personalization/user-books.ts) — a
+// raw numeric runId is no longer a valid fixture name, so map it to letters
+// only, keeping it unique per run.
+const runLetters = runId
+  .toString(36)
+  .replace(/[0-9]/g, (d) => 'jklmnopqrs'[Number(d)])
 
 function log(step, msg) {
   console.log(`[e2e] ${step}: ${msg}`)
@@ -47,6 +54,15 @@ function buildRealJpeg(width, height) {
     }
   }
   return Buffer.from(jpegCodec.encode({ width, height, data }, 80).data)
+}
+
+// Mirrors src/personalization/face-analysis.ts's withFaceCountTrailer() —
+// a real, fully-decodable JPEG's own bytes are untouched (jpeg-js stops at
+// the EOI marker), this trailer is only ever read by the deterministic fake
+// adapter this e2e run configures via FACE_ANALYSIS_PROVIDER above.
+function buildRealJpegWithFaceCount(width, height, count) {
+  const jpeg = buildRealJpeg(width, height)
+  return Buffer.concat([jpeg, Buffer.from(`<<FACES:${count}>>`, 'ascii')])
 }
 
 async function waitFor(url, timeoutMs = 30000) {
@@ -154,13 +170,13 @@ function assertClean(diag, label) {
   if (diag.failedRequests.length) fail(label, `failed network requests: ${JSON.stringify(diag.failedRequests)}`)
 }
 
-/** Shared product-page flow: personalize, upload a real photo, add to cart. Returns the cart item's photoKey. */
+/** Shared product-page flow: personalize, upload a real photo, add to cart. Returns the cart item's userBookId. */
 async function personalizeAndAddToCart(page, { slug, childName, photoPath }) {
   await page.goto(`${BASE}/books/${slug}`)
   await page.waitForSelector('#personalise-form')
   await page.fill('#child-name', childName)
   await page.fill('#child-age', '6')
-  await page.selectOption('#lang', 'English')
+  await page.selectOption('#lang', { label: 'English' })
   const dedication = page.locator('#dedication')
   if ((await dedication.count()) && (await dedication.isVisible())) await dedication.fill('For our little hero')
 
@@ -171,15 +187,18 @@ async function personalizeAndAddToCart(page, { slug, childName, photoPath }) {
   if (preAddStorage.includes('data:image')) fail('personalize', 'a data: URL leaked into localStorage before add-to-cart')
 
   await page.click('#personalise-form button[type=submit]')
-  await page.waitForSelector('#book-preview-modal:not([hidden])')
+  await page.waitForSelector('#book-preview-modal:not([hidden])', { timeout: 15000 })
   await page.click('#btn-confirm-order')
   await page.waitForURL(`${BASE}/cart`)
 
   const cartStorage = await page.evaluate(() => localStorage.getItem('ww_cart_v1'))
   if (!cartStorage || cartStorage.includes('data:image')) fail('personalize', 'cart storage missing or contains a base64 photo')
   const cartItems = JSON.parse(cartStorage)
-  if (!cartItems[0]?.photoKey?.startsWith('uploads/')) fail('personalize', 'cart item has no real uploaded photoKey')
-  return cartItems[0].photoKey
+  // Phase 2: the cart stores only an opaque userBookId as the authoritative
+  // reference — never a raw photoKey/base64 photo (see public/static/cart.js).
+  if (!cartItems[0]?.userBookId || typeof cartItems[0].userBookId !== 'string') fail('personalize', 'cart item has no opaque userBookId')
+  if (cartItems[0]?.photoKey) fail('personalize', 'cart item carries a raw photoKey — should be opaque userBookId only')
+  return cartItems[0].userBookId
 }
 
 /** Shared checkout flow. Returns { orderId, guestToken }. */
@@ -216,7 +235,7 @@ async function runGuestJourney(browser, photoPath) {
   ])
 
   const email = `e2e-guest-${runId}@example.com`
-  const childName = `GuestChild${runId}`
+  const childName = `GuestChild${runLetters}`
 
   // 1. Visit product WITHOUT logging in.
   log('guest.1', 'open product page as an anonymous visitor')
@@ -226,7 +245,7 @@ async function runGuestJourney(browser, photoPath) {
 
   // 2-3. Personalize and upload a real image (never logging in).
   log('guest.2', 'personalize + upload a real photo, still anonymous')
-  await personalizeAndAddToCart(page, { slug: 'the-portugals-new-legend', childName, photoPath })
+  const guestUserBookPublicId = await personalizeAndAddToCart(page, { slug: 'the-portugals-new-legend', childName, photoPath })
 
   // 4. Complete checkout as a guest.
   log('guest.3', 'complete checkout as a guest (no account)')
@@ -240,6 +259,21 @@ async function runGuestJourney(browser, photoPath) {
   const rows = queryD1(`SELECT user_id FROM orders WHERE id = ${Number(orderId)};`)
   if (!rows.length) fail('guest.4', 'order row not found in D1')
   if (rows[0].user_id !== null) fail('guest.4', `expected user_id IS NULL for a guest order, got: ${JSON.stringify(rows[0].user_id)}`)
+
+  // Phase 2: the order item must be bound to the EXACT user_book (by its
+  // opaque public_id) and personalization revision — not just "some" book.
+  log('guest.4b', 'verify order_items links to the exact guest user_book + input revision (Phase 2)')
+  const linkRows = queryD1(
+    `SELECT oi.user_book_id, oi.personalization_input_revision, ub.public_id, ub.state, ub.current_revision
+     FROM order_items oi JOIN user_books ub ON ub.id = oi.user_book_id
+     WHERE oi.order_id = ${Number(orderId)};`
+  )
+  if (!linkRows.length) fail('guest.4b', 'no order_items row linked to a user_book for this order')
+  if (linkRows[0].public_id !== guestUserBookPublicId) fail('guest.4b', `order_items linked to the wrong user_book: expected ${guestUserBookPublicId}, got ${linkRows[0].public_id}`)
+  if (Number(linkRows[0].personalization_input_revision) !== Number(linkRows[0].current_revision)) {
+    fail('guest.4b', `order_items bound to revision ${linkRows[0].personalization_input_revision} but the book's current revision is ${linkRows[0].current_revision}`)
+  }
+  if (linkRows[0].state !== 'ready_to_generate') fail('guest.4b', `expected the linked user_book to be ready_to_generate at order time, got ${linkRows[0].state}`)
 
   // Verify the signed guest confirmation URL works.
   log('guest.5', 'verify the signed guest confirmation URL shows the real order')
@@ -368,7 +402,7 @@ async function runAuthenticatedJourney(browser, photoPath) {
   const diag = attachDiagnostics(page, [/\/api\/v1\/my\/orders\/\d+$/])
 
   const email = `e2e-auth-${runId}@example.com`
-  const childName = `AuthChild${runId}`
+  const childName = `AuthChild${runLetters}`
 
   log('auth.1', 'register a fixture customer account')
   await page.goto(`${BASE}/register`)
@@ -379,7 +413,7 @@ async function runAuthenticatedJourney(browser, photoPath) {
   await page.waitForURL(`${BASE}/my-books`)
 
   log('auth.2', 'personalize + upload + add to cart while logged in')
-  await personalizeAndAddToCart(page, { slug: 'the-portugals-new-legend', childName, photoPath })
+  const authUserBookPublicId = await personalizeAndAddToCart(page, { slug: 'the-portugals-new-legend', childName, photoPath })
 
   log('auth.3', 'complete a SEPARATE order as this logged-in account')
   const { orderId } = await fillAndSubmitCheckout(page, { fullName: 'E2E Customer', email })
@@ -387,6 +421,19 @@ async function runAuthenticatedJourney(browser, photoPath) {
 
   const ownerRows = queryD1(`SELECT user_id FROM orders WHERE id = ${Number(orderId)};`)
   if (!ownerRows.length || ownerRows[0].user_id === null) fail('auth.3c', 'authenticated order unexpectedly has a NULL user_id')
+
+  log('auth.3d', 'verify order_items links to the exact authenticated user_book + input revision (Phase 2)')
+  const authLinkRows = queryD1(
+    `SELECT oi.personalization_input_revision, ub.public_id, ub.state, ub.current_revision, ub.user_id
+     FROM order_items oi JOIN user_books ub ON ub.id = oi.user_book_id
+     WHERE oi.order_id = ${Number(orderId)};`
+  )
+  if (!authLinkRows.length) fail('auth.3d', 'no order_items row linked to a user_book for this order')
+  if (authLinkRows[0].public_id !== authUserBookPublicId) fail('auth.3d', `order_items linked to the wrong user_book: expected ${authUserBookPublicId}, got ${authLinkRows[0].public_id}`)
+  if (authLinkRows[0].user_id === null) fail('auth.3d', 'the linked user_book is not owned by an authenticated user_id')
+  if (Number(authLinkRows[0].personalization_input_revision) !== Number(authLinkRows[0].current_revision)) {
+    fail('auth.3d', `order_items bound to revision ${authLinkRows[0].personalization_input_revision} but the book's current revision is ${authLinkRows[0].current_revision}`)
+  }
 
   log('auth.4', 'verify it appears in My Books')
   await page.goto(`${BASE}/my-books`)
@@ -454,6 +501,70 @@ async function runAuthenticatedJourney(browser, photoPath) {
   return { orderId, email }
 }
 
+// ============================================================================
+// 3. MULTI-FACE PERSONALIZATION — a photo with more than one detected face
+//    MUST force an explicit face-selection step before the book can reach
+//    ready_to_generate (Phase 2 Section 2/4/8 requirement).
+// ============================================================================
+async function runMultiFaceJourney(browser, tmpDir) {
+  log('multiface', 'starting deterministic multi-face browser scenario')
+  const context = await browser.newContext()
+  const page = await context.newPage()
+  const diag = attachDiagnostics(page)
+
+  const childName = `MultiFaceChild${runLetters}`
+  const multiFacePhotoPath = join(tmpDir, 'multi-face-photo.jpg')
+  writeFileSync(multiFacePhotoPath, buildRealJpegWithFaceCount(900, 900, 3))
+
+  await page.goto(`${BASE}/books/the-portugals-new-legend`)
+  await page.waitForSelector('#personalise-form')
+  await page.fill('#child-name', childName)
+  await page.fill('#child-age', '6')
+  await page.selectOption('#lang', { label: 'English' })
+
+  await page.setInputFiles('#photo', multiFacePhotoPath)
+  await page.waitForFunction(() => document.getElementById('upload-status')?.textContent?.includes('uploaded'), null, { timeout: 15000 })
+
+  // Submitting the form runs analysis server-side — with 3 faces detected,
+  // it must open the review modal with the face-select panel visible and
+  // the confirm button still disabled, never a silently auto-selected face.
+  await page.click('#personalise-form button[type=submit]')
+  await page.waitForSelector('#book-preview-modal:not([hidden])', { timeout: 15000 })
+  await page.waitForSelector('#face-select-panel:not([hidden])', { timeout: 15000 })
+  const faceOptions = page.locator('.face-select-option')
+  const faceCount = await faceOptions.count()
+  if (faceCount !== 3) fail('multiface', `expected 3 selectable faces, found ${faceCount}`)
+
+  const confirmDisabledBefore = await page.getAttribute('#btn-confirm-order', 'disabled')
+  if (confirmDisabledBefore === null) fail('multiface', 'confirm button must stay disabled until a face is explicitly chosen')
+
+  log('multiface', 'choosing the second detected face explicitly')
+  await faceOptions.nth(1).click()
+  await page.waitForFunction(() => document.getElementById('face-select-panel')?.hidden === true, null, { timeout: 10000 })
+
+  const confirmDisabledAfter = await page.getAttribute('#btn-confirm-order', 'disabled')
+  if (confirmDisabledAfter !== null) fail('multiface', 'confirm button should be enabled once a face is selected')
+
+  // Verify the state machine actually reached ready_to_generate server-side
+  // (not just a client-side UI illusion) with the exact face bound to the
+  // book's authoritative upload.
+  const rows = queryD1(
+    `SELECT ub.state, ub.selected_face_id, df.upload_key AS face_upload_key, ub.selected_upload_key
+     FROM user_books ub JOIN detected_faces df ON df.id = ub.selected_face_id
+     ORDER BY ub.id DESC LIMIT 1;`
+  )
+  if (!rows.length) fail('multiface', 'no user_book row with a selected_face_id found')
+  if (rows[0].state !== 'ready_to_generate') fail('multiface', `expected ready_to_generate, got ${rows[0].state}`)
+  if (rows[0].face_upload_key !== rows[0].selected_upload_key) fail('multiface', 'selected face does not belong to the book\'s authoritative upload')
+
+  await page.click('#btn-confirm-order')
+  await page.waitForURL(`${BASE}/cart`)
+
+  assertClean(diag, 'multiface')
+  await context.close()
+  log('multiface', 'multi-face browser scenario passed — explicit selection required, then ready_to_generate')
+}
+
 /** Reads the reset link the (dev-only) ConsoleEmailAdapter printed to server stdout. */
 function extractResetToken(serverLog) {
   const match = serverLog.match(/reset-password\?token=([a-f0-9]+)/)
@@ -496,7 +607,7 @@ async function runDoubleSubmissionTest(browser, photoPath) {
   const diag = attachDiagnostics(page)
 
   const email = `e2e-double-${runId}@example.com`
-  const childName = `DoubleChild${runId}`
+  const childName = `DoubleChild${runLetters}`
   await personalizeAndAddToCart(page, { slug: 'the-portugals-new-legend', childName, photoPath })
 
   await page.click('a[href="/checkout"]')
@@ -529,7 +640,7 @@ async function runDoubleSubmissionTest(browser, photoPath) {
       return k
     })()
     const payload = {
-      items: cart.map((i) => ({ slug: i.slug, qty: i.qty, childName: i.childName, childAge: i.childAge, language: i.language, dedication: i.dedication, photoKey: i.photoKey })),
+      items: cart.map((i) => ({ slug: i.slug, qty: i.qty, userBookId: i.userBookId, childName: i.childName, childAge: i.childAge, language: i.language, dedication: i.dedication, photoKey: i.photoKey })),
       fullName: 'Double Submit Tester',
       email: document.getElementById('email').value,
       address: '123 Test St',
@@ -648,6 +759,17 @@ async function verifyAppIdentity(browser) {
   await checkRoute('/', ({ status, html }) => {
     if (status !== 200) fail('identity', `/ expected 200, got ${status}`)
     if (!/wonderwraps/i.test(html)) fail('identity', '/ does not show WonderWraps branding')
+    // Regression guard (Phase 2, section 0): the storefront must never
+    // claim a disabled feature (real generation is 501, payment is
+    // test-only) is already operational.
+    const overclaims = [
+      /real photo woven into every illustrated page/i,
+      /preview the finished pages,?\s*and only pay/i,
+      /your (book|story) has been generated/i
+    ]
+    for (const pattern of overclaims) {
+      if (pattern.test(html)) fail('identity', `/ overclaims a disabled feature as operational (matched ${pattern})`)
+    }
   })
 
   await checkRoute('/login', ({ status, html }) => {
@@ -683,7 +805,15 @@ async function main() {
   log('setup', `starting wrangler pages dev on :${PORT}`)
   const server = spawn(
     'npx',
-    ['wrangler', 'pages', 'dev', 'dist', '--d1=webapp-production', '--r2=webapp-photos', '--local', '--ip', '127.0.0.1', '--port', String(PORT)],
+    [
+      'wrangler', 'pages', 'dev', 'dist',
+      '--d1=webapp-production', '--r2=webapp-photos', '--local',
+      '--ip', '127.0.0.1', '--port', String(PORT),
+      // Deterministic fake face detection ONLY — this e2e run makes zero
+      // real calls to any external face-analysis provider (Phase 2 requires
+      // this). Never set in a real/deployed environment.
+      '--binding', 'FACE_ANALYSIS_PROVIDER=deterministic-fake'
+    ],
     { cwd: root, shell: true, stdio: ['ignore', 'pipe', 'pipe'] }
   )
   const serverLogRef = { value: '' }
@@ -708,8 +838,9 @@ async function main() {
     const { email: authEmail } = await runAuthenticatedJourney(browser, photoPath)
     await finishPasswordReset(browser, serverLogRef, authEmail)
     await runDoubleSubmissionTest(browser, photoPath)
+    await runMultiFaceJourney(browser, tmpDir)
 
-    console.log('\n[e2e] ALL JOURNEYS PASSED (guest, authenticated, double-submission)\n')
+    console.log('\n[e2e] ALL JOURNEYS PASSED (guest, authenticated, double-submission, multi-face)\n')
   } finally {
     await browser.close()
     killServerTree(server.pid)

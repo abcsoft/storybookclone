@@ -23,6 +23,16 @@ mkdirSync(evidenceDir, { recursive: true })
 const DESKTOP = { width: 1280, height: 900 }
 const MOBILE = { width: 390, height: 844 }
 
+// Regression guard (Phase 2, section 0): none of these disabled/not-yet-
+// built claims may ever appear on a real page — see docs/PHASE_2_PERSONALIZATION_DOMAIN.md.
+const OVERCLAIM_PATTERNS = [
+  /real photo woven into every illustrated page/i,
+  /preview the finished pages,?\s*and only pay/i,
+  /finished (illustrated )?pages? (are|is) ready/i,
+  /your (book|story) has been generated/i,
+  /generated (book|story|preview) is ready/i
+]
+
 const PUBLIC_ROUTES = [
   ['/', 'home'],
   ['/books', 'books'],
@@ -152,6 +162,21 @@ async function visit(page, path, name, viewportLabel, findings) {
   const realConsoleErrors = consoleErrors.filter((e) => !/favicon/i.test(e))
   if (realConsoleErrors.length) findings.push({ path, viewport: viewportLabel, issue: `console errors: ${JSON.stringify(realConsoleErrors)}` })
   if (failedRequests.length) findings.push({ path, viewport: viewportLabel, issue: `failed/4xx/5xx requests: ${JSON.stringify(failedRequests)}` })
+
+  // Regression guard (Phase 2, section 0): the storefront must never claim
+  // disabled/not-yet-built features are already operational. Real
+  // generation is intentionally 501 (Phase 3) and payment is test-only
+  // (Phase 4) — copy claiming otherwise is a real defect, not a style nit.
+  try {
+    const bodyText = await page.evaluate(() => document.body.innerText)
+    for (const pattern of OVERCLAIM_PATTERNS) {
+      if (pattern.test(bodyText)) {
+        findings.push({ path, viewport: viewportLabel, issue: `storefront copy overclaims a disabled feature (matched ${pattern}): "${bodyText.match(pattern)[0]}"` })
+      }
+    }
+  } catch {
+    /* page may have already navigated away on a hard failure above — the navigation error finding already covers that case */
+  }
 
   log(`${viewportLabel} ${path} -> ${httpStatus}${overflow ? ` (scrollWidth ${overflow.scrollWidth}/${overflow.clientWidth})` : ''}`)
 }
