@@ -84,20 +84,29 @@ Same `Idempotency-Key` + same body → replays the original order (`replayed:
 true`, same `id`), including under real concurrent double-submission. Same
 key + a *different* body → `409`.
 
-→ `{ ok: true, id: <order id>, guestToken: "<hex>", replayed: boolean }`
+→ `{ ok: true, id: <order id>, guestToken: "<versioned token>", replayed: boolean }`
 
-`guestToken` is an HMAC-SHA256 capability token over the order id, signed
-with `GUEST_ORDER_TOKEN_SECRET` — a **Cloudflare Worker secret binding**,
-never the database (a prior iteration of this baseline generated and
-stored this key in D1's `app_secrets` table; that design is retired — see
-`src/secrets.ts`). Missing the secret in a non-development environment
-fails closed (`503` on order creation, `404`/generic-page on guest access)
-rather than falling back to anything guessable. `GUEST_ORDER_TOKEN_SECRET_PREV`
-supports rotation: tokens signed under the old secret keep verifying while
-both are set; remove `_PREV` to finish the rotation. This is what makes
-`/order-success?id=&token=` and `GET /api/v1/orders/:id/guest` safe to be
-unauthenticated: knowing/guessing a sequential order id alone proves
-nothing.
+`guestToken` is a versioned, expiring HMAC-SHA256 capability token —
+`v1.<orderId>.<issuedAt>.<expiresAt>.<hexHmac>` (see `signGuestOrderToken`/
+`verifyGuestOrderToken` in `src/orders.ts`) — signed with
+`GUEST_ORDER_TOKEN_SECRET`, a **Cloudflare Worker secret binding**, never
+the database (a prior iteration of this baseline generated and stored this
+key in D1's `app_secrets` table; that design is retired — see
+`src/secrets.ts`). The order id, issued time and expiry are all covered BY
+the signature, not appended after it, so tampering with any segment
+invalidates the whole token. Verifying re-checks the version, the order id
+match, and that `expiresAt` hasn't passed — expiry is a defense-in-depth
+backstop (currently 1 year from issuance), not a short-lived session token;
+a guest reopening/refreshing the same confirmation link days or weeks later
+is expected use and stays valid. Missing the secret in a non-development
+environment fails closed (`503` on order creation, `404`/generic-page on
+guest access) rather than falling back to anything guessable.
+`GUEST_ORDER_TOKEN_SECRET_PREV` supports rotation: tokens signed under the
+old secret keep verifying while both are set; remove `_PREV` to finish the
+rotation and expire them. This is what makes `/order-success?id=&token=`
+and `GET /api/v1/orders/:id/guest` safe to be unauthenticated: knowing/
+guessing a sequential order id alone proves nothing, and a D1 export alone
+can't forge a token (the signing secret isn't in the database).
 
 Legacy alias (kept, tested): `POST /api/orders` — identical behavior.
 
@@ -157,11 +166,20 @@ hash alone is stored (`pdf_requests.access_token_hash`); shown only in this
 one response.
 
 ## GET /api/v1/books/pdf-requests/:id?token=
-Not a bare sequential id: authorized only for the admin role, the
-authenticated owner (`user_id` match), or a request carrying the `token`
-returned at creation. Anyone else → `404` (not `403`, same reasoning as
-guest order access). Response never includes email or other PII.
-→ `{ id, status, book_slug, cover_type, created_at, updated_at }`
+Owner/guest access. Not a bare sequential id: authorized only for the admin
+role, the authenticated owner (`user_id` match), or a request carrying the
+`token` returned at creation. Anyone else → `404` (not `403`, same
+reasoning as guest order access). Response never includes email or other
+PII. → `{ id, status, book_slug, cover_type, created_at, updated_at }`
+
+## GET /api/v1/admin/pdf-requests/:id
+🔒 Admin-only — a *separate* endpoint from the one above, not the same
+handler with an extra branch. No token or ownership check substitutes for
+an admin session: `requireAdmin()` (see `src/auth.ts`) returns `401`
+(no session) or `403` (logged in, not admin) before the id is even looked
+up, then `404` if that id genuinely doesn't exist. For operator lookup of
+any request, not scoped to "my orders". → the full row (including
+`user_id`, `email`, `child_name`, `order_item_id`).
 
 Legacy alias (kept, tested): `POST /api/books/pdf-request` — this was the
 confirmed Phase 0/1 baseline defect where `pdf_requests` had no `cover_type`

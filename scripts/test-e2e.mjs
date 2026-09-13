@@ -247,6 +247,16 @@ async function runGuestJourney(browser, photoPath) {
   const confirmedText = await page.textContent('body')
   if (!confirmedText?.includes(`#${orderId}`)) fail('guest.5', 'guest confirmation page did not show the real order number')
 
+  // Refresh/reopen the SAME guest link — it is a reusable confirmation
+  // link (e.g. an emailed "view your order" URL a guest opens again days
+  // later), not a single-use token consumed by the first visit.
+  log('guest.5b', 'reopen the same guest link a second time — must remain valid (not single-use)')
+  await page.reload()
+  const reopenedText = await page.textContent('body')
+  if (!reopenedText?.includes(`#${orderId}`)) fail('guest.5b', 'reopening the same guest confirmation link failed — it appears to be single-use')
+  const reopenedApi = await page.request.get(`${BASE}/api/v1/orders/${orderId}/guest?token=${guestToken}`)
+  if (reopenedApi.status() !== 200) fail('guest.5b', `reopening the guest order API a second time: expected 200, got ${reopenedApi.status()}`)
+
   // Verify missing, modified, and cross-order guest tokens all return 404.
   log('guest.6', 'verify missing/modified/cross-order guest tokens are denied')
   const noToken = await page.request.get(`${BASE}/api/v1/orders/${orderId}/guest`)
@@ -498,6 +508,33 @@ async function runDoubleSubmissionTest(browser, photoPath) {
   if (Number(itemRows[0].n) < 1) fail('double-submit', 'expected at least 1 order_items row for the order')
   const allOrdersForEmail = queryD1(`SELECT COUNT(*) AS n FROM orders WHERE email = '${email}';`)
   if (Number(allOrdersForEmail[0].n) !== 1) fail('double-submit', `expected exactly 1 total order for ${email}, found ${allOrdersForEmail[0].n} — double submission was not deduplicated`)
+
+  // Same idempotency key, but a genuinely DIFFERENT payload (childName
+  // changed) — must be rejected as a conflict (409), never silently
+  // replayed as if it were the identical request. Uses page.request (an
+  // isolated API request context, not the page's own browsing-context
+  // network) so this deliberate negative case doesn't need diagnostics
+  // allowlisting — see guest.6/guest.7's use of the same pattern.
+  log('double-submit', 'same idempotency key + CHANGED payload -> 409, not silently replayed')
+  const conflictPayload = await page.evaluate(async () => {
+    const cartMod = await import('/static/cart.js')
+    const cart = cartMod.readCart()
+    return {
+      items: cart.map((i) => ({ slug: i.slug, qty: i.qty, childName: i.childName + '-CHANGED', childAge: i.childAge, language: i.language, dedication: i.dedication, photoKey: i.photoKey })),
+      fullName: 'Double Submit Tester',
+      email: document.getElementById('email')?.value || '',
+      address: '123 Test St',
+      city: 'Testville',
+      country: 'USA',
+      shippingMethod: 'standard',
+      paymentMethod: 'test-manual'
+    }
+  })
+  const conflictRes = await page.request.post(`${BASE}/api/v1/orders`, {
+    headers: { 'Content-Type': 'application/json', 'Idempotency-Key': result.idemKey },
+    data: conflictPayload
+  })
+  if (conflictRes.status() !== 409) fail('double-submit', `same idempotency key + changed payload: expected 409, got ${conflictRes.status()}`)
 
   // The cart is cleared only after a confirmed success — since the two
   // programmatic calls above bypassed checkout.js's own success handler

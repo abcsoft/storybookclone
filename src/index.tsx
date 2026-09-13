@@ -1237,9 +1237,20 @@ app.post('/admin/ai-settings', async (c) => {
   // The form never renders the current key back (see adminAiSettings) — a
   // blank submission means "leave it unchanged", not "clear it", so a save
   // triggered by editing an unrelated field doesn't wipe out the key.
+  //
+  // No real provider API key is ever written to D1 (corrective-round
+  // requirement): there is no generation pipeline that reads this column
+  // yet (Phase 3), so persisting a real secret here would be pure
+  // liability with no functional benefit — a copy of this table (backup,
+  // export, injection bug) would leak a live key. Only a masked preview
+  // (last 4 characters) is stored, purely so the admin UI can show "a key
+  // is on file" without ever holding the real value. A future phase wires
+  // a real Cloudflare Worker secret binding (e.g. `wrangler secret put
+  // AI_PROVIDER_API_KEY`) for the actual outbound call.
   const submittedApiKey = String(b.api_key || '').trim()
   const existing = await c.env.DB.prepare('SELECT api_key FROM ai_settings WHERE id = 1').first<{ api_key: string }>()
-  const apiKey = submittedApiKey || existing?.api_key || ''
+  const maskApiKey = (raw: string) => (raw.length > 4 ? `••••${raw.slice(-4)}` : '••••')
+  const apiKey = submittedApiKey ? maskApiKey(submittedApiKey) : existing?.api_key || ''
   const model = String(b.model || 'wonderwraps-v2').trim()
   const stylePreset = String(b.style_preset || 'fairytale-watercolour')
   const promptTemplate = String(b.prompt_template || '')
@@ -1279,48 +1290,34 @@ app.post('/admin/ai-settings', async (c) => {
   return c.redirect('/admin/ai-settings?saved=1')
 })
 
-// Test Connection API for Admin Panel
+// Test Connection API for Admin Panel.
+//
+// Confirmed review finding (two rounds): this previously returned a
+// hard-coded "success" for any endpoint containing "api."/"wonderwraps.com"
+// with no real request at all, and later (after the first fix) still made
+// one genuine outbound call for the OpenAI branch. Per the explicit
+// corrective instruction this must make NO network request of any kind —
+// there is no real generation pipeline wired to this setting yet (Phase 3),
+// so nothing here can be honestly "tested". Always an honest
+// not-configured/not-tested response, never a real or simulated success,
+// regardless of provider.
 app.post('/api/admin/test-ai-connection', async (c) => {
   const u = c.get('user')
   if (!u || u.role !== 'admin') {
     return c.json({ success: false, message: 'Unauthorized. Admin login required.' }, 401)
   }
 
-  const { provider, endpoint, apiKey, model } = await c.req.json<any>()
-  
+  const { provider, endpoint } = await c.req.json<any>().catch(() => ({}) as any)
+
   if (!endpoint) {
     return c.json({ success: false, message: 'Endpoint URL is required.' })
   }
 
-  try {
-    // OpenAI is the one provider this actually calls for real — a genuine
-    // connectivity check, not a simulation.
-    if (provider === 'openai' && apiKey) {
-      const resp = await fetch('https://api.openai.com/v1/models', {
-        headers: { 'Authorization': `Bearer ${apiKey}` }
-      })
-      if (resp.ok) {
-        return c.json({ success: true, message: 'Successfully connected to OpenAI API! Models verified.' })
-      } else {
-        const err = await resp.text()
-        return c.json({ success: false, message: `OpenAI returned status ${resp.status}: ${err}` })
-      }
-    }
-
-    // Confirmed review finding: every other provider previously returned a
-    // hard-coded "success" here without ever making a real request — a
-    // misconfigured or entirely fake endpoint would report as verified.
-    // There is no real generation pipeline calling this endpoint yet
-    // (Phase 3), so an honest "not tested" is the only truthful response
-    // until a real adapter exists to test against.
-    return c.json({
-      success: false,
-      notTested: true,
-      message: `No real connection test is implemented for provider "${provider || 'custom'}" yet — this baseline does not call it for anything (see Phase 3 in STORYBOOKCLONE_COMPLETION_CODING_PACK.md). Configure OpenAI to exercise a real test, or treat this as "not configured/not tested", not "working".`
-    })
-  } catch (err: any) {
-    return c.json({ success: false, message: `Connection test error: ${err.message}` })
-  }
+  return c.json({
+    success: false,
+    notTested: true,
+    message: `No real connection test is implemented for provider "${provider || 'custom'}" — this baseline makes no outbound AI calls at all (see Phase 3 in STORYBOOKCLONE_COMPLETION_CODING_PACK.md). Treat this as "not configured/not tested", never "working".`
+  })
 })
 
 // Public PDF request API. This queues/records a request — it does NOT
@@ -1398,9 +1395,29 @@ async function handlePdfRequestStatus(c: Context<{ Bindings: Bindings; Variables
   const { access_token_hash: _drop, user_id: _drop2, ...safe } = row
   return c.json(safe)
 }
+// Separate, admin-only endpoint (distinct from handlePdfRequestStatus's
+// owner/guest-token path above): an operator looking up ANY pdf_request by
+// id, not scoped to their own orders, and never accepting a guest
+// capability token as a substitute for an admin session. requireAdmin()
+// returns 401/403 JSON (the codebase's existing convention for admin API
+// routes — see src/auth.ts) rather than the 404-for-everyone-unauthorized
+// pattern used for guest/customer access, since this route is inherently
+// admin tooling, not something a stranger could stumble into.
+async function handleAdminPdfRequestStatus(c: Context<{ Bindings: Bindings; Variables: Vars }>) {
+  const guard = requireAdmin(c)
+  if (guard instanceof Response) return guard
+  const id = Number(c.req.param('id'))
+  const row = await c.env.DB.prepare(
+    'SELECT id, status, book_slug, cover_type, user_id, order_item_id, email, child_name, created_at, updated_at FROM pdf_requests WHERE id = ?'
+  ).bind(id).first<Record<string, unknown>>()
+  if (!row) return c.json({ error: 'Not found' }, 404)
+  return c.json(row)
+}
+
 app.post('/api/v1/books/pdf-requests', handleCreatePdfRequest)
 app.post('/api/books/pdf-request', handleCreatePdfRequest)
 app.get('/api/v1/books/pdf-requests/:id', handlePdfRequestStatus)
+app.get('/api/v1/admin/pdf-requests/:id', handleAdminPdfRequestStatus)
 
 // AI Book Generator Route (Client calls this to generate/preview books)
 app.post('/api/generate-book', async (c) => {

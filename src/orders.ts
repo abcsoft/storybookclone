@@ -218,11 +218,46 @@ export async function createOrder(
 }
 
 // ---- guest order access (HMAC capability token, not a bare sequential ID) ----
+//
+// Token shape: `v1.<orderId>.<issuedAt>.<expiresAt>.<hexHmac>` — versioned so
+// a future format change can be detected instead of silently misparsed;
+// orderId/issuedAt/expiresAt are all covered BY the signature (not just
+// appended after it), so tampering with any of them invalidates the token,
+// not just the orderId. A stolen D1 export alone can't forge a token: the
+// signing secret lives only in the GUEST_ORDER_TOKEN_SECRET(_PREV) worker
+// bindings (see src/secrets.ts), never the database.
+const GUEST_TOKEN_VERSION = 'v1'
+// Guest order links must keep working for a long time after checkout — a
+// customer reopening an emailed confirmation link weeks later is normal,
+// expected use, not a threat (see the mandatory "refresh/reopen the guest
+// link and confirm it remains valid" check). This is defense-in-depth
+// against a token leaking and living forever, not a short-lived session
+// token — a year comfortably outlives any realistic "did I get my book"
+// follow-up.
+const GUEST_TOKEN_TTL_SECONDS = 60 * 60 * 24 * 365
+
+function guestTokenMessage(orderId: number, issuedAt: number, expiresAt: number): string {
+  return `guest-order:${GUEST_TOKEN_VERSION}:${orderId}:${issuedAt}:${expiresAt}`
+}
 
 export async function signGuestOrderToken(secrets: RotatingSecrets, orderId: number): Promise<string> {
-  return signWithRotation(secrets, `order:${orderId}`)
+  const issuedAt = Math.floor(Date.now() / 1000)
+  const expiresAt = issuedAt + GUEST_TOKEN_TTL_SECONDS
+  const sig = await signWithRotation(secrets, guestTokenMessage(orderId, issuedAt, expiresAt))
+  return `${GUEST_TOKEN_VERSION}.${orderId}.${issuedAt}.${expiresAt}.${sig}`
 }
 
 export async function verifyGuestOrderToken(secrets: RotatingSecrets, orderId: number, token: string): Promise<boolean> {
-  return verifyWithRotation(secrets, `order:${orderId}`, token)
+  if (!token) return false
+  const parts = token.split('.')
+  if (parts.length !== 5) return false
+  const [version, tokenOrderIdStr, issuedAtStr, expiresAtStr, sig] = parts
+  if (version !== GUEST_TOKEN_VERSION) return false
+  const tokenOrderId = Number(tokenOrderIdStr)
+  const issuedAt = Number(issuedAtStr)
+  const expiresAt = Number(expiresAtStr)
+  if (!Number.isFinite(tokenOrderId) || !Number.isFinite(issuedAt) || !Number.isFinite(expiresAt)) return false
+  if (tokenOrderId !== orderId) return false
+  if (expiresAt < Math.floor(Date.now() / 1000)) return false
+  return verifyWithRotation(secrets, guestTokenMessage(tokenOrderId, issuedAt, expiresAt), sig)
 }

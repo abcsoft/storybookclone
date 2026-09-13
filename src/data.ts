@@ -1,28 +1,7 @@
-export type Product = {
-  id?: number
-  /** DB-only field (1/0); absent for the static catalog seed in this file. See toProduct() in db.ts. */
-  active?: number
-  slug: string
-  title: string
-  tagline: string
-  description: string
-  story: string
-  price: number
-  compareAt?: number
-  image: string
-  gender: 'girl' | 'boy' | 'unisex'
-  category: 'book' | 'sticker'
-  ages: string
-  ageMin: number
-  ageMax: number
-  pages: number
-  reviews: number
-  rating: number
-  bestseller?: boolean
-  newRelease?: boolean
-  career?: boolean
-  traits: string[]
-}
+// Canonical Product type lives in src/product.ts (one declaration, not two —
+// see that file's comment for why this matters).
+export type { Product } from './product'
+import type { Product } from './product'
 
 export const products: Product[] = [
   {

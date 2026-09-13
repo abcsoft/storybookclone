@@ -26,15 +26,59 @@ describe('guest order access token (HMAC capability, not a bare sequential ID)',
     expect(await verifyGuestOrderToken(secretsA, 42, '')).toBe(false)
   })
 
-  it('is stable across calls (same explicit secret, not regenerated)', async () => {
+  it('two tokens for the same order both independently verify (each carries its own issued time, so they need not be byte-identical)', async () => {
     const a = await signGuestOrderToken(secretsA, 42)
     const b = await signGuestOrderToken(secretsA, 42)
-    expect(a).toBe(b)
+    expect(await verifyGuestOrderToken(secretsA, 42, a)).toBe(true)
+    expect(await verifyGuestOrderToken(secretsA, 42, b)).toBe(true)
   })
 
   it('a token signed under one secret does not verify under a completely different secret', async () => {
     const token = await signGuestOrderToken(secretsA, 42)
     expect(await verifyGuestOrderToken(secretsB, 42, token)).toBe(false)
+  })
+
+  it('encodes version, order id, issued time and expiry — reopening/refreshing the same guest link keeps working (no single-use invalidation)', async () => {
+    const token = await signGuestOrderToken(secretsA, 42)
+    const [version, orderIdPart, issuedAtPart, expiresAtPart] = token.split('.')
+    expect(version).toBe('v1')
+    expect(orderIdPart).toBe('42')
+    expect(Number(issuedAtPart)).toBeGreaterThan(0)
+    expect(Number(expiresAtPart)).toBeGreaterThan(Number(issuedAtPart))
+    // Reopening the same link (verifying the same token twice) must remain
+    // valid — a guest order link is not single-use.
+    expect(await verifyGuestOrderToken(secretsA, 42, token)).toBe(true)
+    expect(await verifyGuestOrderToken(secretsA, 42, token)).toBe(true)
+  })
+
+  it('rejects an unknown token version', async () => {
+    const token = await signGuestOrderToken(secretsA, 42)
+    const tampered = token.replace(/^v1\./, 'v2.')
+    expect(await verifyGuestOrderToken(secretsA, 42, tampered)).toBe(false)
+  })
+
+  it('rejects a malformed token (wrong number of segments)', async () => {
+    expect(await verifyGuestOrderToken(secretsA, 42, 'not-a-real-token')).toBe(false)
+    expect(await verifyGuestOrderToken(secretsA, 42, 'v1.42.123')).toBe(false)
+  })
+
+  it('rejects an expired token even though the signature would otherwise be valid', async () => {
+    const now = Math.floor(Date.now() / 1000)
+    const issuedAt = now - 1000
+    const expiresAt = now - 1 // already expired
+    const message = `guest-order:v1:42:${issuedAt}:${expiresAt}`
+    const { hmacSha256Hex } = await import('../../src/secrets')
+    const sig = await hmacSha256Hex(secretsA.current, message)
+    const expiredToken = `v1.42.${issuedAt}.${expiresAt}.${sig}`
+    expect(await verifyGuestOrderToken(secretsA, 42, expiredToken)).toBe(false)
+  })
+
+  it('rejects a token whose expiry/issued-at segments were tampered (they are covered by the signature, not free-form)', async () => {
+    const token = await signGuestOrderToken(secretsA, 42)
+    const parts = token.split('.')
+    parts[3] = String(Number(parts[3]) + 1000000) // extend expiry without re-signing
+    const tampered = parts.join('.')
+    expect(await verifyGuestOrderToken(secretsA, 42, tampered)).toBe(false)
   })
 })
 

@@ -120,6 +120,25 @@ Zero findings from this check in both the before and after runs — the
 `/admin/*` guard in `src/index.tsx` was already correct; this audit adds
 live-browser + direct-POST proof of it, not a fix.
 
+### Second corrective round: stale copy, no client pre-check, real AI network call, duplicate type
+A follow-up review found four more real defects, none caught by the first
+round's route sweep because they're either copy drift or something only a
+code read (not a screenshot) reveals:
+
+| # | Finding | Fix |
+|---|---|---|
+| 1 | The upload dropzone's own visible copy (`src/pages.ts`) still read "JPG, PNG or WEBP · Maximum 5MB" — stale from before `src/photo-policy.ts` existed, actively wrong (WEBP isn't accepted, limit is 10MB not 5MB) | Now renders `humanPhotoPolicy()` from the same policy module the server enforces — this copy cannot drift from reality again |
+| 2 | No client-side pre-check at all — every file, including an obviously-oversized or wrong-format one, made a full round trip to the server before the user learned it wasn't going to work | `public/static/pdp.js` now calls the new public `GET /api/v1/uploads/photo-policy` (via a small `getPhotoPolicy()` helper in `api.js`) and checks size/type/dimensions client-side before uploading — explicitly documented as a UX convenience only; the server's real decode remains the actual authority |
+| 3 | Admin "Test connection" still made one genuine outbound call (to `api.openai.com`) when the provider was OpenAI and a key was typed in | Removed entirely — the endpoint now makes **no** network request for any provider, always an honest `{ success: false, notTested: true }` |
+| 4 | The AI settings form persisted the **raw, real** provider API key into D1's `ai_settings.api_key` column | The POST handler now stores only a masked preview (`••••<last 4 chars>`) — the real value is never written to the database at all, pending a Phase 3 real secret-binding design |
+| 5 | `Product` (the storefront/admin product shape) was declared twice — once in `src/data.ts`, once in `src/db.ts` — and had already drifted once (db.ts's copy silently lacked `active`, finding #6 above) | Consolidated into one declaration, `src/product.ts`; both files now import it |
+
+Also: the guest-order access token (`docs/API_V1.md`) now carries its own
+version/issued-time/expiry, and a genuinely separate admin-only endpoint
+(`GET /api/v1/admin/pdf-requests/:id`) was added rather than folding admin
+access into the owner/guest-token endpoint's existing branches — see this
+round's final report for the full requirement-to-test mapping.
+
 ## Explicit scope boundary
 
 This audit repaired **existing** admin screens (dashboard, orders, products,

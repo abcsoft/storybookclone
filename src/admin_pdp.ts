@@ -30,7 +30,10 @@ function adminPage(opts: { title: string; active: string; body: string; previewH
 }
 
 export async function adminPdpEditor(c: any, product: Product, flash?: string) {
-  await ensurePdpPageRow(c.env.DB, product.id)
+  // product here always comes from a D1 row (toProduct()), which always
+  // sets id — Product.id is optional only because the static catalog seed
+  // (src/data.ts) has no DB id.
+  await ensurePdpPageRow(c.env.DB, product.id!)
   const data = await loadPdp(c.env.DB, product)
   const previewHref = product.category === 'sticker' ? `/stickers/${product.slug}` : `/books/${product.slug}`
   const slugSafe = String(product.slug || '')

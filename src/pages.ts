@@ -1,5 +1,6 @@
 import { esc, stars } from './layout'
 import { money, type Product, languages, faqs } from './data'
+import { humanPhotoPolicy } from './photo-policy'
 
 export function homePage(opts: {
   bestsellers: Product[]
@@ -297,7 +298,7 @@ export function productPage(p: Product, pathPrefix: string, related: Product[] =
           </div>
           <label for="photo">Child's Photo</label>
           <label class="upload-dropzone" for="photo">
-            <i class="fas fa-cloud-arrow-up"></i><strong>Drop a photo or click to upload</strong><span>JPG, PNG or WEBP · Maximum 5MB</span>
+            <i class="fas fa-cloud-arrow-up"></i><strong>Drop a photo or click to upload</strong><span>${esc(humanPhotoPolicy())}</span>
             <input id="photo" name="photo" type="file" accept="image/jpeg,image/png,image/webp" required>
           </label>
           <div class="photo-result"><img id="photo-preview" class="preview-face" alt="Photo preview" hidden><p class="tiny" id="upload-status" hidden></p></div>

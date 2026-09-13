@@ -25,32 +25,11 @@ export type ProductRow = {
   created_at?: string
 }
 
-// Shape the storefront templates expect (camelCase, like the old static data.ts).
-export type Product = {
-  id: number
-  /** 1/0 — whether this product is visible on the storefront. */
-  active?: number
-  slug: string
-  title: string
-  tagline: string
-  description: string
-  story: string
-  price: number
-  compareAt?: number
-  image: string
-  gender: 'girl' | 'boy' | 'unisex'
-  category: 'book' | 'sticker'
-  ages: string
-  ageMin: number
-  ageMax: number
-  pages: number
-  reviews: number
-  rating: number
-  bestseller?: boolean
-  newRelease?: boolean
-  career?: boolean
-  traits: string[]
-}
+// Shape the storefront templates expect (camelCase, like the old static
+// data.ts). Canonical declaration lives in src/product.ts — see that file's
+// comment for why there is only one now, not two.
+export type { Product } from './product'
+import type { Product } from './product'
 
 export function toProduct(r: ProductRow): Product {
   let traits: string[] = []

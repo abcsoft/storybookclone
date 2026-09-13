@@ -29,6 +29,18 @@ export function uploadPhoto(file) {
   return request('/api/v1/uploads/photo', { method: 'POST', body: fd })
 }
 
+// One authoritative source (src/photo-policy.ts) for the size/format/
+// dimension limits — the browser pre-check in pdp.js reads this instead of
+// hardcoding its own copy of the numbers, so it can never drift from what
+// the server actually enforces.
+let cachedPhotoPolicy = null
+export async function getPhotoPolicy() {
+  if (cachedPhotoPolicy) return cachedPhotoPolicy
+  const res = await request('/api/v1/uploads/photo-policy', { method: 'GET' })
+  if (res.ok) cachedPhotoPolicy = res.data
+  return res.ok ? res.data : null
+}
+
 export function quote(items, code, shipping) {
   return request('/api/v1/cart/quote', {
     method: 'POST',

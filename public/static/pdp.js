@@ -2,7 +2,7 @@
 // ES module — imports the canonical cart store and the centralized API client
 // instead of touching localStorage / fetch directly (Phase 1 defects #1/#3).
 import { addItem } from './cart.js'
-import { uploadPhoto } from './api.js'
+import { uploadPhoto, getPhotoPolicy } from './api.js'
 
 (function () {
   // ----- gallery slider -----
@@ -120,6 +120,29 @@ import { uploadPhoto } from './api.js'
 
       uploadedPhotoKey = null
       uploadedPhotoUrl = null
+
+      // Fast browser-side pre-check, derived from the SAME server-owned
+      // policy the real upload endpoint enforces (GET
+      // /api/v1/uploads/photo-policy — see src/photo-policy.ts). This is a
+      // UX convenience only: file.size/file.type are client-reported and
+      // can be wrong or spoofed, so a pass here proves nothing by itself —
+      // the server always re-validates with a real image decode. It only
+      // saves an obviously-doomed upload a round trip.
+      const policy = await getPhotoPolicy()
+      if (policy) {
+        if (file.size > policy.maxMB * 1024 * 1024) {
+          setPhotoStatus(`That photo is too large — please choose one under ${policy.maxMB}MB.`, true)
+          photoInput.value = ''
+          return
+        }
+        const looksSupported = !file.type || policy.allowedFormats.some((f) => file.type === `image/${f}`)
+        if (!looksSupported) {
+          setPhotoStatus(`Please choose a ${policy.allowedFormats.join(' or ').toUpperCase()} photo.`, true)
+          photoInput.value = ''
+          return
+        }
+      }
+
       uploadInFlight = true
       updateConfirmAvailability()
       setPhotoStatus('Uploading photo…', false)
@@ -134,6 +157,25 @@ import { uploadPhoto } from './api.js'
       if (avatarEmpty) avatarEmpty.style.display = 'none'
       const faceOverlay = document.getElementById('preview-child-face')
       if (faceOverlay) faceOverlay.src = objectUrl
+
+      // Dimension pre-check (also just UX — the server checks the REAL
+      // decoded dimensions, not whatever the browser reports here).
+      if (policy) {
+        const dims = await new Promise((resolve) => {
+          const probe = new Image()
+          probe.onload = () => resolve({ w: probe.naturalWidth, h: probe.naturalHeight })
+          probe.onerror = () => resolve(null)
+          probe.src = objectUrl
+        })
+        if (dims && (dims.w < policy.minDimensionPx || dims.h < policy.minDimensionPx || dims.w > policy.maxDimensionPx || dims.h > policy.maxDimensionPx)) {
+          uploadInFlight = false
+          setPhotoStatus(`Photo must be ${policy.minDimensionPx}–${policy.maxDimensionPx}px on each side.`, true)
+          if (photoPreview) photoPreview.style.display = 'none'
+          if (avatarEmpty) avatarEmpty.style.display = ''
+          updateConfirmAvailability()
+          return
+        }
+      }
 
       const result = await uploadPhoto(file)
       uploadInFlight = false

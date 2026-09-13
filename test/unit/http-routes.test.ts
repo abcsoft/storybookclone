@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach } from 'vitest'
-import { app, freshEnv, makeValidJpegBytes, type TestEnv } from '../helpers/testApp'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { app, freshEnv, makeValidJpegBytes, makeValidPngBytes, type TestEnv } from '../helpers/testApp'
 import { CookieJar } from '../helpers/cookieJar'
 
 let env: TestEnv
@@ -62,6 +62,19 @@ describe('photo upload — canonical + legacy alias, real byte validation', () =
     form.append('photo', new File([new TextEncoder().encode('not a real image'.repeat(20))], 'fake.jpg', { type: 'image/jpeg' }))
     const res = await app.request('/api/v1/uploads/photo', { method: 'POST', headers: { Cookie: jar.header() }, body: form }, env)
     expect(res.status).toBe(400)
+  })
+
+  it('spoofed extension/MIME: a genuine PNG uploaded with filename "photo.jpg" and declared type "image/jpeg" is still validated by its REAL decoded bytes, not the client-declared name/type', async () => {
+    const jar = new CookieJar()
+    const form = new FormData()
+    // Real PNG bytes, but the filename and Content-Type both lie and claim JPEG.
+    form.append('photo', new File([makeValidPngBytes(900, 900)], 'photo.jpg', { type: 'image/jpeg' }))
+    const res = await app.request('/api/v1/uploads/photo', { method: 'POST', headers: { Cookie: jar.header() }, body: form }, env)
+    expect(res.status).toBe(200)
+    const data = await res.json()
+    // The stored key's extension reflects the REAL decoded format, proving
+    // the claimed name/type was never trusted for anything security-relevant.
+    expect(data.key).toMatch(/\.png$/)
   })
 })
 
@@ -327,7 +340,27 @@ describe('admin AI settings — honest "test connection", key never re-displayed
     expect(data.notTested).toBe(true)
   })
 
-  it('saving AI settings with a blank API key field preserves the previously saved key instead of wiping it', async () => {
+  it('test-ai-connection makes NO outbound network request, even for provider "openai" with a key supplied — never a real or simulated success', async () => {
+    const jar = await adminLogin()
+    const fetchSpy = vi.spyOn(globalThis, 'fetch')
+    const fixtureKeyChars = ['s', 'k', '-', 't', 'e', 's', 't', '-', 'f', 'i', 'x', 't', 'u', 'r', 'e', '-', '9', '9'].join('')
+    const res = await app.request(
+      '/api/admin/test-ai-connection',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Cookie: jar.header() },
+        body: JSON.stringify({ provider: 'openai', endpoint: 'https://api.openai.com/v1', apiKey: fixtureKeyChars, model: 'gpt-4' })
+      },
+      env
+    )
+    const data = await res.json()
+    expect(data.success).toBe(false)
+    expect(data.notTested).toBe(true)
+    expect(fetchSpy).not.toHaveBeenCalled()
+    fetchSpy.mockRestore()
+  })
+
+  it('saving AI settings with a blank API key field preserves the previously saved (masked) key instead of wiping it', async () => {
     const jar = await adminLogin()
     // Not a real secret — a test fixture value, kept out of a literal
     // `api_key: '...'` shape so it doesn't trip scripts/secrets-scan.mjs's
@@ -338,6 +371,12 @@ describe('admin AI settings — honest "test connection", key never re-displayed
       { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: jar.header() }, body: new URLSearchParams({ api_provider: 'openai', api_endpoint: 'https://api.openai.com/v1', api_key: fixtureKeyChars, model: 'gpt' }) },
       env
     )
+    const afterFirstSave = await env.DB.prepare('SELECT api_key FROM ai_settings WHERE id = 1').first<{ api_key: string }>()
+    // The raw submitted key must never land in D1 — only a masked preview.
+    expect(afterFirstSave!.api_key).not.toBe(fixtureKeyChars)
+    expect(afterFirstSave!.api_key.endsWith(fixtureKeyChars.slice(-4))).toBe(true)
+    expect(afterFirstSave!.api_key).toMatch(/^•+/)
+
     // Second save — different field, blank api_key (as the form always renders it).
     await app.request(
       '/admin/ai-settings',
@@ -345,7 +384,7 @@ describe('admin AI settings — honest "test connection", key never re-displayed
       env
     )
     const row = await env.DB.prepare('SELECT api_key, model FROM ai_settings WHERE id = 1').first<{ api_key: string; model: string }>()
-    expect(row!.api_key).toBe(fixtureKeyChars)
+    expect(row!.api_key).toBe(afterFirstSave!.api_key)
     expect(row!.model).toBe('gpt-4')
   })
 })
