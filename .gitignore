@@ -17,8 +17,22 @@ node_modules/
 
 # env
 .env
+.env*.local
 .env.production
 .dev.vars
+.dev.vars.*
+
+# database dumps / local D1 state (may contain real credentials, sessions, API keys)
+*dump*.sql
+*.sqlite
+*.sqlite3
+
+# user-uploaded / generated content (never commit real customer data)
+uploads/
+generated-books/
+/photos/
+*.pem
+*.key
 
 # logs
 logs/

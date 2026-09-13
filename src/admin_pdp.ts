@@ -5,7 +5,7 @@ import { money } from './data'
 import { loadPdp, ensurePdpPageRow } from './pdp'
 import type { Product } from './db'
 
-function adminPage(opts: { title: string; active: string; body: string }) {
+function adminPage(opts: { title: string; active: string; body: string; previewHref?: string }) {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -22,7 +22,7 @@ function adminPage(opts: { title: string; active: string; body: string }) {
   <header class="a-pdp-top">
     <a href="/admin/products" class="a-link">← Products</a>
     <h1>${esc(opts.title)}</h1>
-    <a href="/books/${esc((opts.title.split(':').pop() || '').trim())}" target="_blank" class="a-link">Preview ↗</a>
+    <a href="${esc(opts.previewHref || '/books')}" target="_blank" class="a-link">Preview ↗</a>
   </header>
   <main class="admin-main pdp-editor-main">${opts.body}</main>
 </body>

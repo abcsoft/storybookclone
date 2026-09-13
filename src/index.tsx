@@ -1,4 +1,4 @@
-import { Hono } from 'hono'
+import { Hono, type Context } from 'hono'
 import { cors } from 'hono/cors'
 import { page } from './layout'
 import {
@@ -58,7 +58,15 @@ import {
 } from './admin'
 import { personalizedBookReaderPage } from './pages_reader'
 
-type Bindings = { DB: D1Database; PHOTOS?: R2Bucket }
+type Bindings = {
+  DB: D1Database
+  PHOTOS?: R2Bucket
+  // Optional one-time local/dev admin bootstrap. Never set a real value in a
+  // committed file — provide it via `.dev.vars` (gitignored) locally or a
+  // platform secret in deployed environments. See README "Local admin bootstrap".
+  ADMIN_BOOTSTRAP_EMAIL?: string
+  ADMIN_BOOTSTRAP_PASSWORD?: string
+}
 type Vars = { user: AuthUser | null }
 
 const app = new Hono<{ Bindings: Bindings; Variables: Vars }>()
@@ -67,7 +75,12 @@ app.use('/api/*', cors())
 
 // ---------- bootstrap (idempotent, local-dev friendly) ----------
 let booted = false
-async function ensureSchema(db?: D1Database) {
+// Test-only: this worker isolate normally lives for the process lifetime, so
+// ensureSchema's idempotency guard never needs resetting in production.
+export function __resetBootedForTests() {
+  booted = false
+}
+export async function ensureSchema(db?: D1Database, bootstrap?: { email?: string; password?: string }) {
   if (!db || booted) return
   booted = true
   const stmts = [
@@ -165,12 +178,15 @@ async function ensureSchema(db?: D1Database) {
   ]
   await db.batch(stmts.map((s) => db.prepare(s)))
 
-  // Seed admin + default discount if missing (idempotent)
+  // Bootstrap the first admin only when explicitly configured (no hard-coded
+  // default credential). Set ADMIN_BOOTSTRAP_EMAIL / ADMIN_BOOTSTRAP_PASSWORD
+  // via `.dev.vars` locally, or `npm run admin:bootstrap` for a one-off local
+  // insert — see README "Local admin bootstrap". Never defaults in production.
   const admin = await db.prepare("SELECT id FROM users WHERE role = 'admin' LIMIT 1").first()
-  if (!admin) {
+  if (!admin && bootstrap?.email && bootstrap?.password) {
     await db
       .prepare("INSERT OR IGNORE INTO users (name, email, password_hash, role) VALUES (?, ?, ?, 'admin')")
-      .bind('WonderWraps Admin', 'admin@wonderwraps.com', await hashPassword('admin123'))
+      .bind('Admin', bootstrap.email, await hashPassword(bootstrap.password))
       .run()
   }
   await db
@@ -198,9 +214,27 @@ async function ensureSchema(db?: D1Database) {
   }
 }
 
+// Fail fast and clearly if required Cloudflare bindings are missing, instead
+// of letting every route crash later with a confusing "cannot read property
+// of undefined". Placeholder wrangler.jsonc config only satisfies local dev;
+// a real deployment must configure a real D1 database binding.
+app.use('*', async (c, next) => {
+  if (!c.env.DB) {
+    return c.text(
+      'Server misconfigured: the "DB" D1 database binding is missing. ' +
+        'Configure a real D1 binding in wrangler.jsonc / your Cloudflare Pages project settings before deploying.',
+      500
+    )
+  }
+  await next()
+})
+
 // attach user on every request (after schema ready)
 app.use('*', async (c, next) => {
-  await ensureSchema(c.env.DB)
+  await ensureSchema(c.env.DB, {
+    email: c.env.ADMIN_BOOTSTRAP_EMAIL,
+    password: c.env.ADMIN_BOOTSTRAP_PASSWORD
+  })
   await next()
 })
 app.use('*', attachUser)
@@ -773,7 +807,7 @@ app.get('/admin/products/:id/pdp', async (c) => {
 })
 
 // Helpers — small handlers that the editor posts to.
-async function loadPdpProduct(c: any) {
+async function loadPdpProduct(c: Context<{ Bindings: Bindings; Variables: Vars }>) {
   const id = Number(c.req.param('id'))
   const row = await c.env.DB.prepare('SELECT * FROM products WHERE id = ?').bind(id).first<any>()
   if (!row) return null

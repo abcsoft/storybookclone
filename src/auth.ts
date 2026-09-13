@@ -1,4 +1,4 @@
-// Auth utilities: scrypt password hashing (Web Crypto), session cookies, guards.
+// Auth utilities: PBKDF2-SHA-256 password hashing (Web Crypto), session cookies, guards.
 import { getCookie, setCookie, deleteCookie } from 'hono/cookie'
 import type { Context, MiddlewareHandler } from 'hono'
 
@@ -12,9 +12,7 @@ export type AuthUser = {
   role: 'customer' | 'admin'
 }
 
-// --- password hashing: scrypt via Web Crypto (works in Workers) ---
-const SCRYPT = { N: 16384, r: 8, p: 1, dkLen: 32 }
-
+// --- password hashing: PBKDF2-SHA-256 via Web Crypto (works in Workers) ---
 function toHex(buf: ArrayBuffer | Uint8Array) {
   const b = buf instanceof Uint8Array ? buf : new Uint8Array(buf)
   return [...b].map((x) => x.toString(16).padStart(2, '0')).join('')
@@ -27,8 +25,6 @@ export async function hashPassword(password: string, saltHex?: string): Promise<
   const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, [
     'deriveBits'
   ])
-  // Workers exposes scrypt through PBKDF2? No — use SubtleCrypto 'deriveBits' with scrypt is not standard.
-  // Use PBKDF2-SHA-256 with high iterations instead (available everywhere).
   const bits = await crypto.subtle.deriveBits(
     { name: 'PBKDF2', salt, iterations: 100_000, hash: 'SHA-256' },
     key,
@@ -96,7 +92,7 @@ export function readSessionToken(c: Context): string | undefined {
 }
 
 // Middleware: attaches c.set('user') when logged in
-export const attachUser: MiddlewareHandler<{ Bindings: { DB: D1Database } }> = async (c, next) => {
+export const attachUser: MiddlewareHandler<{ Bindings: { DB: D1Database }; Variables: { user: AuthUser | null } }> = async (c, next) => {
   const user = await getSessionUser(c.env.DB, readSessionToken(c))
   c.set('user', user)
   await next()

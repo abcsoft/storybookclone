@@ -11,15 +11,26 @@
     "cf-typegen": "wrangler types --env-interface CloudflareBindings",
     "db:seed": "wrangler d1 execute webapp-production --local --file=./seed.sql",
     "db:reset": "rm -rf .wrangler/state/v3/d1 && npm run db:migrate:local && npm run db:seed",
-    "db:console:local": "wrangler d1 execute webapp-production --local"
+    "db:console:local": "wrangler d1 execute webapp-production --local",
+    "admin:bootstrap": "node scripts/create-admin.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
+    "test:integration": "node --experimental-sqlite scripts/test-integration.mjs",
+    "test:e2e": "echo \"test:e2e: no browser journey exists yet on this baseline (see STORYBOOKCLONE_COMPLETION_CODING_PACK.md Phase 1) - nothing to run\" && exit 0",
+    "secrets:scan": "node scripts/secrets-scan.mjs",
+    "check": "npm run typecheck && npm run test && npm run test:integration && npm run secrets:scan && npm run build"
   },
   "dependencies": {
     "hono": "^4.13.5"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260911.1",
     "@hono/vite-build": "^1.11.1",
     "@hono/vite-dev-server": "^0.26.1",
+    "@types/node": "^26.5.1",
+    "typescript": "^5.9.3",
     "vite": "^8.1.4",
+    "vitest": "^5.0.0",
     "wrangler": "^4.110.0"
   }
 }

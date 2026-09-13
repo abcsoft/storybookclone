@@ -24,7 +24,7 @@ A full-stack clone of [wonderwraps.com](https://wonderwraps.com/) — personaliz
 - **Help/Legal/Blog**: `/faqs`, `/support`, `/contact`, `/support/privacy-policy`, `/support/terms-and-conditions`, `/blog`, `/blog/:slug`
 
 ### Admin panel — `/admin` (role-gated)
-- **Login**: `/admin/login` — default local admin: `admin@wonderwraps.com` / `admin123` (**change before production**)
+- **Login**: `/admin/login` — no default admin account exists. Create one locally with `npm run admin:bootstrap -- --email you@example.com --password '<strong password>'` (see "Local admin bootstrap" below).
 - `/admin` dashboard (revenue, orders, customers, pending previews, unread messages, latest orders)
 - `/admin/orders` (+`?status=`) — pipeline management, `/admin/orders/:id` — status, notes, per-item preview status, child photo review
 - `/admin/products` — full catalog CRUD (`/admin/products/new`, `/admin/products/:id`), flags: bestseller/new/career/active
@@ -63,9 +63,35 @@ A full-stack clone of [wonderwraps.com](https://wonderwraps.com/) — personaliz
 - `/books/girls-sticker-pack` now renders the sticker product page directly, matching the reference URL while preserving `/stickers/girls-sticker-pack`.
 - Personalisation requires a child name and successfully uploaded JPG, PNG, or WEBP photo before an item can enter the cart; the order API validates this server-side too.
 
+## Local admin bootstrap
+There is **no default admin account**. To get one on your local D1:
+```
+npm run db:migrate:local
+npm run admin:bootstrap -- --email you@example.com --password '<a strong password, 12+ chars>'
+```
+This writes directly to your local `.wrangler` D1 state only (`--remote` is refused by the script). In a deployed environment, create the first admin the same way through your platform's local/staging tooling, or set `ADMIN_BOOTSTRAP_EMAIL` / `ADMIN_BOOTSTRAP_PASSWORD` as environment secrets for one request and then unset them — the app will never create or fall back to a hard-coded credential.
+
+## Testing & checks
+| Command | What it does |
+|---|---|
+| `npm run typecheck` | `tsc --noEmit` — must report zero errors |
+| `npm test` | Unit tests (Vitest): password hashing, session/role authorization separation, admin-bootstrap has no default-credential fallback |
+| `npm run test:integration` | Migration smoke test — applies every file in `migrations/` to an empty DB and to an already-migrated ("existing baseline") DB using Node's built-in SQLite, and asserts every expected table exists |
+| `npm run test:e2e` | Placeholder — no working browser purchase journey exists yet on this baseline (tracked as Phase 1, see below) |
+| `npm run secrets:scan` | Pattern-based scan of tracked files for hash/key/token-shaped secrets |
+| `npm run check` | Runs all of the above plus `npm run build` — the CI-equivalent local gate |
+
+## Known baseline limitations
+This repository is being brought to production readiness in phases; see `STORYBOOKCLONE_COMPLETION_CODING_PACK.md` for the full plan. As of the Phase 0 (security/baseline-recovery) branch:
+- The advertised browse → personalize → cart → checkout → My Books journey has known route/localStorage-key/schema mismatches and does **not** reliably work end-to-end yet (tracked as Phase 1).
+- There is no durable, versioned personalization/generation/payment domain yet (Phases 2–4).
+- A historical commit on this repository briefly tracked a raw database dump containing real password hashes, session tokens, and an API key. See `docs/SECURITY_INCIDENT_REMEDIATION.md` for the required rotation/revocation steps — do this before treating any of that historical data as still-valid or safe.
+
 ## Deployment
 - **Platform**: Cloudflare Pages + D1 + R2
-- **Local**: `npm run db:migrate:local` → `npx wrangler d1 execute webapp-production --local --file=./seed.sql` → `npx wrangler d1 execute webapp-production --local --file=./seed_pdp.sql` → `npm run build` → `pm2 start ecosystem.config.cjs`
+- **Local**: `npm install` → `npm run db:migrate:local` → `npx wrangler d1 execute webapp-production --local --file=./seed.sql` → `npx wrangler d1 execute webapp-production --local --file=./seed_pdp.sql` → `npm run admin:bootstrap -- --email you@example.com --password '...'` → `npm run build` → `pm2 start ecosystem.config.cjs` (or `npx wrangler pages dev dist --d1=webapp-production --r2=webapp-photos --local --port 3000`)
 - **Reset local DB**: `npm run db:reset`
-- **Last Updated**: 2026-08-27
+- **Before any production deploy**: run `npm run check`, review `docs/SECURITY_INCIDENT_REMEDIATION.md`, and configure real (non-placeholder) D1/R2 bindings in `wrangler.jsonc`.
+- **Last Updated**: 2026-09-13
+
 # storybookclone

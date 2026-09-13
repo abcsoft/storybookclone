@@ -60,10 +60,10 @@ export function adminLogin(msg?: string) {
     <img src="/static/img/logo.png" alt="" width="48" height="48">
     <h1>Admin Panel</h1>
     ${msg ? `<p class="a-notice">${esc(msg)}</p>` : ''}
-    <label>Email<input name="email" type="email" required value="admin@wonderwraps.com"></label>
-    <label>Password<input name="password" type="password" required></label>
+    <label>Email<input name="email" type="email" required autocomplete="username"></label>
+    <label>Password<input name="password" type="password" required autocomplete="current-password"></label>
     <button type="submit">Sign in</button>
-    <p class="tiny">Default local admin: admin@wonderwraps.com / admin123 (change it before going live)</p>
+    <p class="tiny">No admin yet? Run <code>npm run admin:bootstrap -- --email you@example.com --password '...'</code> locally (see README).</p>
   </form>
 </body>
 </html>`
