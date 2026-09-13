@@ -245,21 +245,56 @@ h1, h2, h3 { letter-spacing: -.03em; line-height: 1.08; }
 .career-card { background: #fff; border-radius: 16px; overflow: hidden; box-shadow: var(--shadow); }
 .career-card img { aspect-ratio: 3/4; object-fit: cover; width: 100%; }
 .career-card h3 { margin: 0; padding: 12px; text-align: center; }
-.ages { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+/* Confirmed pre-existing defect: this rule targeted `.ages`, but the
+   markup (homePage()'s age picker) has always used `age-grid` — the grid
+   never applied, and since .age-card is an <a> (inline by default) with
+   no `display` of its own, its `min-height`/`position:relative` had no
+   effect either (min-height is a no-op on purely inline elements), so
+   the whole section collapsed to zero height. Both fixed below. */
+.age-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
 .age-card {
-  border-radius: 24px; overflow: hidden; position: relative; min-height: 280px; color: #fff;
+  display: block; border-radius: 24px; overflow: hidden; position: relative; min-height: 280px; color: #fff;
   box-shadow: var(--shadow);
 }
 .age-card img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
-.age-card span {
-  position: absolute; left: 16px; bottom: 16px; z-index: 1;
-  background: rgba(0,0,0,.45); padding: 8px 14px; border-radius: 999px; font-weight: 800;
+/* Confirmed pre-existing defect: .age-info (title/description) had no
+   position rule, so it painted in normal flow UNDER the absolutely-
+   positioned <img> above it — the age title/copy were rendered but
+   completely hidden behind the photo, only the "Explore" pill was
+   visible (it had its own, now-removed, absolute-positioning rule). */
+.age-card .age-info {
+  position: absolute; inset: auto 0 0 0; z-index: 1;
+  padding: 22px 18px 18px;
+  background: linear-gradient(to top, rgba(20,10,30,.85), rgba(20,10,30,0));
+}
+.age-card .age-info h3 { margin: 0 0 4px; font-size: 20px; }
+.age-card .age-info p { margin: 0 0 12px; font-size: 13px; opacity: .92; }
+.age-card .age-info .btn-sm {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: rgba(255,255,255,.18); padding: 8px 14px; border-radius: 999px; font-weight: 800;
 }
 .faq-wrap { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
-details.faq {
+.faq-group { display: flex; flex-direction: column; gap: 10px; }
+.faq-group h2 { font-size: 20px; margin: 0 0 4px; }
+/* Confirmed pre-existing defect: this rule targeted `details.faq`, but the
+   markup (faqsPage(), homePage()) has always emitted `faq-item` — the FAQ
+   accordions were unstyled (bare browser <details>) on every page that
+   used them. Matching the real class name fixes both. */
+details.faq-item {
   background: var(--soft); border-radius: 14px; padding: 4px 18px;
   border: 1px solid var(--line);
 }
+details.faq-item summary { cursor: pointer; font-weight: 700; padding: 14px 0; list-style: none; }
+details.faq-item summary::-webkit-details-marker { display: none; }
+details.faq-item summary::after { content: '+'; float: right; font-weight: 800; color: var(--purple-dark); }
+details.faq-item[open] summary::after { content: '\2212'; }
+details.faq-item p { margin: 0 0 16px; color: #6b6b73; }
+.section-head.centered { flex-direction: column; align-items: center; text-align: center; }
+.section-foot { margin: 22px 0 0; }
+.section-foot.centered { text-align: center; }
+.feature-list { list-style: none; margin: 0 0 22px; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.feature-list li { display: flex; align-items: center; gap: 10px; font-weight: 600; }
+.feature-list i { color: var(--purple-dark); width: 20px; text-align: center; }
 details.faq summary { cursor: pointer; font-weight: 800; padding: 14px 0; list-style: none; }
 details.faq summary::-webkit-details-marker { display: none; }
 details.faq p { margin: 0 0 16px; color: var(--muted); }

@@ -49,13 +49,45 @@ export function homePage(opts: {
     </div>
   </section>
 
+  <!-- BESTSELLERS -->
+  <section class="section">
+    <div class="wrap">
+      <div class="section-head">
+        <div>
+          <p class="eyebrow">Most Loved</p>
+          <h2>Trending personalised storybooks</h2>
+        </div>
+        <a class="link" href="/books">See all books <i class="fas fa-arrow-right"></i></a>
+      </div>
+      <div class="grid-4">
+        ${opts.bestsellers.slice(0, 4).map(productCard).join('')}
+      </div>
+    </div>
+  </section>
+
+  <!-- NEW RELEASES -->
+  <section class="section">
+    <div class="wrap">
+      <div class="section-head">
+        <div>
+          <p class="eyebrow">Fresh Stories</p>
+          <h2>New releases your kids will adore</h2>
+        </div>
+        <a class="link" href="/books">Browse catalog <i class="fas fa-arrow-right"></i></a>
+      </div>
+      <div class="grid-4">
+        ${opts.newReleases.slice(0, 4).map(productCard).join('')}
+      </div>
+    </div>
+  </section>
+
   <!-- HOW IT WORKS -->
   <section class="section how">
     <div class="wrap">
       <div class="section-head">
         <div>
           <p class="eyebrow">Quick & Easy</p>
-          <h2>How the magic happens in 3 simple steps</h2>
+          <h2>How the magic happens in 4 simple steps</h2>
         </div>
       </div>
       <div class="steps">
@@ -73,26 +105,84 @@ export function homePage(opts: {
         </article>
         <article class="step">
           <div class="num">3</div>
+          <div class="step-icon"><img src="/static/img/step-4.webp" alt="" width="160" height="120"></div>
+          <h3>3. Personalise the details</h3>
+          <p>Pick their age, language, and cover, then write a heartfelt dedication before checking out.</p>
+        </article>
+        <article class="step">
+          <div class="num">4</div>
           <div class="step-icon"><img src="/static/img/step-3.webp" alt="" width="160" height="120"></div>
-          <h3>3. Receive your book</h3>
+          <h3>4. Receive your book</h3>
           <p>Printed on premium silky lustre pages, hardbound or softcover, delivered directly to your doorstep.</p>
         </article>
       </div>
     </div>
   </section>
 
-  <!-- BESTSELLERS -->
+  <!-- GIRLS' BOOKS -->
   <section class="section">
     <div class="wrap">
       <div class="section-head">
         <div>
-          <p class="eyebrow">Most Loved</p>
-          <h2>Trending personalised storybooks</h2>
+          <p class="eyebrow">For Her</p>
+          <h2>Girls' books she'll want to read again and again</h2>
         </div>
-        <a class="link" href="/books">See all books <i class="fas fa-arrow-right"></i></a>
+        <a class="link" href="/books?gender=girl">See all girls' books <i class="fas fa-arrow-right"></i></a>
       </div>
       <div class="grid-4">
-        ${opts.bestsellers.slice(0, 4).map(productCard).join('')}
+        ${opts.girls.slice(0, 4).map(productCard).join('')}
+      </div>
+    </div>
+  </section>
+
+  <!-- CUSTOMIZATION SHOWCASE -->
+  <section class="section bg-soft">
+    <div class="wrap cta-banner">
+      <div class="cta-copy">
+        <span class="badge">Made just for them</span>
+        <h2>Every detail, personalised by you</h2>
+        <p>Upload one photo and choose their name, age, language, and cover style. Add a private dedication, preview the finished pages, and only pay once you're happy with the result.</p>
+        <ul class="feature-list">
+          <li><i class="fas fa-image"></i> Real photo woven into every illustrated page</li>
+          <li><i class="fas fa-language"></i> Multiple languages and reading ages</li>
+          <li><i class="fas fa-heart"></i> A handwritten-style dedication, just for them</li>
+        </ul>
+        <a class="btn btn-purple" href="/books">Start personalising <i class="fas fa-arrow-right"></i></a>
+      </div>
+      <div class="cta-image">
+        <img src="/static/img/cta-reading.webp" alt="Personalised storybook preview" width="360" height="260">
+      </div>
+    </div>
+  </section>
+
+  <!-- BOYS' BOOKS -->
+  <section class="section">
+    <div class="wrap">
+      <div class="section-head">
+        <div>
+          <p class="eyebrow">For Him</p>
+          <h2>Boys' books built for big adventures</h2>
+        </div>
+        <a class="link" href="/books?gender=boy">See all boys' books <i class="fas fa-arrow-right"></i></a>
+      </div>
+      <div class="grid-4">
+        ${opts.boys.slice(0, 4).map(productCard).join('')}
+      </div>
+    </div>
+  </section>
+
+  <!-- CAREER DREAMS -->
+  <section class="section bg-soft">
+    <div class="wrap">
+      <div class="section-head">
+        <div>
+          <p class="eyebrow">Inspiring Future Dreams</p>
+          <h2>When I Grow Up… Career adventures</h2>
+        </div>
+        <a class="link" href="/books?career=1">All career books <i class="fas fa-arrow-right"></i></a>
+      </div>
+      <div class="grid-4">
+        ${opts.careers.slice(0, 4).map(productCard).join('')}
       </div>
     </div>
   </section>
@@ -133,38 +223,6 @@ export function homePage(opts: {
     </div>
   </section>
 
-  <!-- NEW RELEASES -->
-  <section class="section">
-    <div class="wrap">
-      <div class="section-head">
-        <div>
-          <p class="eyebrow">Fresh Stories</p>
-          <h2>New releases your kids will adore</h2>
-        </div>
-        <a class="link" href="/books">Browse catalog <i class="fas fa-arrow-right"></i></a>
-      </div>
-      <div class="grid-4">
-        ${opts.newReleases.slice(0, 4).map(productCard).join('')}
-      </div>
-    </div>
-  </section>
-
-  <!-- CAREER DREAMS -->
-  <section class="section bg-soft">
-    <div class="wrap">
-      <div class="section-head">
-        <div>
-          <p class="eyebrow">Inspiring Future Dreams</p>
-          <h2>When I Grow Up… Career adventures</h2>
-        </div>
-        <a class="link" href="/books?career=1">All career books <i class="fas fa-arrow-right"></i></a>
-      </div>
-      <div class="grid-4">
-        ${opts.careers.slice(0, 4).map(productCard).join('')}
-      </div>
-    </div>
-  </section>
-
   <!-- STICKERS CALLOUT -->
   <section class="section">
     <div class="wrap cta-banner">
@@ -177,6 +235,25 @@ export function homePage(opts: {
       <div class="cta-image">
         <img src="/static/img/stickers-girl.webp" alt="Personalised stickers preview" width="360" height="260">
       </div>
+    </div>
+  </section>
+
+  <!-- FAQ PREVIEW -->
+  <section class="section bg-soft">
+    <div class="wrap" style="max-width:760px">
+      <div class="section-head centered">
+        <p class="eyebrow">Got Questions?</p>
+        <h2>Frequently asked questions</h2>
+      </div>
+      <div class="faq-group">
+        ${faqs.slice(0, 5).map(f => `
+          <details class="faq-item">
+            <summary>${esc(f.q)}</summary>
+            <p>${esc(f.a)}</p>
+          </details>
+        `).join('')}
+      </div>
+      <p class="section-foot centered"><a class="link" href="/faqs">See all FAQs <i class="fas fa-arrow-right"></i></a></p>
     </div>
   </section>
   `
