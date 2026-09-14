@@ -8,7 +8,7 @@
 //     exposed in the findings;
 //   * the CLI exits non-zero on a finding and zero on a clean tree.
 import { describe, it, expect, afterAll } from 'vitest'
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, symlinkSync, readFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
@@ -16,6 +16,7 @@ import { fileURLToPath } from 'node:url'
 import {
   shouldExcludeRelPath,
   discoverArchiveFiles,
+  discoverArchiveEntries,
   discoverGitFiles,
   scanFiles,
   scanText,
@@ -127,6 +128,87 @@ describe('git-mode discovery', () => {
     expect(files).toContain('src/index.tsx')
     expect(files.some((f) => f.startsWith('node_modules/'))).toBe(false)
     expect(files).not.toContain('scripts/secrets-scan.mjs') // allow-listed
+  })
+})
+
+describe('archive mode symlink safety (Phase-0 audit L-3)', () => {
+  it('skips a symlinked file that points outside the scan root and reports the count', () => {
+    const root = makeTempTree()
+    const outsideDir = makeTempTree()
+    mkdirSync(join(root, 'src'), { recursive: true })
+    writeFileSync(join(root, 'src', 'ok.ts'), 'export const ok = true')
+    // The target really does contain a secret — so following the link WOULD be a finding.
+    writeFileSync(join(outsideDir, 'credentials.txt'), `token=${FAKE_STRIPE}`)
+    try {
+      symlinkSync(join(outsideDir, 'credentials.txt'), join(root, 'src', 'leak.ts'), 'file')
+    } catch (err: any) {
+      // Some Windows environments cannot create symlinks (needs privilege).
+      if (err.code === 'EPERM' || err.code === 'EACCES' || err.code === 'UNKNOWN') return
+      throw err
+    }
+
+    const { files, skippedSymlinks } = discoverArchiveEntries(root)
+    expect(files).toContain('src/ok.ts')
+    expect(files).not.toContain('src/leak.ts') // never followed
+    expect(skippedSymlinks).toBe(1)
+
+    // Negative control: the escaped target would be a finding if scanned.
+    const direct = scanFiles(outsideDir, discoverArchiveFiles(outsideDir))
+    expect(direct.some((f) => f.rule === 'Stripe secret key')).toBe(true)
+
+    // And the CLI over `root` stays clean (proof it did not follow the link).
+    const status = run(['--mode=archive', `--root=${root}`])
+    expect(status).toBe(0)
+  })
+
+  it('skips a symlinked directory (which could point outside the root)', () => {
+    const root = makeTempTree()
+    const outsideDir = makeTempTree()
+    writeFileSync(join(outsideDir, 'leak.txt'), `token=${FAKE_STRIPE}`)
+    try {
+      symlinkSync(outsideDir, join(root, 'vendor'), 'junction')
+    } catch (err: any) {
+      if (err.code === 'EPERM' || err.code === 'EACCES' || err.code === 'UNKNOWN') return
+      throw err
+    }
+    const { files, skippedSymlinks } = discoverArchiveEntries(root)
+    expect(files).toEqual([])
+    expect(skippedSymlinks).toBe(1)
+  })
+})
+
+describe('unreadable file fails closed (Phase-0 audit L-3)', () => {
+  it('scanFiles reports an unreadable regular file instead of silently skipping it', () => {
+    const root = makeTempTree()
+    writeFileSync(join(root, 'a.txt'), 'clean content')
+    mkdirSync(join(root, 'src'), { recursive: true })
+    writeFileSync(join(root, 'src', 'locked.ts'), 'whatever')
+    const findings = scanFiles(root, ['a.txt', 'src/locked.ts'], {
+      readFile: (p: string) => {
+        if (p.endsWith('locked.ts')) throw Object.assign(new Error('EACCES'), { code: 'EACCES' })
+        return readFileSync(p, 'utf8')
+      }
+    })
+    expect(findings).toHaveLength(1)
+    expect(findings[0].file).toBe('src/locked.ts')
+    expect(findings[0].unreadable).toBe(true)
+    expect(findings[0].rule).toMatch(/unreadable/i)
+    // Only a path + error code — never file content.
+    expect(JSON.stringify(findings)).not.toContain('whatever')
+  })
+
+  it('run() exits non-zero (not a false clean) when a file cannot be read', () => {
+    const root = makeTempTree()
+    mkdirSync(join(root, 'src'), { recursive: true })
+    writeFileSync(join(root, 'src', 'ok.ts'), 'export const ok = true')
+    writeFileSync(join(root, 'src', 'locked.ts'), 'const hidden = 1')
+    const status = run(['--mode=archive', `--root=${root}`], {
+      readFile: (p: string) => {
+        if (p.endsWith('locked.ts')) throw Object.assign(new Error('EACCES'), { code: 'EACCES' })
+        return readFileSync(p, 'utf8')
+      }
+    })
+    expect(status).toBe(1)
   })
 })
 

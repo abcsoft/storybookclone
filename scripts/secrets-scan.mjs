@@ -22,7 +22,7 @@
 // Privacy: a matched secret VALUE is never printed — findings report the
 // file path and the rule name only. Exit code is non-zero on any finding.
 import { execFileSync } from 'node:child_process'
-import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs'
+import { readFileSync, readdirSync, statSync, existsSync, realpathSync } from 'node:fs'
 import { join, relative, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
@@ -74,9 +74,30 @@ export function discoverGitFiles(cwd, { exec = execFileSync } = {}) {
     .filter((f) => !shouldExcludeRelPath(f))
 }
 
-/** Safe recursive walk used when there is no `.git`. */
-export function discoverArchiveFiles(rootDir) {
-  const found = []
+/**
+ * Safe recursive walk used when there is no `.git`.
+ *
+ * Symlink safety (Phase-0 audit L-3): a symlink can point anywhere (e.g. a
+ * `src/leak.ts` symlink to `C:\Users\me\.aws\credentials`), so archive mode
+ * NEVER follows one. Symbolic links are skipped and counted, and the scan
+ * root itself is resolved with realpath so a symlinked root still contains
+ * its own files. Returns `{ files, skippedSymlinks }` — the count is
+ * reported so a genuinely-skipped file is visible, never silent.
+ */
+export function discoverArchiveEntries(rootDir) {
+  const files = []
+  let skippedSymlinks = 0
+  // Realpath the root so a symlinked root still has a real containment base.
+  let rootReal = rootDir
+  try {
+    rootReal = realpathSync(rootDir)
+  } catch {
+    /* fall back to the lexical root */
+  }
+  const outsideRoot = (p) => {
+    const rel = relative(rootReal, p)
+    return rel === '' || rel.startsWith('..') || /^[A-Za-z]:/.test(rel)
+  }
   const walk = (dir) => {
     let entries
     try {
@@ -93,15 +114,36 @@ export function discoverArchiveFiles(rootDir) {
         continue
       }
       if (shouldExcludeRelPath(rel)) continue
+      // Never follow a symlink (file or directory): it could escape the root.
+      if (entry.isSymbolicLink()) {
+        skippedSymlinks++
+        continue
+      }
       if (entry.isDirectory()) {
         walk(abs)
-      } else if (entry.isFile() || entry.isSymbolicLink()) {
-        found.push(rel)
+      } else if (entry.isFile()) {
+        // Containment backstop: only scan regular files physically under root.
+        let real = abs
+        try {
+          real = realpathSync(abs)
+        } catch {
+          continue
+        }
+        if (outsideRoot(real)) {
+          skippedSymlinks++
+          continue
+        }
+        files.push(rel)
       }
     }
   }
   walk(rootDir)
-  return found.sort()
+  return { files: files.sort(), skippedSymlinks }
+}
+
+/** Backwards-compatible file list (see `discoverArchiveEntries`). */
+export function discoverArchiveFiles(rootDir) {
+  return discoverArchiveEntries(rootDir).files
 }
 
 /** Scans text content, returning the names of rules that matched (never values). */
@@ -118,6 +160,11 @@ export function scanText(content) {
 /**
  * Scans a set of repo-relative files under `rootDir`. Returns a list of
  * `{ file, rule, count }` — deliberately never the matched value.
+ *
+ * An unreadable regular file FAILS CLOSED (Phase-0 audit L-3): silently
+ * skipping it would let a chmod-000 file hide a secret and still report a
+ * clean scan. Instead the file is reported as a finding (path + rule name
+ * only, no content) so the run exits non-zero and a human investigates.
  */
 export function scanFiles(rootDir, files, { readFile = (p) => readFileSync(p, 'utf8'), allowList = IGNORE_FILES } = {}) {
   const findings = []
@@ -126,8 +173,15 @@ export function scanFiles(rootDir, files, { readFile = (p) => readFileSync(p, 'u
     let content
     try {
       content = readFile(join(rootDir, file))
-    } catch {
-      continue // unreadable/binary — skip
+    } catch (err) {
+      findings.push({
+        file: toPosix(file),
+        rule: 'Unreadable file (scan failed closed)',
+        count: 1,
+        unreadable: true,
+        errorCode: err && typeof err === 'object' && 'code' in err ? String(err.code) : 'READ_ERROR'
+      })
+      continue
     }
     if (typeof content !== 'string' || content.includes('\u0000')) continue // binary
     for (const hit of scanText(content)) {
@@ -144,8 +198,8 @@ export function resolveMode(rootDir, requested = 'auto') {
 }
 
 export function discoverFiles(rootDir, mode) {
-  if (mode === 'git') return discoverGitFiles(rootDir)
-  return discoverArchiveFiles(rootDir)
+  if (mode === 'git') return { files: discoverGitFiles(rootDir), skippedSymlinks: 0 }
+  return discoverArchiveEntries(rootDir)
 }
 
 export function parseArgs(argv) {
@@ -162,7 +216,7 @@ export function parseArgs(argv) {
   return opts
 }
 
-export function run(argv = process.argv.slice(2)) {
+export function run(argv = process.argv.slice(2), deps = {}) {
   let opts
   try {
     opts = parseArgs(argv)
@@ -186,20 +240,36 @@ export function run(argv = process.argv.slice(2)) {
   if (opts.mode === 'git' && mode !== 'git') return 2
 
   let files
+  let skippedSymlinks = 0
   try {
-    files = discoverFiles(rootDir, mode)
+    const discovered = discoverFiles(rootDir, mode)
+    files = discovered.files
+    skippedSymlinks = discovered.skippedSymlinks || 0
   } catch (err) {
     // A forced git mode with no usable .git is an operator error, not a pass.
     console.error(`secrets:scan: ${mode} mode failed to discover files: ${err.message}`)
     return 2
   }
+  if (skippedSymlinks > 0) {
+    // Report the count — a skipped symlink is deliberate, not silent.
+    console.log(`secrets:scan [${mode}]: skipped ${skippedSymlinks} symbolic link(s) (never followed, so they cannot escape the scan root)`)
+  }
 
-  const findings = scanFiles(rootDir, files)
+  const findings = scanFiles(rootDir, files, deps.readFile ? { readFile: deps.readFile } : undefined)
+  const unreadable = findings.filter((f) => f.unreadable)
   for (const f of findings) {
-    console.error(`POSSIBLE SECRET: ${f.file} — ${f.rule} (${f.count} match${f.count > 1 ? 'es' : ''}, value redacted)`)
+    if (f.unreadable) {
+      console.error(`SCAN INCOMPLETE: ${f.file} — unreadable regular file (${f.errorCode}, content redacted). The scan cannot prove this file is clean.`)
+    } else {
+      console.error(`POSSIBLE SECRET: ${f.file} — ${f.rule} (${f.count} match${f.count > 1 ? 'es' : ''}, value redacted)`)
+    }
   }
   if (findings.length > 0) {
-    console.error(`\nsecrets:scan [${mode}] found ${findings.length} possible secret(s) across ${new Set(findings.map((f) => f.file)).size} file(s). Investigate and remove/rotate before committing.`)
+    const secrets = findings.length - unreadable.length
+    console.error(
+      `\nsecrets:scan [${mode}] failed: ${secrets} possible secret(s) and ${unreadable.length} unreadable file(s) across ` +
+        `${new Set(findings.map((f) => f.file)).size} file(s). Investigate and remove/rotate before committing.`
+    )
     return 1
   }
   console.log(`secrets:scan [${mode}]: no matches for known secret patterns across ${files.length} file(s).`)

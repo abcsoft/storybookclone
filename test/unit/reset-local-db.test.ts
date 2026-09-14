@@ -3,10 +3,17 @@
 // reset from ever deleting anything but this repo's exact local
 // Wrangler D1 state directory.
 import { describe, it, expect, afterAll } from 'vitest'
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, symlinkSync } from 'node:fs'
 import { tmpdir, homedir } from 'node:os'
 import { join } from 'node:path'
-import { resolveSafeTarget, isRepoToolCommandLine, stopRepoToolProcesses, removeTarget, D1_STATE_REL } from '../../scripts/reset-local-db.mjs'
+import {
+  resolveSafeTarget,
+  assertRealPathContained,
+  isRepoToolCommandLine,
+  stopRepoToolProcesses,
+  removeTarget,
+  D1_STATE_REL
+} from '../../scripts/reset-local-db.mjs'
 
 const tempDirs: string[] = []
 function makeRoot() {
@@ -41,6 +48,42 @@ describe('resolveSafeTarget', () => {
   })
 })
 
+describe('assertRealPathContained (Phase-0 audit L-4 symlink chain)', () => {
+  it('accepts a normal (or not-yet-existing) D1 state path', () => {
+    const root = makeRoot()
+    expect(assertRealPathContained(root, resolveSafeTarget(root))).toBe(true)
+    mkdirSync(join(root, 'real-target'), { recursive: true })
+    expect(assertRealPathContained(root, join(root, 'real-target'))).toBe(true)
+  })
+
+  it('refuses a symlinked ANCESTOR that escapes the repo root', () => {
+    const root = makeRoot()
+    const outside = makeRoot() // a different directory entirely
+    try {
+      symlinkSync(outside, join(root, '.wrangler'), 'junction')
+    } catch (err: any) {
+      if (err.code === 'EPERM' || err.code === 'EACCES' || err.code === 'UNKNOWN') return
+      throw err
+    }
+    expect(() => assertRealPathContained(root, join(root, '.wrangler', 'state', 'v3', 'd1'))).toThrow(/symlink escape|escapes the repo root/)
+    // And the full guard (resolveSafeTarget) also refuses it.
+    expect(() => resolveSafeTarget(root)).toThrow(/symlink escape|escapes the repo root/)
+  })
+
+  it('refuses a symlinked TARGET that escapes the repo root', () => {
+    const root = makeRoot()
+    const outside = makeRoot()
+    mkdirSync(join(root, '.wrangler', 'state', 'v3'), { recursive: true })
+    try {
+      symlinkSync(outside, join(root, '.wrangler', 'state', 'v3', 'd1'), 'junction')
+    } catch (err: any) {
+      if (err.code === 'EPERM' || err.code === 'EACCES' || err.code === 'UNKNOWN') return
+      throw err
+    }
+    expect(() => assertRealPathContained(root, join(root, '.wrangler', 'state', 'v3', 'd1'))).toThrow(/symlink escape|escapes the repo root/)
+  })
+})
+
 describe('isRepoToolCommandLine', () => {
   const root = makeRoot()
   it('matches this repo\u2019s workerd/wrangler processes for the current platform', () => {
@@ -58,6 +101,17 @@ describe('isRepoToolCommandLine', () => {
     expect(isRepoToolCommandLine(`${join(makeRoot(), 'node_modules', 'wrangler', 'bin', 'wrangler.js')} pages dev`, root)).toBe(false)
     expect(isRepoToolCommandLine(join(root, 'code.exe'), root)).toBe(false)
     expect(isRepoToolCommandLine('', root)).toBe(false)
+  })
+
+  it('is not fooled by file names that merely contain a tool word (Phase-0 audit L-4)', () => {
+    // `wrangler.jsonc` etc. must never look like a wrangler executable.
+    expect(isRepoToolCommandLine(`node ${join(root, 'wrangler.jsonc')}`, root)).toBe(false)
+    expect(isRepoToolCommandLine(`node ${join(root, 'my-wrangler-notes.txt')}`, root)).toBe(false)
+    expect(isRepoToolCommandLine(`node ${join(root, 'miniflare-config.json')}`, root)).toBe(false)
+    expect(isRepoToolCommandLine(`node ${join(root, 'scripts', 'wrangler-helper.mjs')}`, root)).toBe(false)
+    // A word-boundary failure: a sibling checkout whose name CONTAINS this root.
+    const sibling = root + '-backup'
+    expect(isRepoToolCommandLine(`${join(sibling, 'node_modules', 'wrangler', 'bin', 'wrangler.js')} pages dev`, root)).toBe(false)
   })
 })
 

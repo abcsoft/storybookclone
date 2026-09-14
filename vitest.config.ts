@@ -6,6 +6,12 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['test/unit/**/*.test.ts'],
+    // Each test file builds its own fully-migrated fake D1 (14 migrations), so
+    // unbounded parallelism starves CPU and can push a legitimate heavy test
+    // (e.g. the hand-written PNG unfilter decode) past vitest's 5s default
+    // timeout. Bounding workers keeps the gate deterministic without relaxing
+    // any assertion or timeout.
+    maxWorkers: 4,
     // Phase 0 scope: fast, deterministic unit tests only. Integration
     // (real local-D1 migration smoke test) and e2e (browser journey) run via
     // their own npm scripts — see package.json / STORYBOOKCLONE_COMPLETION_CODING_PACK.md.

@@ -283,18 +283,28 @@ All under `GET/POST /admin/*` guarded by the `admin` role middleware.
 
 ### 6.5 Confirmation evidence (source references)
 
-- C-04: `src/personalization/uploads.ts:126` `getOwnedCompletedUpload()` checks only `owner_token`.
-- C-05: `src/index.tsx:515` (`q.name || 'gando'`), `src/pages_pdp.ts:266` (`value="gando"`).
-- C-06/C-07: `src/index.tsx:1110` sets `globalThis.__pdpAllProducts`; `src/admin_pdp.ts:367` interpolates it.
-- C-03: `src/orders.ts:162` requires `book.state === 'ready_to_generate'`.
-- D-01: `src/personalization/user-books.ts:18` `childNameMaxLength: 24` vs `src/pages_pdp.ts:266` `maxlength="25"`.
-- D-02: `src/pages_pdp.ts:245` `accept="image/jpeg,image/png,image/webp"` vs `src/photo-policy.ts` (JPEG/PNG only).
-- D-03: `src/personalization/user-books.ts:167` allows `age_min-2 .. age_max+2` while the message says `between age_min and age_max`.
-- D-09: `migrations/0001_initial.sql` uses `REAL` for prices/totals.
-- S-03: `src/index.tsx:444` `GET /logout` destroys the session.
-- S-04: `src/index.tsx:112` `app.use('/api/*', cors())`.
-- S-10: `src/index.tsx:955` revenue = `SUM(total)` for all non-cancelled orders.
-- S-11: `wrangler.jsonc` has no `triggers`; `src/personalization/retention.ts:173` handler unwired.
+References are given as **symbol/function + file:line** so a later line shift does
+not invalidate the evidence; the line numbers are the Phase-0 baseline
+(`6e080e8`) positions. Phase 1 closure status is tracked in
+`docs/V2_PHASE1_COMPLETION_REPORT.md`.
+
+| ID | Symbol / function | Reference | Evidence |
+|---|---|---|---|
+| C-04 | `getOwnedCompletedUpload()` | `src/personalization/uploads.ts:126` | checks only `owner_token`; ignores `completed_at`/`expires_at`/`consumed_at` |
+| C-05 | reader route child-name fallback | `src/index.tsx:486-487` (`q.name \|\| q.childName \|\| 'gando'`) | private/test placeholder leaks to production |
+| C-05 | `productDetail` name input | `src/pages_pdp.ts:266` (`placeholder="e.g. gando" value="gando"`) | pre-filled private placeholder |
+| C-05 | reader default state | `src/pages_pdp.ts:320`, `src/pages_reader.ts:25`, `public/static/pdp.js:356,411`, `public/static/reader.js:10` | same fallback in SSR + client JS |
+| C-06/C-07 | `adminPdpEditor()` / `tabRelated()` / `renderRelatedPicker()` | `src/admin_pdp.ts:68` (unawaited `tabRelated`), `:354`, `:362`, `:367` (`window.__pdpRelated = … globalThis.__pdpAllProducts`) | picker never renders; request data in isolate global |
+| C-07 | globalThis write | `src/index.tsx:1082` (`globalThis.__pdpAllProducts = …`) | written per admin PDP request |
+| C-03 | `createOrder()` state gate | `src/orders.ts:162` (`book.state !== 'ready_to_generate'`) | checkout rejects every non-`ready_to_generate` book |
+| D-01 | `PERSONALIZATION_LIMITS.childNameMaxLength` | `src/personalization/user-books.ts:18` (`24`) vs `src/pages_pdp.ts:266` (`maxlength="25"`), `src/pages_reader.ts:55`, `public/static/pdp.js:58-65` (`/25`) | browser/server max disagree |
+| D-02 | `PHOTO_POLICY` / `photoPolicySummary()` | `src/photo-policy.ts:26-45` (jpeg/png only) vs `src/pages_pdp.ts:245` and `src/pages.ts:379` (`accept="…image/webp"`) | WebP offered by the file picker, rejected server-side |
+| D-03 | `patchPersonalization()` age rule | `src/personalization/user-books.ts:167-168` (`age_min-2 .. age_max+2` vs message `between age_min and age_max`) | validation band ≠ error text |
+| D-09 | money columns | `migrations/0001_initial.sql` (`REAL` for `products.price`, `orders.subtotal/discount/shipping/total`, `order_items.unit_price`) | floating-point financial truth |
+| S-03 | `GET /logout` / `POST /logout` | `src/index.tsx:410` (POST), `:416` (GET) | GET destroys the session |
+| S-04 | CORS middleware | `src/index.tsx:112` (`app.use('/api/*', cors())`) | Hono defaults → `origin: '*'` |
+| S-10 | dashboard metric | `src/index.tsx:926-927` (`SUM(total) … status NOT IN ('cancelled')`), label `src/admin.ts:82` (`'Revenue (paid orders)'`) | every non-cancelled order counted as revenue |
+| S-11 | `scheduledRetentionHandler()` | `src/personalization/retention.ts:173`; `wrangler.jsonc` (no `triggers.crons`, no `scheduled` export) | retention sweep never deployed |
 
 ## 7. Verification state captured in Phase 0
 

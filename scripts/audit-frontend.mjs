@@ -1,27 +1,130 @@
 #!/usr/bin/env node
 // Live-browser functional + visual audit (Chromium via Playwright) of every
-// public route plus the admin panel, at desktop and mobile widths. Not a
-// pass/fail gate like test-e2e.mjs — it's a reconnaissance + evidence tool:
-// screenshots + console/network error capture, written to
-// audit-evidence/<runLabel>/ (gitignored; never committed).
+// public route plus the admin panel, at desktop and mobile widths. Writes
+// screenshots + console/network findings to audit-evidence/<runLabel>/
+// (gitignored; never committed).
 //
-// Usage: node scripts/audit-frontend.mjs <before|after>
+// Safety contract (Phase-0 audit L-2):
+//  1. it never binds a fixed port — it picks an isolated FREE port;
+//  2. before auditing a single page it verifies the
+//     StorybookClone-specific `photo-policy` fingerprint (and a repo-specific
+//     storefront marker), so a foreign app squatting the port can never be
+//     audited as if it were this repo;
+//  3. a fingerprint mismatch is a hard failure (non-zero exit);
+//  4. findings produce a non-zero exit code, so the audit is a real gate.
+//
+// Usage: node scripts/audit-frontend.mjs <runLabel>
 import { chromium } from 'playwright'
 import { spawn, execSync, execFileSync } from 'node:child_process'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
+import net from 'node:net'
 import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
-const root = dirname(dirname(fileURLToPath(import.meta.url)))
-const PORT = 8798
-const BASE = `http://127.0.0.1:${PORT}`
-const runLabel = process.argv[2] || 'before'
-const evidenceDir = join(root, 'audit-evidence', runLabel)
-mkdirSync(evidenceDir, { recursive: true })
+export const root = dirname(dirname(fileURLToPath(import.meta.url)))
 
-const DESKTOP = { width: 1280, height: 900 }
-const MOBILE = { width: 390, height: 844 }
+// App-identity fingerprint: this endpoint exists only in this repo and its
+// shape is the server-owned photo policy that the PDP/browser contract is
+// generated from. A foreign app returns 404 / different JSON / a generic
+// "accept webp" list and is rejected.
+export const FINGERPRINT_PATH = '/api/v1/uploads/photo-policy'
+// Secondary storefront marker: the repo's own bundled client script.
+export const STOREFRONT_MARKER = '/static/app.js'
+export const DEFAULT_AUDIT_PORT = 8798
+
+export function isPortFree(port) {
+  return new Promise((resolve) => {
+    const srv = net.createServer()
+    srv.once('error', () => resolve(false))
+    srv.once('listening', () => srv.close(() => resolve(true)))
+    srv.listen(port, '127.0.0.1')
+  })
+}
+
+export async function findFreePort(start = DEFAULT_AUDIT_PORT, attempts = 50) {
+  for (let i = 0; i < attempts; i++) {
+    const port = start + i
+    if (await isPortFree(port)) return port
+  }
+  throw new Error(`no free port in range ${start}..${start + attempts - 1}`)
+}
+
+/**
+ * Pure schema check for the StorybookClone photo-policy fingerprint.
+ * Requires the repo's exact contract shape: jpeg+png allowed, webp NOT
+ * advertised (the server deliberately rejects WebP — defect D-02), and
+ * numeric dimension/size bounds.
+ */
+export function checkPolicyFingerprint(policy) {
+  if (!policy || typeof policy !== 'object') return { ok: false, reason: 'response is not a JSON object' }
+  const formats = Array.isArray(policy.allowedFormats) ? policy.allowedFormats.map((f) => String(f).toLowerCase()) : null
+  if (!formats) return { ok: false, reason: 'allowedFormats is not an array' }
+  if (!formats.includes('jpeg') || !formats.includes('png')) {
+    return { ok: false, reason: `allowedFormats missing jpeg/png (got ${JSON.stringify(policy.allowedFormats)})` }
+  }
+  if (formats.includes('webp')) {
+    return { ok: false, reason: 'allowedFormats advertises webp, which this repo deliberately rejects' }
+  }
+  for (const key of ['minDimensionPx', 'maxDimensionPx', 'maxMB']) {
+    if (typeof policy[key] !== 'number' || !Number.isFinite(policy[key])) {
+      return { ok: false, reason: `${key} is not a finite number` }
+    }
+  }
+  return { ok: true, reason: 'ok' }
+}
+
+/**
+ * Verify the server on `port` really is this repo's app. Never audits a
+ * foreign app: any failure returns `{ok:false, reason}` so the caller fails.
+ */
+export async function verifyServerFingerprint(port, fetchImpl = fetch) {
+  const base = `http://127.0.0.1:${port}`
+  let res
+  try {
+    res = await fetchImpl(base + FINGERPRINT_PATH)
+  } catch (err) {
+    return { ok: false, reason: `fingerprint request failed: ${err.message}` }
+  }
+  if (!res.ok) return { ok: false, reason: `fingerprint endpoint returned HTTP ${res.status}` }
+  let policy
+  try {
+    policy = await res.json()
+  } catch {
+    return { ok: false, reason: 'fingerprint endpoint did not return JSON' }
+  }
+  const check = checkPolicyFingerprint(policy)
+  if (!check.ok) return { ok: false, reason: `photo-policy fingerprint mismatch: ${check.reason}` }
+
+  // Secondary identity check — a foreign app could still happen to serve a
+  // compatible policy JSON, so require the repo's own storefront bundle too.
+  try {
+    const home = await fetchImpl(base + '/')
+    if (!home.ok) return { ok: false, reason: `storefront marker request returned HTTP ${home.status}` }
+    const body = await home.text()
+    if (!body.includes(STOREFRONT_MARKER)) {
+      return { ok: false, reason: `storefront marker ${STOREFRONT_MARKER} not found in / (foreign app?)` }
+    }
+  } catch (err) {
+    return { ok: false, reason: `storefront marker request failed: ${err.message}` }
+  }
+  return { ok: true, reason: 'ok', policy }
+}
+
+/** The audit is a gate: any finding is a non-zero exit. */
+export function exitCodeForFindings(findings) {
+  return Array.isArray(findings) && findings.length > 0 ? 1 : 0
+}
+
+export function isMainModule() {
+  const entry = process.argv[1]
+  if (!entry) return false
+  try {
+    return import.meta.url === pathToFileURL(entry).href
+  } catch {
+    return false
+  }
+}
 
 // Regression guard (Phase 2, section 0): none of these disabled/not-yet-
 // built claims may ever appear on a real page — see docs/PHASE_2_PERSONALIZATION_DOMAIN.md.
@@ -30,8 +133,33 @@ const OVERCLAIM_PATTERNS = [
   /preview the finished pages,?\s*and only pay/i,
   /finished (illustrated )?pages? (are|is) ready/i,
   /your (book|story) has been generated/i,
-  /generated (book|story|preview) is ready/i
+  /generated (book|story|preview) is ready/i,
+  // Phase 1 truth guards (T-01..T-06): no promise of email/preview/PDF/
+  // shipping/refund/tracking/production while those pipelines do not exist.
+  /we'?ll email a preview/i,
+  /preview (by|via) email/i,
+  /we'?ll email you once your (digital copy|pdf) is ready/i,
+  /digital copy (is|will be) ready/i,
+  /create an account to track/i,
+  /track (it|your order) from my books/i,
+  /we accept paypal/i,
+  /paypal and card payments/i,
+  /accepted payments/i,
+  /we ship to (over )?\d+/i,
+  /refund within \d+/i,
+  /money-?back guarantee/i,
+  /track your order using the tracking link/i,
+  /sent it to print/i,
+  /100% satisfaction/i,
+  /over 100,?000\+? (happy )?(families|children|parents)/i,
+  /\d+k\+ (parents|families) trust/i,
+  /featured (on|in)\b/i,
+  /award-winning/i,
+  /\d+% (more|increase)/i
 ]
+
+const DESKTOP = { width: 1280, height: 900 }
+const MOBILE = { width: 390, height: 844 }
 
 const PUBLIC_ROUTES = [
   ['/', 'home'],
@@ -69,7 +197,7 @@ const ADMIN_ROUTES = [
 ]
 
 function log(msg) {
-  console.log(`[audit:${runLabel}] ${msg}`)
+  console.log(`[audit] ${msg}`)
 }
 
 /**
@@ -81,7 +209,7 @@ function log(msg) {
  * which could be an unrelated app. Stale repo servers are already cleared by
  * the `db:reset` step below.
  */
-function killServerTree(pid) {
+export function killServerTree(pid) {
   if (!pid) return
   try {
     if (process.platform === 'win32') {
@@ -106,7 +234,7 @@ async function waitFor(url, timeoutMs = 45000) {
   return false
 }
 
-async function visit(page, path, name, viewportLabel, findings) {
+async function visit(base, page, path, name, viewportLabel, findings, evidenceDir) {
   const consoleErrors = []
   const failedRequests = []
   const onConsole = (msg) => {
@@ -130,7 +258,7 @@ async function visit(page, path, name, viewportLabel, findings) {
   try {
     await withDeadline(
       (async () => {
-        const res = await page.goto(BASE + path, { waitUntil: 'load', timeout: 20000 })
+        const res = await page.goto(base + path, { waitUntil: 'load', timeout: 20000 })
         httpStatus = res?.status() ?? null
         await page.waitForTimeout(150) // let any client-side render settle
         // Trigger loading="lazy" images before the fullPage screenshot —
@@ -179,8 +307,9 @@ async function visit(page, path, name, viewportLabel, findings) {
   try {
     const bodyText = await page.evaluate(() => document.body.innerText)
     for (const pattern of OVERCLAIM_PATTERNS) {
-      if (pattern.test(bodyText)) {
-        findings.push({ path, viewport: viewportLabel, issue: `storefront copy overclaims a disabled feature (matched ${pattern}): "${bodyText.match(pattern)[0]}"` })
+      const m = bodyText.match(pattern)
+      if (m) {
+        findings.push({ path, viewport: viewportLabel, issue: `storefront copy overclaims a disabled feature (matched ${pattern}): "${m[0]}"` })
       }
     }
   } catch {
@@ -191,6 +320,10 @@ async function visit(page, path, name, viewportLabel, findings) {
 }
 
 async function main() {
+  const runLabel = process.argv[2] || 'before'
+  const evidenceDir = join(root, 'audit-evidence', runLabel)
+  mkdirSync(evidenceDir, { recursive: true })
+
   // `db:reset` (below) already stops this repo's stale wrangler/workerd
   // processes, so no "kill whatever is on the port" step is needed — and that
   // step could previously have killed an unrelated app.
@@ -205,19 +338,35 @@ async function main() {
   log('bootstrapping a local admin fixture (random password, not persisted anywhere but this run)')
   execFileSync('node', ['scripts/create-admin.mjs', '--email', adminEmail, '--password', adminPassword], { cwd: root, stdio: 'inherit' })
 
-  log(`starting wrangler pages dev on :${PORT}`)
+  // Never reuse a fixed port: a foreign app already listening there would
+  // otherwise absorb the audit. `WW_AUDIT_PORT` pins only for debugging.
+  const port = process.env.WW_AUDIT_PORT ? Number(process.env.WW_AUDIT_PORT) : await findFreePort(DEFAULT_AUDIT_PORT)
+  if (process.env.WW_AUDIT_PORT && !(await isPortFree(port))) {
+    throw new Error(`WW_AUDIT_PORT=${port} is already in use — refusing to audit a foreign app`)
+  }
+  const base = `http://127.0.0.1:${port}`
+
+  log(`starting wrangler pages dev on :${port}`)
   const server = spawn(
     'npx',
-    ['wrangler', 'pages', 'dev', 'dist', '--d1=webapp-production', '--r2=webapp-photos', '--local', '--ip', '127.0.0.1', '--port', String(PORT)],
+    ['wrangler', 'pages', 'dev', 'dist', '--d1=webapp-production', '--r2=webapp-photos', '--local', '--ip', '127.0.0.1', '--port', String(port)],
     { cwd: root, shell: true, stdio: ['ignore', 'pipe', 'pipe'] }
   )
   server.stdout.on('data', () => {})
   server.stderr.on('data', () => {})
 
-  if (!(await waitFor(BASE + '/'))) {
+  if (!(await waitFor(base + '/'))) {
     killServerTree(server.pid)
-    throw new Error('server did not become ready')
+    throw new Error(`server did not become ready on :${port}`)
   }
+
+  // Fingerprint BEFORE any audit work: never audit a foreign app.
+  const fp = await verifyServerFingerprint(port)
+  if (!fp.ok) {
+    killServerTree(server.pid)
+    throw new Error(`refusing to audit: ${fp.reason}`)
+  }
+  log(`fingerprint verified (${FINGERPRINT_PATH}) — this is the StorybookClone app`)
   log('server is up')
 
   const findings = []
@@ -230,7 +379,7 @@ async function main() {
       const context = await browser.newContext({ viewport })
       const page = await context.newPage()
       for (const [path, name] of PUBLIC_ROUTES) {
-        await visit(page, path, name, label, findings)
+        await visit(base, page, path, name, label, findings, evidenceDir)
       }
       await context.close()
     }
@@ -240,15 +389,15 @@ async function main() {
       const label = viewport === DESKTOP ? 'desktop' : 'mobile'
       const context = await browser.newContext({ viewport })
       const page = await context.newPage()
-      await page.goto(BASE + '/admin/login')
+      await page.goto(base + '/admin/login')
       await page.fill('input[name=email]', adminEmail)
       await page.fill('input[name=password]', adminPassword)
       await page.click('button[type=submit]')
-      await page.waitForURL(BASE + '/admin', { timeout: 10000 }).catch(() => {})
+      await page.waitForURL(base + '/admin', { timeout: 10000 }).catch(() => {})
       let firstProductLink = null
       let firstOrderLink = null
       for (const [path, name] of ADMIN_ROUTES) {
-        await visit(page, path, name, label, findings)
+        await visit(base, page, path, name, label, findings, evidenceDir)
         if (path === '/admin/products') {
           firstProductLink = await page
             .locator('table.a-table a[href^="/admin/products/"]')
@@ -266,13 +415,13 @@ async function main() {
       }
       // one representative product-detail + PDP editor screenshot
       if (firstProductLink) {
-        await visit(page, firstProductLink, 'admin-product-detail', label, findings)
-        await visit(page, firstProductLink.replace(/\/$/, '') + '/pdp', 'admin-product-pdp', label, findings)
+        await visit(base, page, firstProductLink, 'admin-product-detail', label, findings, evidenceDir)
+        await visit(base, page, firstProductLink.replace(/\/$/, '') + '/pdp', 'admin-product-pdp', label, findings, evidenceDir)
       }
       // one representative order-detail screenshot, if any order exists yet
       // (a freshly-reset DB has none — that's expected, not a finding).
       if (firstOrderLink) {
-        await visit(page, firstOrderLink, 'admin-order-detail', label, findings)
+        await visit(base, page, firstOrderLink, 'admin-order-detail', label, findings, evidenceDir)
       } else {
         log(`no orders exist in this run's DB yet — skipping admin/orders/:id screenshot (not a finding)`)
       }
@@ -284,15 +433,15 @@ async function main() {
       const context = await browser.newContext({ viewport: DESKTOP })
       const page = await context.newPage()
       const custEmail = `audit-customer-${Date.now()}@local.test`
-      await page.goto(BASE + '/register')
+      await page.goto(base + '/register')
       await page.fill('#name', 'Audit Customer')
       await page.fill('#email', custEmail)
       await page.fill('#password', 'audit-customer-pass-1')
       await page.click('.auth-form form button[type=submit]')
-      await page.waitForURL(BASE + '/my-books', { timeout: 10000 })
+      await page.waitForURL(base + '/my-books', { timeout: 10000 })
 
       for (const [path] of ADMIN_ROUTES) {
-        const res = await page.goto(BASE + path)
+        const res = await page.goto(base + path)
         const finalUrl = page.url()
         const denied = finalUrl.includes('/admin/login') || (res && res.status() >= 300 && res.status() < 400)
         if (!denied && !finalUrl.includes('/admin/login')) {
@@ -304,9 +453,13 @@ async function main() {
       // Direct POST as a customer must also be denied, not just the GET page.
       const cookies = await context.cookies()
       const cookieHeader = cookies.map((c) => `${c.name}=${c.value}`).join('; ')
-      const directPost = await fetch(`${BASE}/admin/products/new`, {
+      const directPost = await fetch(`${base}/admin/products/new`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: cookieHeader },
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          Cookie: cookieHeader,
+          Origin: base
+        },
         redirect: 'manual'
       })
       const postDenied = directPost.status >= 300 && directPost.status < 400 // redirected to /admin/login, not processed
@@ -315,18 +468,27 @@ async function main() {
       await context.close()
     }
 
-    writeFileSync(join(evidenceDir, 'findings.json'), JSON.stringify(findings, null, 2))
-    log(`${findings.length} finding(s) written to ${join(evidenceDir, 'findings.json')}`)
+    const findingsPath = join(evidenceDir, 'findings.json')
+    writeFileSync(findingsPath, JSON.stringify(findings, null, 2))
+    log(`${findings.length} finding(s) written to ${findingsPath}`)
     for (const f of findings) console.log(`  - [${f.viewport}] ${f.path}: ${f.issue}`)
-  } finally {
+    if (findings.length) log(`AUDIT FAILED with ${findings.length} finding(s)`)
+
+    // Explicit termination so the spawned server tree cannot keep stdio open.
     await browser.close()
     killServerTree(server.pid)
+    process.exit(exitCodeForFindings(findings))
+  } catch (err) {
+    await browser.close().catch(() => {})
+    killServerTree(server.pid)
+    throw err
   }
 }
 
-main()
-  .then(() => process.exit(0))
-  .catch((err) => {
+// Only run when invoked as a script; importable for the harness tests.
+if (isMainModule()) {
+  main().catch((err) => {
     console.error(err)
     process.exit(1)
   })
+}
