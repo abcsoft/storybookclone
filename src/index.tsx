@@ -357,7 +357,10 @@ function getOrSetUploadOwnerToken(c: Context<{ Bindings: Bindings; Variables: Va
 }
 
 function html(c: any, title: string, body: string, active?: string, description?: string, status?: 200 | 404) {
-  return status ? c.html(page({ title, body, active, description }), status) : c.html(page({ title, body, active, description }))
+  // S-03: the header needs to know whether a session exists so it can render
+  // the POST logout control instead of the /login link.
+  const rendered = page({ title, body, active, description, loggedIn: !!c.get('user') })
+  return status ? c.html(rendered, status) : c.html(rendered)
 }
 
 /** A missing product/sticker/article is a genuine 404 — never a 200 with a "not found" body (T-07). */
@@ -731,6 +734,10 @@ app.get('/order-success', async (c) => {
         lang: it.language || 'English'
       })
       if (it.photo_key) params.set('photoKey', it.photo_key)
+      // D-08: the reader opens on the cover that was actually ordered, so the
+      // page agrees with the order snapshot (the server remains the price
+      // authority — an unknown code is simply ignored by the reader route).
+      if (it.variant_code) params.set('cover', it.variant_code)
       const href = `/my/books/${encodeURIComponent(it.slug)}?${params.toString()}`
       return `<li class="order-success-item"><span>${esc(it.title || it.slug)}${it.child_name ? ` — ${esc(it.child_name)}` : ''}</span> <a class="link reader-link" href="${href}" data-order-item-id="${it.id}">Open reader →</a></li>`
     })
@@ -1848,6 +1855,6 @@ function slugify(s: string) {
 // with c.html() and no status, defaulting to 200 OK — every truly missing
 // route (and, worse, every access-denied /photos/:key response relying on
 // c.notFound()) was reporting success.
-app.notFound((c) => c.html(page({ title: 'Not found - Wonder Wraps', body: notFoundPage() }), 404))
+app.notFound((c) => c.html(page({ title: 'Not found - Wonder Wraps', body: notFoundPage(), loggedIn: !!c.get('user') }), 404))
 
 export default app

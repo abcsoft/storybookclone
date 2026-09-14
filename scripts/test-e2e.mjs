@@ -2,10 +2,16 @@
 // Real-browser end-to-end journey tests (Chromium via Playwright) against a
 // real local wrangler dev server backed by real local D1 (SQLite)/R2
 // bindings — no mocks at the HTTP layer, no real payment/email/AI service.
-// Three separate journeys, run against the SAME server:
+// Journeys, run against the SAME server (each in its own browser context):
 //   1. Guest checkout (no login at any point) — see runGuestJourney.
 //   2. Authenticated checkout (register/login first) — see runAuthenticatedJourney.
 //   3. A genuine browser-level double-submission race — see runDoubleSubmissionTest.
+//   4. Upload-attack denials (incomplete/expired/revoked/claimed/foreign).
+//   5. Cart reload keeps a working authorized thumbnail (no blob:/data: URL).
+//   6. The selected cover agrees across PDP / reader / cart / quote / order snapshot.
+//   7. CSRF: valid passes, missing/invalid/foreign-origin fail, in a real session.
+//   8. Admin picker render/save/reload, rejected status transition, no global state.
+//   9. Disabled provider/payment/email/PDF/shipping/refund/tracking claims absent.
 // See test/unit/http-routes.test.ts and test/unit/orders.test.ts for the
 // API-level coverage of tampering/idempotency/atomicity edge cases a UI
 // click can't exercise cleanly.
@@ -32,6 +38,14 @@ const runId = Date.now()
 const runLetters = runId
   .toString(36)
   .replace(/[0-9]/g, (d) => 'jklmnopqrs'[Number(d)])
+
+// The admin journey's fixture credentials. The admin account is created by the
+// APPLICATION's own one-time bootstrap (ADMIN_BOOTSTRAP_EMAIL/PASSWORD — the
+// documented ADM-01 path, which hashes with the real src/auth.ts code), never
+// by seeding a hand-built password hash: `wrangler d1 execute` mangles `$` in
+// SQL on this platform, which silently corrupted a crafted hash.
+const ADMIN_EMAIL = `e2e-admin-${runId}@example.com`
+const ADMIN_PASSWORD = 'e2e-admin-password-123'
 
 function log(step, msg) {
   console.log(`[e2e] ${step}: ${msg}`)
@@ -133,7 +147,12 @@ function startServer(port) {
       // Deterministic fake face detection ONLY — this e2e run makes zero
       // real calls to any external face-analysis provider (Phase 2 requires
       // this). Never set in a real/deployed environment.
-      '--binding', 'FACE_ANALYSIS_PROVIDER=deterministic-fake'
+      '--binding', 'FACE_ANALYSIS_PROVIDER=deterministic-fake',
+      // One-time local admin bootstrap (ADM-01). This is how the admin journey
+      // gets a real admin account: the app hashes the password itself with
+      // src/auth.ts, so the fixture cannot drift from the real credential path.
+      '--binding', `ADMIN_BOOTSTRAP_EMAIL=${ADMIN_EMAIL}`,
+      '--binding', `ADMIN_BOOTSTRAP_PASSWORD=${ADMIN_PASSWORD}`
     ],
     { cwd: root, shell: true, stdio: ['ignore', 'pipe', 'pipe'] }
   )
@@ -177,6 +196,11 @@ function queryD1(sql) {
     })
     const parsed = JSON.parse(out)
     return parsed[0]?.results || []
+  } catch (err) {
+    // execFileSync swallows wrangler's own message; surface it so a broken
+    // fixture query is never reported as an opaque "Command failed".
+    const detail = [err?.stdout?.toString?.(), err?.stderr?.toString?.()].filter(Boolean).join('\n')
+    throw new Error(`queryD1 failed for SQL:\n${sql}\n${detail || err.message}`)
   } finally {
     try {
       rmSync(sqlFile)
@@ -229,11 +253,13 @@ function assertClean(diag, label) {
 }
 
 /** Shared product-page flow: personalize, upload a real photo, add to cart. Returns the cart item's userBookId. */
-async function personalizeAndAddToCart(page, { slug, childName, photoPath }) {
+async function personalizeAndAddToCart(page, { slug, childName, photoPath, coverType }) {
   await page.goto(`${BASE}/books/${slug}`)
   await page.waitForSelector('#personalise-form')
   await page.fill('#child-name', childName)
   await page.fill('#child-age', '6')
+  // D-08: the cover/format is a first-class, server-priced selection.
+  if (coverType) await page.check(`#cover-options input[value="${coverType}"]`)
   await page.selectOption('#lang', { label: 'English' })
   const dedication = page.locator('#dedication')
   if ((await dedication.count()) && (await dedication.isVisible())) await dedication.fill('For our little hero')
@@ -406,7 +432,10 @@ async function runGuestJourney(browser, photoPath) {
     page.click('#btn-pdf-submit')
   ])
   const pdfCreated = await pdfResponse.json()
-  if (pdfCreated.status !== 'queued') fail('guest.10', `expected an honestly queued PDF request, got: ${JSON.stringify(pdfCreated)}`)
+  // T-03: no PDF worker exists, so the honest status is "unavailable" — never
+  // "queued", and the message must not promise an email or a PDF.
+  if (pdfCreated.status !== 'unavailable') fail('guest.10', `expected an honestly UNAVAILABLE PDF request, got: ${JSON.stringify(pdfCreated)}`)
+  if (/we.ll email|once your|is ready|queued/i.test(String(pdfCreated.message))) fail('guest.10b', `PDF response still promises delivery: ${pdfCreated.message}`)
   if (!pdfCreated.token) fail('guest.10', 'guest PDF request did not return a status-access token')
 
   log('guest.11', 'PDF request status is token-protected: valid token works, missing/tampered/another-order tokens all fail')
@@ -505,7 +534,7 @@ async function runAuthenticatedJourney(browser, photoPath) {
   if (!detailText?.includes(childName)) fail('auth.4', 'order detail does not show the real personalization data')
 
   log('auth.5', 'a second customer cannot access it')
-  await page.goto(`${BASE}/logout`)
+  await logoutViaUi(page)
   const email2 = `e2e-auth2-${runId}@example.com`
   await page.goto(`${BASE}/register`)
   await page.fill('#name', 'E2E Customer B')
@@ -513,6 +542,9 @@ async function runAuthenticatedJourney(browser, photoPath) {
   await page.fill('#password', 'e2e-password-456')
   await page.click('.auth-form form button[type=submit]')
   await page.waitForURL(`${BASE}/my-books`)
+  // The orders list is rendered client-side after an API call — wait for the
+  // render before asserting, exactly like auth.4 does.
+  await page.waitForSelector('#orders-root .my-books-order-card, #orders-root .my-books-empty', { timeout: 15000 })
   const emptyBox = await page.locator('.my-books-empty').count()
   if (emptyBox !== 1) fail('auth.5a', "second customer's My Books should be empty")
   await page.goto(`${BASE}/my-books/${orderId}`)
@@ -520,8 +552,8 @@ async function runAuthenticatedJourney(browser, photoPath) {
   const deniedText = await page.textContent('#order-detail-root')
   if (!/not found|does not belong/i.test(deniedText || '')) fail('auth.5b', `expected access-denied message, got: ${deniedText}`)
 
-  log('auth.6', 'PDF request from the reader page reports an honest queued status')
-  await page.goto(`${BASE}/logout`)
+  log('auth.6', 'PDF request from the reader page reports an honest UNAVAILABLE status (no worker exists)')
+  await logoutViaUi(page)
   await page.goto(`${BASE}/login`)
   await page.fill('#email', email)
   await page.fill('#password', 'e2e-password-123')
@@ -535,8 +567,9 @@ async function runAuthenticatedJourney(browser, photoPath) {
   const pdfCreated = await pdfResponse.json()
   await page.waitForFunction(() => !document.getElementById('pdf-status-msg')?.hidden, null, { timeout: 10000 })
   const pdfStatus = await page.textContent('#pdf-status-msg')
-  if (!/queued|received/i.test(pdfStatus || '')) fail('auth.6', `PDF request status did not read as honestly queued: ${pdfStatus}`)
-  if (pdfCreated.status !== 'queued') fail('auth.6b', `pdf_requests.status is not honestly "queued": ${JSON.stringify(pdfCreated)}`)
+  if (!/not available|unavailable|register interest/i.test(pdfStatus || '')) fail('auth.6', `PDF request status did not read as honestly unavailable: ${pdfStatus}`)
+  if (/we.ll send|once your digital copy|is ready/i.test(pdfStatus || '')) fail('auth.6', `PDF status still promises a delivery: ${pdfStatus}`)
+  if (pdfCreated.status !== 'unavailable') fail('auth.6b', `pdf_requests.status is not honestly "unavailable": ${JSON.stringify(pdfCreated)}`)
   if (!pdfCreated.token) fail('auth.6c', 'pdf request creation did not return a status-access token')
   const pdfStatusRes = await page.request.get(`${BASE}/api/v1/books/pdf-requests/${pdfCreated.id}?token=${pdfCreated.token}`)
   if (pdfStatusRes.status() !== 200) fail('auth.6d', `token-based pdf status check: expected 200, got ${pdfStatusRes.status()}`)
@@ -547,7 +580,7 @@ async function runAuthenticatedJourney(browser, photoPath) {
   }
 
   log('auth.7', 'forgot/reset password with the dev console email adapter')
-  await page.goto(`${BASE}/logout`)
+  await logoutViaUi(page)
   await page.goto(`${BASE}/forgot-password`)
   await page.fill('#email', email)
   await page.click('.auth-form form button[type=submit]')
@@ -853,6 +886,492 @@ async function verifyAppIdentity(browser) {
   log('identity', 'confirmed: genuine WonderWraps app, correct route separation, no MagicTale contamination')
 }
 
+// S-03: logging out is a POST mutation, so the journeys use the real control
+// the header renders for a signed-in session (GET /logout must never mutate).
+async function logoutViaUi(page) {
+  const btn = page.locator('#logout-btn')
+  await btn.waitFor({ state: 'visible', timeout: 15000 })
+  await btn.click()
+  await page.waitForLoadState('load').catch(() => {})
+  const me = await page.request.get(`${BASE}/api/me`)
+  const body = await me.json().catch(() => ({}))
+  if (body.user) fail('logout', 'POST /logout did not end the session')
+  if ((await page.locator('#logout-btn').count()) !== 0) fail('logout', 'the logout control is still rendered after logging out')
+  if ((await page.locator('#account-link').count()) !== 1) fail('logout', 'the signed-out header was not restored after logging out')
+}
+
+/** Fixture helper: a real legacy upload (single-shot), owned by this browser's ww_upload cookie. */
+async function uploadPhotoVia(page, photoPath) {
+  const res = await page.request.post(`${BASE}/api/v1/uploads/photo`, {
+    headers: { Origin: BASE },
+    multipart: { photo: { name: 'photo.jpg', mimeType: 'image/jpeg', buffer: readFileSync(photoPath) } }
+  })
+  if (res.status() !== 200) fail('upload-attack', `fixture upload failed: ${res.status()} ${await res.text()}`)
+  return (await res.json()).key
+}
+
+// ============================================================================
+// 4. UPLOAD ATTACK DENIALS — incomplete / expired / revoked / already-claimed /
+//    wrong-owner uploads are all denied at order time, and no order is written.
+// ============================================================================
+async function runUploadAttackJourney(browser, photoPath) {
+  log('upload-attack', 'starting upload attack-denial journey')
+  const context = await browser.newContext()
+  const page = await context.newPage()
+  // These two endpoints are deliberately hit with bad input in this journey;
+  // any OTHER 4xx/5xx or console error still fails the run.
+  const diag = attachDiagnostics(page, [/\/api\/v1\/orders$/, /\/api\/v1\/uploads\/photo\/initiate$/])
+
+  const slug = 'the-portugals-new-legend'
+  const email = `e2e-attack-${runId}@example.com`
+  const child = `Attack${runLetters}`
+  let idemSeq = 0
+
+  const orderWith = (photoKey) =>
+    page.request.post(`${BASE}/api/v1/orders`, {
+      headers: { 'Content-Type': 'application/json', 'Idempotency-Key': `e2e-attack-${runId}-${++idemSeq}`, Origin: BASE },
+      data: {
+        items: [{ slug, qty: 1, childName: child, childAge: 6, language: 'English', photoKey }],
+        fullName: 'Attack Tester',
+        email,
+        address: '1 Test St',
+        city: 'Testville',
+        country: 'USA',
+        shippingMethod: 'standard',
+        paymentMethod: 'test-manual'
+      }
+    })
+
+  const ordersBefore = queryD1('SELECT COUNT(*) AS n FROM orders;')[0].n
+
+  log('upload-attack.a', 'an initiate-only (never completed) upload cannot be ordered with')
+  const initRes = await page.request.post(`${BASE}/api/v1/uploads/photo/initiate`, {
+    headers: { 'Content-Type': 'application/json', Origin: BASE },
+    data: { contentType: 'image/jpeg', byteSize: 200000 }
+  })
+  if (initRes.status() !== 200) fail('upload-attack.a', `initiate failed: ${initRes.status()} ${await initRes.text()}`)
+  const initiated = await initRes.json()
+  const incomplete = await orderWith(initiated.uploadId)
+  const incompleteBody = await incomplete.json().catch(() => ({}))
+  if (incomplete.status() !== 400) {
+    fail('upload-attack.a', `incomplete upload: expected 400, got ${incomplete.status()} ${JSON.stringify(incompleteBody)}`)
+  }
+
+  log('upload-attack.b', 'an EXPIRED upload is rejected at checkout')
+  const expiredKey = await uploadPhotoVia(page, photoPath)
+  queryD1(`UPDATE photo_uploads SET expires_at = ${Math.floor(Date.now() / 1000) - 60} WHERE upload_key = '${expiredKey}';`)
+  const expired = await orderWith(expiredKey)
+  const expiredBody = await expired.json().catch(() => ({}))
+  if (expired.status() !== 400 || !/expired/i.test(JSON.stringify(expiredBody))) {
+    fail('upload-attack.b', `expired upload: expected 400/expired, got ${expired.status()} ${JSON.stringify(expiredBody)}`)
+  }
+
+  log('upload-attack.c', 'a REVOKED upload is a clean 400 — never a 500 from the claim trigger')
+  const revokedKey = await uploadPhotoVia(page, photoPath)
+  queryD1(`UPDATE photo_uploads SET revoked_at = CURRENT_TIMESTAMP WHERE upload_key = '${revokedKey}';`)
+  const revoked = await orderWith(revokedKey)
+  const revokedBody = await revoked.json().catch(() => ({}))
+  if (revoked.status() !== 400) fail('upload-attack.c', `revoked upload: expected 400, got ${revoked.status()} ${JSON.stringify(revokedBody)}`)
+  if (!/no longer available/i.test(JSON.stringify(revokedBody))) {
+    fail('upload-attack.c', `revoked upload error is not actionable: ${JSON.stringify(revokedBody)}`)
+  }
+
+  log('upload-attack.d', 'a photo ALREADY CLAIMED by an order cannot be claimed again')
+  const claimedKey = await uploadPhotoVia(page, photoPath)
+  const legit = await orderWith(claimedKey)
+  if (legit.status() !== 200) fail('upload-attack.d', `the legitimate order failed: ${legit.status()} ${await legit.text()}`)
+  const reuse = await orderWith(claimedKey)
+  const reuseBody = await reuse.json().catch(() => ({}))
+  if (reuse.status() !== 400 || !/already used/i.test(JSON.stringify(reuseBody))) {
+    fail('upload-attack.d', `reused upload: expected 400/already used, got ${reuse.status()} ${JSON.stringify(reuseBody)}`)
+  }
+
+  log('upload-attack.e', "a DIFFERENT browser session cannot claim this session's upload")
+  const foreignKey = await uploadPhotoVia(page, photoPath)
+  const other = await browser.newContext()
+  const otherPage = await other.newPage()
+  const foreign = await otherPage.request.post(`${BASE}/api/v1/orders`, {
+    headers: { 'Content-Type': 'application/json', 'Idempotency-Key': `e2e-attack-foreign-${runId}`, Origin: BASE },
+    data: {
+      items: [{ slug, qty: 1, childName: child, childAge: 6, language: 'English', photoKey: foreignKey }],
+      fullName: 'Foreign Tester',
+      email,
+      address: '2 Test St',
+      city: 'Testville',
+      country: 'USA',
+      shippingMethod: 'standard',
+      paymentMethod: 'test-manual'
+    }
+  })
+  const foreignBody = await foreign.json().catch(() => ({}))
+  await other.close()
+  if (foreign.status() !== 400 || !/does not belong/i.test(JSON.stringify(foreignBody))) {
+    fail('upload-attack.e', `foreign upload: expected 400/does not belong, got ${foreign.status()} ${JSON.stringify(foreignBody)}`)
+  }
+
+  log('upload-attack.f', 'the denials wrote NO order — only the one legitimate order exists')
+  const ordersAfter = queryD1('SELECT COUNT(*) AS n FROM orders;')[0].n
+  if (ordersAfter !== ordersBefore + 1) {
+    fail('upload-attack.f', `expected exactly 1 new order (the legitimate one), got ${ordersAfter - ordersBefore}`)
+  }
+
+  assertClean(diag, 'upload-attack')
+  await context.close()
+  log('upload-attack', 'upload attack-denial journey passed')
+}
+
+// ============================================================================
+// 5. CART RELOAD — the persisted cart keeps a WORKING, authorized thumbnail
+//    (never a blob:/data: URL) and still renders its server-verified price.
+// ============================================================================
+async function runCartThumbnailJourney(browser, photoPath) {
+  log('cart-reload', 'starting cart reload / thumbnail journey')
+  const context = await browser.newContext()
+  const page = await context.newPage()
+  const diag = attachDiagnostics(page, [])
+
+  await personalizeAndAddToCart(page, { slug: 'the-portugals-new-legend', childName: `Reload${runLetters}`, photoPath })
+
+  log('cart-reload.1', 'reload the cart page: the item and its thumbnail must survive')
+  await page.reload()
+  await page.waitForSelector('.cart-item-card .cart-item-thumb img', { timeout: 15000 })
+
+  const stored = await page.evaluate(() => localStorage.getItem('ww_cart_v1') || '[]')
+  if (/blob:|data:image/.test(stored)) fail('cart-reload', `a blob:/data: URL is persisted in the cart: ${stored.slice(0, 200)}`)
+
+  const src = await page.getAttribute('.cart-item-card .cart-item-thumb img', 'src')
+  if (!src || /blob:|data:/.test(src)) fail('cart-reload', `cart thumbnail is not a stable asset URL: ${src}`)
+  const thumb = await page.request.get(new URL(src, BASE).toString())
+  if (thumb.status() !== 200) fail('cart-reload', `the authorized thumbnail did not load after reload: ${thumb.status()} ${src}`)
+
+  const name = await page.textContent('.cart-item-card .cart-item-name')
+  if (!name || !name.trim()) fail('cart-reload', 'cart item name did not render after reload')
+  const body = await page.textContent('#main')
+  if (!/\$\d/.test(body || '')) fail('cart-reload', 'no server-quoted amount rendered on the reloaded cart')
+
+  assertClean(diag, 'cart-reload')
+  await context.close()
+  log('cart-reload', 'cart reload / thumbnail journey passed')
+}
+
+// ============================================================================
+// 6. COVER AGREEMENT — the selected cover (and its price) agrees across the
+//    PDP, the reader, the cart, the server quote and the order snapshot.
+// ============================================================================
+async function runCoverAgreementJourney(browser, photoPath) {
+  log('cover-agreement', 'starting cover/variant agreement journey')
+  const slug = `e2e-cover-${runLetters}`.toLowerCase()
+  queryD1(
+    `INSERT INTO products (slug, title, tagline, description, price, price_minor, image, gender, category, ages, age_min, age_max, pages, reviews, rating, active)
+     VALUES ('${slug}', 'Cover Agreement Book', 'A tagline', 'A description', 10.00, 1000, '/static/img/cover-dragon.webp', 'unisex', 'book', '4-8', 4, 8, 32, 0, 0, 1);`
+  )
+  const productId = queryD1(`SELECT id FROM products WHERE slug = '${slug}';`)[0].id
+  // Two variants with DIFFERENT prices, so an agreement bug cannot hide.
+  queryD1(`INSERT OR IGNORE INTO product_variants (product_id, code, label, price_minor, currency, is_default, sort_order) VALUES (${productId}, 'hardcover', 'Hardcover', 1000, 'USD', 1, 0), (${productId}, 'softcover', 'Softcover', 500, 'USD', 0, 1);`)
+  queryD1(`UPDATE product_variants SET price_minor = 500 WHERE product_id = ${productId} AND code = 'softcover';`)
+  queryD1(`UPDATE product_variants SET price_minor = 1000 WHERE product_id = ${productId} AND code = 'hardcover';`)
+
+  const context = await browser.newContext()
+  const page = await context.newPage()
+  const diag = attachDiagnostics(page, [])
+
+  log('cover-agreement.1', 'the PDP offers both server-owned variants at their own prices')
+  await page.goto(`${BASE}/books/${slug}`)
+  await page.waitForSelector('#cover-options input')
+  // `data-cover-price` is the MAJOR-unit display price; the server quote and
+  // the order snapshot are authoritative in MINOR units (D-09), so compare in
+  // minor units throughout.
+  const options = await page.evaluate(() =>
+    [...document.querySelectorAll('#cover-options .pdp-cover-option')].map((l) => ({
+      code: l.dataset.coverType,
+      price: Number(l.dataset.coverPrice),
+      priceMinor: Math.round(Number(l.dataset.coverPrice) * 100)
+    }))
+  )
+  const hardcover = options.find((o) => o.code === 'hardcover')
+  const softcover = options.find((o) => o.code === 'softcover')
+  if (!hardcover || !softcover) fail('cover-agreement.1', `expected both variants on the PDP, got ${JSON.stringify(options)}`)
+  if (softcover.price >= hardcover.price) fail('cover-agreement.1', 'fixture variants do not differ in price — the agreement check would be vacuous')
+
+  log('cover-agreement.2', 'select the NON-default cover and personalize + add to cart with it')
+  const userBookId = await personalizeAndAddToCart(page, { slug, childName: `Cover${runLetters}`, photoPath, coverType: 'softcover' })
+
+  const cartItems = JSON.parse(await page.evaluate(() => localStorage.getItem('ww_cart_v1') || '[]'))
+  const line = cartItems.find((i) => i.userBookId === userBookId)
+  if (!line) fail('cover-agreement.2', 'the selected book is not in the cart')
+  if (line.coverType !== 'softcover') fail('cover-agreement.2', `cart line coverType is ${line.coverType}, expected softcover`)
+
+  log('cover-agreement.3', "the cart's Edit link opens the reader on the SAME cover")
+  await page.click('.cart-item-card .cart-item-edit-btn')
+  await page.waitForURL(/\/my\/books\//)
+  await page.waitForSelector('.cover-option-card[data-cover-type]')
+  const readerCover = await page.getAttribute('.cover-option-card.active', 'data-cover-type').catch(() => null)
+  if (readerCover !== 'softcover') fail('cover-agreement.3', `reader opened on cover "${readerCover}", expected softcover`)
+
+  log('cover-agreement.4', 'the SERVER quote prices the selected cover (and not the default)')
+  const quoteRes = await page.request.post(`${BASE}/api/v1/cart/quote`, {
+    headers: { 'Content-Type': 'application/json', Origin: BASE },
+    data: { items: [{ slug, qty: 1, variantCode: 'softcover' }] }
+  })
+  const quote = await quoteRes.json()
+  if (quote.subtotalMinor !== softcover.priceMinor) {
+    fail('cover-agreement.4', `server quote subtotal ${quote.subtotalMinor} disagrees with the PDP's softcover price ${softcover.priceMinor} (minor units)`)
+  }
+
+  log('cover-agreement.4b', 'continuing from the reader keeps the same cover in the cart')
+  await page.click('#btn-continue-checkout')
+  await page.waitForURL(`${BASE}/cart`)
+  await page.waitForSelector('.cart-item-card', { timeout: 15000 })
+  const cartAfterReader = JSON.parse(await page.evaluate(() => localStorage.getItem('ww_cart_v1') || '[]'))
+  const lineAfter = cartAfterReader.find((i) => i.userBookId === userBookId)
+  if (!lineAfter || lineAfter.coverType !== 'softcover') {
+    fail('cover-agreement.4b', `reader -> cart changed the cover: ${JSON.stringify(lineAfter)}`)
+  }
+
+  log('cover-agreement.5', 'the order snapshot records the same cover and its minor-unit price')
+  const { orderId } = await fillAndSubmitCheckout(page, { fullName: 'Cover Tester', email: `e2e-cover-${runId}@example.com` })
+  const rows = queryD1(`SELECT variant_code, unit_price_minor FROM order_items WHERE order_id = ${Number(orderId)};`)
+  if (!rows.length) fail('cover-agreement.5', 'the order has no items')
+  if (rows[0].variant_code !== 'softcover') fail('cover-agreement.5', `order_item variant_code is ${rows[0].variant_code}, expected softcover`)
+  if (Number(rows[0].unit_price_minor) !== softcover.priceMinor) {
+    fail('cover-agreement.5', `order_item unit_price_minor ${rows[0].unit_price_minor} != selected cover price ${softcover.priceMinor} (minor units)`)
+  }
+
+  assertClean(diag, 'cover-agreement')
+  await context.close()
+  log('cover-agreement', 'cover agreement journey passed')
+}
+
+// ============================================================================
+// 7. CSRF/ORIGIN — a valid same-origin mutation passes; missing, invalid and
+//    foreign-origin mutations are all rejected (S-01), in a real browser
+//    session with real cookies.
+// ============================================================================
+async function runCsrfJourney(browser) {
+  log('csrf', 'starting CSRF/origin journey')
+  const context = await browser.newContext()
+  const page = await context.newPage()
+  // The negative requests are the point of this journey.
+  const diag = attachDiagnostics(page, [/\/api\/v1\/cart\/quote$/])
+
+  const email = `e2e-csrf-${runId}@example.com`
+  await page.goto(`${BASE}/register`)
+  await page.fill('#name', 'CSRF Tester')
+  await page.fill('#email', email)
+  await page.fill('#password', 'e2e-password-789')
+  await page.click('.auth-form form button[type=submit]')
+  await page.waitForURL(`${BASE}/my-books`)
+
+  const cookies = await context.cookies(BASE)
+  const csrf = cookies.find((c) => c.name === 'ww_csrf')
+  if (!csrf) fail('csrf', 'no CSRF cookie was issued to an authenticated browser')
+
+  const post = (headers) =>
+    page.request.post(`${BASE}/api/v1/cart/quote`, {
+      headers: { 'Content-Type': 'application/json', ...headers },
+      data: { items: [] }
+    })
+
+  log('csrf.1', 'a same-origin mutation WITH the double-submit token passes')
+  const valid = await post({ Origin: BASE, 'X-CSRF-Token': csrf.value })
+  if (valid.status() !== 200) fail('csrf.1', `expected 200, got ${valid.status()} ${await valid.text()}`)
+
+  log('csrf.2', 'a session mutation with NO origin proof and NO token is rejected')
+  const noProof = await post({})
+  if (noProof.status() !== 403) fail('csrf.2', `expected 403, got ${noProof.status()}`)
+
+  log('csrf.3', 'a session mutation with a WRONG token is rejected')
+  const badToken = await post({ Origin: BASE, 'X-CSRF-Token': 'not-the-token' })
+  const badTokenBody = await badToken.json().catch(() => ({}))
+  if (badToken.status() !== 403 || badTokenBody?.error?.code !== 'csrf_token') {
+    fail('csrf.3', `expected 403/csrf_token, got ${badToken.status()} ${JSON.stringify(badTokenBody)}`)
+  }
+
+  log('csrf.4', 'a FOREIGN origin is rejected even with a valid token')
+  const foreign = await post({ Origin: 'https://evil.example', 'X-CSRF-Token': csrf.value })
+  const foreignBody = await foreign.json().catch(() => ({}))
+  if (foreign.status() !== 403 || foreignBody?.error?.code !== 'csrf_origin') {
+    fail('csrf.4', `expected 403/csrf_origin, got ${foreign.status()} ${JSON.stringify(foreignBody)}`)
+  }
+
+  log('csrf.5', 'a foreign Referer (Origin absent) is rejected')
+  const foreignRef = await post({ Origin: '', Referer: 'https://evil.example/x', 'X-CSRF-Token': csrf.value })
+  if (foreignRef.status() !== 403) fail('csrf.5', `expected 403, got ${foreignRef.status()}`)
+
+  log('csrf.6', 'the same valid token still works afterwards (no state was corrupted)')
+  const again = await post({ Origin: BASE, 'X-CSRF-Token': csrf.value })
+  if (again.status() !== 200) fail('csrf.6', `expected 200, got ${again.status()}`)
+
+  await context.close()
+  log('csrf', 'CSRF/origin journey passed')
+}
+
+// ============================================================================
+// 8. ADMIN — related-products picker renders/saves/reloads, an invalid status
+//    transition is rejected, and concurrent requests leak no global state.
+// ============================================================================
+async function runAdminJourney(browser) {
+  log('admin', 'starting admin journey')
+  const email = ADMIN_EMAIL
+  const password = ADMIN_PASSWORD
+  // The account was created by the app's own one-time bootstrap on the first
+  // request of this run (ADM-01) — assert that it really happened rather than
+  // seeding a credential by hand.
+  const bootstrapped = queryD1(`SELECT id, role FROM users WHERE email = '${email}';`)
+  if (!bootstrapped.length || bootstrapped[0].role !== 'admin') {
+    fail('admin.1', 'the admin bootstrap did not create the configured admin account')
+  }
+
+  const context = await browser.newContext()
+  const page = await context.newPage()
+  const diag = attachDiagnostics(page, [/\/admin\/orders\/\d+\?error=/])
+
+  log('admin.1', 'log in through the real admin form')
+  await page.goto(`${BASE}/admin/login`)
+  await page.fill('.admin-login-card input[name=email]', email)
+  await page.fill('.admin-login-card input[name=password]', password)
+  await page.click('.admin-login-card button[type=submit]')
+  try {
+    await page.waitForURL(`${BASE}/admin`, { timeout: 15000 })
+  } catch {
+    const notice = await page.textContent('.a-notice').catch(() => null)
+    fail('admin.1', `admin login did not reach /admin (notice: ${notice}); url=${page.url()}`)
+  }
+
+  const productIds = queryD1('SELECT id, title FROM products WHERE active = 1 ORDER BY id LIMIT 2;')
+  if (productIds.length < 2) fail('admin.1', 'need at least 2 active products to test the picker')
+  const [productA, productB] = productIds
+
+  log('admin.2', 'the related-products picker RENDERS real products (C-06/C-07)')
+  await page.goto(`${BASE}/admin/products/${productA.id}/pdp`)
+  await page.click('a[data-tab="related"]')
+  await page.waitForSelector('#pdp-related-picker .pdp-rel-item input[type=checkbox]')
+  const optionCount = await page.locator('#pdp-related-picker .pdp-rel-item input[type=checkbox]').count()
+  if (optionCount < 1) fail('admin.2', 'the related picker rendered no products')
+
+  log('admin.3', 'selecting related products SAVES and survives a reload')
+  const targetId = queryD1(`SELECT id FROM products WHERE active = 1 AND id <> ${productA.id} ORDER BY id LIMIT 1;`)[0].id
+  await page.check(`#pdp-related-picker input[type=checkbox][value="${targetId}"]`)
+  await page.click('#pdp-related-picker button.a-btn')
+  await page.waitForURL(/\/admin\/products\/\d+\/pdp/)
+  await page.click('a[data-tab="related"]')
+  await page.waitForSelector('#pdp-related-picker .pdp-rel-item input[type=checkbox]')
+  const stillChecked = await page.isChecked(`#pdp-related-picker input[type=checkbox][value="${targetId}"]`)
+  if (!stillChecked) fail('admin.3', 'the saved related product was not re-rendered as selected after reload')
+  const relatedRows = queryD1(`SELECT related_id FROM pdp_related WHERE product_id = ${productA.id};`)
+  if (!relatedRows.some((r) => Number(r.related_id) === Number(targetId))) {
+    fail('admin.3', 'the related selection was not persisted in D1')
+  }
+
+  log('admin.4', 'an INVALID order status transition is rejected and nothing is written')
+  const orderRow = queryD1('SELECT id, status FROM orders ORDER BY id LIMIT 1;')
+  if (!orderRow.length) fail('admin.4', 'no order exists to test a status transition against')
+  const orderId = orderRow[0].id
+  const statusBefore = orderRow[0].status
+  const adminCookies = await context.cookies(BASE)
+  const adminCsrf = adminCookies.find((c) => c.name === 'ww_csrf')
+  if (!adminCsrf) fail('admin.4', 'no CSRF cookie for the admin session')
+  const badStatus = await page.request.post(`${BASE}/admin/orders/${orderId}/status`, {
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', Origin: BASE, 'X-CSRF-Token': adminCsrf.value },
+    data: 'status=totally-not-a-status&reason=e2e',
+    maxRedirects: 0
+  })
+  const location = badStatus.headers().location || ''
+  if (!/error=/.test(location)) fail('admin.4', `an invalid status was not rejected (status ${badStatus.status()}, location ${location})`)
+  const statusAfter = queryD1(`SELECT status FROM orders WHERE id = ${orderId};`)[0].status
+  if (statusAfter !== statusBefore) fail('admin.4', `the rejected transition still changed the order status: ${statusBefore} -> ${statusAfter}`)
+
+  log('admin.5', 'two concurrent admin renders carry their OWN product context (no global request state)')
+  const pageB = await context.newPage()
+  await Promise.all([page.goto(`${BASE}/admin/products/${productA.id}/pdp`), pageB.goto(`${BASE}/admin/products/${productB.id}/pdp`)])
+  await Promise.all([page.click('a[data-tab="related"]'), pageB.click('a[data-tab="related"]')])
+  await Promise.all([
+    page.waitForSelector('#pdp-related-picker .pdp-rel-item input[type=checkbox]'),
+    pageB.waitForSelector('#pdp-related-picker .pdp-rel-item input[type=checkbox]')
+  ])
+  const [ctxA, ctxB] = await Promise.all([
+    page.evaluate(() => ({ current: window.__relatedCurrent, all: (window.__pdpRelated || []).map((p) => p.id) })),
+    pageB.evaluate(() => ({ current: window.__relatedCurrent, all: (window.__pdpRelated || []).map((p) => p.id) }))
+  ])
+  const expectedA = queryD1(`SELECT related_id FROM pdp_related WHERE product_id = ${productA.id};`)
+    .map((r) => Number(r.related_id))
+    .sort((a, b) => a - b)
+  const expectedB = queryD1(`SELECT related_id FROM pdp_related WHERE product_id = ${productB.id};`)
+    .map((r) => Number(r.related_id))
+    .sort((a, b) => a - b)
+  if (JSON.stringify([...(ctxA.current || [])].sort((a, b) => a - b)) !== JSON.stringify(expectedA)) {
+    fail('admin.5', `product A's page showed the wrong related set: ${JSON.stringify(ctxA.current)} vs ${JSON.stringify(expectedA)}`)
+  }
+  if (JSON.stringify([...(ctxB.current || [])].sort((a, b) => a - b)) !== JSON.stringify(expectedB)) {
+    fail('admin.5', `product B's page showed the wrong related set: ${JSON.stringify(ctxB.current)} vs ${JSON.stringify(expectedB)}`)
+  }
+  if (ctxA.all.length !== ctxB.all.length) fail('admin.5', 'the two concurrent renders saw different product lists')
+  await pageB.close()
+
+  assertClean(diag, 'admin')
+  await context.close()
+  log('admin', 'admin journey passed')
+}
+
+// ============================================================================
+// 9. DISABLED CAPABILITIES — provider/payment/email/PDF/shipping/refund/
+//    tracking are never presented as operational to a real browser.
+// ============================================================================
+async function runDisabledCapabilityJourney(browser) {
+  log('disabled-claims', 'starting disabled-capability truthfulness journey')
+  const context = await browser.newContext()
+  const page = await context.newPage()
+  const diag = attachDiagnostics(page, [])
+
+  const forbidden = [
+    /fa-cc-(visa|mastercard|amex|paypal|apple-pay)/,
+    /we’ll email|we'll email/i,
+    /email a preview/i,
+    /send it your way/i,
+    /once your digital copy is ready/i,
+    /business days/i,
+    /track your order/i,
+    /we ship to/i,
+    /100,000\+?/,
+    /happy families/i,
+    /Dr\. Emily/i,
+    /award-winning/i
+  ]
+  for (const route of ['/', '/books', '/books/the-portugals-new-legend', '/checkout', '/faqs', '/support', '/contact', '/blog']) {
+    await page.goto(BASE + route)
+    // page.content() reflects the DOM AFTER client scripts ran, which is what a
+    // visitor actually sees.
+    const html = await page.content()
+    for (const pattern of forbidden) {
+      if (pattern.test(html)) fail('disabled-claims', `${route} presents a disabled capability as operational (matched ${pattern})`)
+    }
+  }
+
+  log('disabled-claims.1', 'the reader states plainly that PDFs are unavailable')
+  await page.goto(`${BASE}/my/books/the-portugals-new-legend`)
+  const reader = await page.content()
+  if (!/PDF copies aren’t available yet/i.test(reader)) fail('disabled-claims.1', 'the reader does not state that PDF copies are unavailable')
+
+  log('disabled-claims.2', 'the disabled generation endpoints report NOT-implemented, never success')
+  const gen = await page.request.post(`${BASE}/api/generate-book`, { data: {} })
+  if (gen.status() !== 501) fail('disabled-claims.2', `generate-book: expected 501, got ${gen.status()}`)
+  const genBody = await gen.json().catch(() => ({}))
+  if (genBody.success !== false || genBody.notImplemented !== true) {
+    fail('disabled-claims.2', `generate-book did not report not-implemented: ${JSON.stringify(genBody)}`)
+  }
+
+  const pdf = await page.request.post(`${BASE}/api/v1/books/pdf-requests`, {
+    headers: { 'Content-Type': 'application/json' },
+    data: { email: `e2e-claims-${runId}@example.com`, bookSlug: 'the-portugals-new-legend' }
+  })
+  const pdfBody = await pdf.json().catch(() => ({}))
+  if (pdfBody.status !== 'unavailable') fail('disabled-claims.2', `PDF request status is not "unavailable": ${JSON.stringify(pdfBody)}`)
+
+  assertClean(diag, 'disabled-claims')
+  await context.close()
+  log('disabled-claims', 'disabled-capability truthfulness journey passed')
+}
+
 async function main() {
   verifyRepoIdentity()
 
@@ -898,8 +1417,14 @@ async function main() {
     await finishPasswordReset(browser, logs, authEmail)
     await runDoubleSubmissionTest(browser, photoPath)
     await runMultiFaceJourney(browser, tmpDir)
+    await runUploadAttackJourney(browser, photoPath)
+    await runCartThumbnailJourney(browser, photoPath)
+    await runCoverAgreementJourney(browser, photoPath)
+    await runCsrfJourney(browser)
+    await runAdminJourney(browser)
+    await runDisabledCapabilityJourney(browser)
 
-    console.log('\n[e2e] ALL JOURNEYS PASSED (guest, authenticated, double-submission, multi-face)\n')
+    console.log('\n[e2e] ALL JOURNEYS PASSED (guest, authenticated, double-submission, multi-face, upload-attack, cart-reload, cover-agreement, csrf, admin, disabled-claims)\n')
   } catch (err) {
     // Surface the local server log on failure only — never written to a file.
     if (logs.value) console.error(`\n[e2e] server log:\n${logs.value}`)

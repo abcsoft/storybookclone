@@ -462,7 +462,10 @@ async function main() {
         },
         redirect: 'manual'
       })
-      const postDenied = directPost.status >= 300 && directPost.status < 400 // redirected to /admin/login, not processed
+      // A denial is any non-2xx: a redirect to /admin/login, or a 401/403 from
+      // the CSRF/authorization gate (which rejects the request BEFORE the admin
+      // guard ever runs). Only a PROCESSED 2xx POST is a finding.
+      const postDenied = directPost.status < 200 || directPost.status >= 300
       if (!postDenied) findings.push({ path: '/admin/products/new', viewport: 'role-check', issue: `direct customer POST was not denied (status ${directPost.status})` })
 
       await context.close()

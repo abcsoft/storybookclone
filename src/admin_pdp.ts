@@ -60,7 +60,7 @@ export async function adminPdpEditor(c: any, product: Product, flash?: string) {
     <a data-tab="magic">Magic slider</a>
     <a data-tab="trust">Why trust</a>
     <a data-tab="reactions">Reactions</a>
-    <a data-tab="media">Featured on</a>
+    <a data-tab="media">Media links</a>
     <a data-tab="related">Also like</a>
     <a data-tab="faqs">FAQs</a>
   </nav>
@@ -345,7 +345,7 @@ function tabMedia(p: Product, d: any) {
     </div>
   `).join('')
   return `<section class="a-card pdp-tab" data-tab="media" hidden>
-    <h2>"Featured on" media logos</h2>
+    <h2>Media links (owner-entered only)</h2>
     <p class="muted">If logo URL is empty, the name appears as text. Recommended images: grayscale SVG, ~140×40.</p>
     ${rows || '<p class="muted">No media yet.</p>'}
     <form class="a-form a-inline-form" method="post" action="/admin/products/${p.id}/pdp/media">

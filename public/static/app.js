@@ -127,7 +127,7 @@ async function renderCart() {
         <div class="cart-item-info">
           <h3 class="cart-item-name">${escH(i.title)}</h3>
           <p class="cart-item-meta">${escH(subtitle)}</p>
-          <a class="cart-item-edit-btn" href="/my/books/${encodeURIComponent(i.slug || 'the-portugals-new-legend')}?userBookId=${encodeURIComponent(i.userBookId || '')}">Edit</a>
+          <a class="cart-item-edit-btn" href="/my/books/${encodeURIComponent(i.slug || 'the-portugals-new-legend')}?userBookId=${encodeURIComponent(i.userBookId || '')}&cover=${encodeURIComponent(i.coverType || '')}">Edit</a>
         </div>
         <div class="cart-item-right">
           <button type="button" class="cart-item-remove-btn" data-remove-id="${escH(i.id)}" aria-label="Remove item">✕</button>

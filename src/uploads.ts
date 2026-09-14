@@ -76,22 +76,29 @@ export async function recordUpload(
 
 export type UploadLookupResult =
   | { ok: true }
-  | { ok: false; reason: 'missing' | 'expired' | 'foreign' | 'consumed' }
+  | { ok: false; reason: 'missing' | 'expired' | 'foreign' | 'consumed' | 'revoked' }
 
 /**
  * Fast pre-check (not the source of truth under a race — see
  * src/orders.ts's atomic upload_claims INSERT for that): tells the caller
- * whether `key` LOOKS like a real, unexpired, unconsumed upload owned by
- * `ownerToken`, so a normal (non-racing) bad request gets a clear error
- * without ever reaching the database transaction.
+ * whether `key` LOOKS like a real, unexpired, unconsumed, unrevoked upload
+ * owned by `ownerToken`, so a normal (non-racing) bad request gets a clear
+ * error without ever reaching the database transaction.
+ *
+ * This mirrors migration 0015's `trg_upload_claims_enforce_ownership`
+ * invariant exactly (owner + not consumed + not revoked + unexpired). If the
+ * two disagree, a revoked upload would pass this pre-check, fail the trigger
+ * inside the batch, and surface as a 500 instead of a clean 400 — so the
+ * `revoked_at` column is deliberately part of this check.
  */
 export async function checkUploadOwnership(db: D1Database, key: string, ownerToken: string): Promise<UploadLookupResult> {
   const row = await db
-    .prepare('SELECT owner_token, expires_at, consumed_at FROM photo_uploads WHERE upload_key = ?')
+    .prepare('SELECT owner_token, expires_at, consumed_at, revoked_at FROM photo_uploads WHERE upload_key = ?')
     .bind(key)
-    .first<{ owner_token: string; expires_at: number; consumed_at: string | null }>()
+    .first<{ owner_token: string; expires_at: number; consumed_at: string | null; revoked_at: string | null }>()
   if (!row) return { ok: false, reason: 'missing' }
   if (row.consumed_at) return { ok: false, reason: 'consumed' }
+  if (row.revoked_at) return { ok: false, reason: 'revoked' }
   if (row.expires_at < Math.floor(Date.now() / 1000)) return { ok: false, reason: 'expired' }
   if (row.owner_token !== ownerToken) return { ok: false, reason: 'foreign' }
   return { ok: true }

@@ -3,6 +3,8 @@ export function page(opts: {
   description?: string
   active?: string
   body: string
+  /** True when a session user is rendering this page (shows the POST logout control). */
+  loggedIn?: boolean
 }) {
   const desc =
     opts.description ||
@@ -56,9 +58,22 @@ export function page(opts: {
           <i class="fas fa-bag-shopping"></i>
           <span class="cart-badge" id="cart-badge" hidden>0</span>
         </a>
-        <a class="icon-btn" href="/login" aria-label="Account">
+        <a class="icon-btn" href="/login" aria-label="Account" id="account-link"${opts.loggedIn ? ' hidden' : ''}>
           <i class="far fa-user"></i>
         </a>
+        ${/* S-03: logging out is a real POST mutation (GET /logout is a plain
+             redirect), so the signed-in control posts a form — the CSRF token
+             is injected into it by the server-rendered form middleware. */ ''}
+        ${
+          opts.loggedIn
+            ? `<a class="icon-btn" href="/my-books" aria-label="My Books"><i class="fas fa-book-open"></i></a>
+        <form class="logout-form" method="post" action="/logout">
+          <button type="submit" class="icon-btn" id="logout-btn" aria-label="Log out" title="Log out">
+            <i class="fas fa-right-from-bracket"></i>
+          </button>
+        </form>`
+            : ''
+        }
       </div>
     </div>
     <form class="search-bar" id="search-bar" action="/books" method="get" hidden>

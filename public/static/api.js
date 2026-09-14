@@ -8,21 +8,36 @@
 // request unless the two match and the request is same-origin.
 function csrfToken() {
   const match = document.cookie.match(/(?:^|;\s*)ww_csrf=([^;]+)/)
-  return match ? decodeURIComponent(match[1]) : ''
+  if (!match) return ''
+  // The value is hex + '.' so decoding is normally a no-op; guard against a
+  // malformed value making every mutation throw before fetch.
+  try {
+    return decodeURIComponent(match[1])
+  } catch {
+    return match[1]
+  }
 }
 
 function withCsrf(opts) {
-  const headers = Object.assign({}, opts.headers)
+  // GET helpers call request(path) with no init at all — `opts` must default
+  // to an empty init, or every GET here throws before fetch and is reported
+  // as a bogus "network error".
+  const init = opts || {}
+  const headers = Object.assign({}, init.headers)
   const token = csrfToken()
   if (token) headers['X-CSRF-Token'] = token
-  return Object.assign({}, opts, { headers })
+  return Object.assign({}, init, { headers })
 }
 
 async function request(path, opts) {
   let res
   try {
     res = await fetch(path, withCsrf(opts))
-  } catch {
+  } catch (err) {
+    // A thrown fetch can be a genuine network failure OR a bug in this file
+    // (a malformed init/URL). Report the real cause to the console so a bug is
+    // never silently disguised as "the network is down".
+    console.error(`[api] request to ${path} threw before a response:`, err)
     return { ok: false, status: 0, error: 'Network error — please check your connection and try again.' }
   }
   let data = null

@@ -48,12 +48,13 @@ export type CreateOrderResult =
 
 const TEST_PAYMENT_METHODS = new Set(['test-manual', 'manual-test', 'guest-manual'])
 
-function uploadOwnershipErrorMessage(reason: 'missing' | 'expired' | 'foreign' | 'consumed'): string {
+function uploadOwnershipErrorMessage(reason: 'missing' | 'expired' | 'foreign' | 'consumed' | 'revoked'): string {
   const messages: Record<string, string> = {
     missing: `Upload not found for one item — please re-upload the photo.`,
     expired: `The uploaded photo for one item has expired — please re-upload it.`,
     foreign: `One item references a photo upload that does not belong to this browser session.`,
-    consumed: `One item's uploaded photo was already used in another order.`
+    consumed: `One item's uploaded photo was already used in another order.`,
+    revoked: `One item's uploaded photo is no longer available — please re-upload the photo.`
   }
   return messages[reason]
 }

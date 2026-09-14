@@ -487,7 +487,7 @@ export function productDetailPage(d: PdpData, pathPrefix: string) {
   ${media.length ? `
   <section class="pdp-media">
     <div class="pdp-media-inner">
-      <h2>Featured on</h2>
+      <h2>Media links</h2>
       <div class="pdp-media-grid">
         ${media.map(m => `<a class="pdp-media-item" href="${esc(m.href || '#')}" target="_blank" rel="noopener">${m.image_url ? `<img src="${esc(m.image_url)}" alt="${esc(m.name)}">` : `<span class="pdp-media-name">${esc(m.name)}</span>`}</a>`).join('')}
       </div>

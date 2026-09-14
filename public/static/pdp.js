@@ -511,7 +511,12 @@ function rotateDraftKey(slug) {
       // attached the photo) — this is the one call that records detected
       // faces and advances the state machine.
       await runAnalysis(uploadedPhotoKey)
-      if (analysisState === 'blocked') return
+      // A photo that needs an explicit face choice still opens the review
+      // modal — the picker panel lives inside it — while Confirm stays
+      // disabled until the choice is made. Every OTHER blocked outcome (no
+      // usable face, provider unavailable, photo not checkable) shows its
+      // status message instead of a "review your details" dialog.
+      if (analysisState === 'blocked' && !faceSelectionRequired) return
 
       const elModalName = document.getElementById('modal-child-name')
       const elModalAge = document.getElementById('modal-child-age')

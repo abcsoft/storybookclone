@@ -82,7 +82,7 @@ async function renderOrderDetail() {
     <div class="order-items">
       ${items
         .map((it) => {
-          const readerUrl = `/my/books/${encodeURIComponent(it.slug)}?readOnly=1&name=${encodeURIComponent(it.child_name || '')}&age=${encodeURIComponent(it.child_age || '')}&lang=${encodeURIComponent(it.language || 'English')}&photoKey=${encodeURIComponent(it.photo_key || '')}&orderItemId=${encodeURIComponent(it.id)}`
+          const readerUrl = `/my/books/${encodeURIComponent(it.slug)}?readOnly=1&name=${encodeURIComponent(it.child_name || '')}&age=${encodeURIComponent(it.child_age || '')}&lang=${encodeURIComponent(it.language || 'English')}&photoKey=${encodeURIComponent(it.photo_key || '')}&orderItemId=${encodeURIComponent(it.id)}&cover=${encodeURIComponent(it.variant_code || '')}`
           return `
         <div class="order-item">
           <div style="flex:1">

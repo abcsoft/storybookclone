@@ -118,6 +118,28 @@ describe('createOrder — upload key validation', () => {
     if (!second.ok) expect(second.error).toMatch(/already used/i)
   })
 
+  it('rejects a REVOKED upload with a clean 400 (not a 500 from the claim trigger)', async () => {
+    // The DB trigger (migration 0015) rejects a revoked upload at claim time.
+    // The application pre-check must agree, or the caller sees an opaque 500
+    // instead of the honest "no longer available" 400.
+    const db = migratedFakeD1()
+    await seedProduct(db)
+    await seedUpload(db)
+    await db.prepare("UPDATE photo_uploads SET revoked_at = CURRENT_TIMESTAMP WHERE upload_key = ?").bind('uploads/test-photo.jpg').run()
+
+    const result = await createOrder(db, baseInput({ idempotencyKey: 'revoked-order' }), ctx())
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.status).toBe(400)
+      expect(result.error).toMatch(/no longer available/i)
+    }
+    // Nothing was claimed and no order row was written.
+    const claims = await db.prepare('SELECT COUNT(*) AS n FROM upload_claims').first<{ n: number }>()
+    expect(claims!.n).toBe(0)
+    const orders = await db.prepare('SELECT COUNT(*) AS n FROM orders').first<{ n: number }>()
+    expect(orders!.n).toBe(0)
+  })
+
   it('one order MAY reuse the same photoKey across two of its own items (e.g. a matching cross-sell)', async () => {
     const db = migratedFakeD1()
     await seedProduct(db, 'book-x')
