@@ -254,7 +254,7 @@ describe('/photos/:key access control — never a permanently public URL', () =>
 })
 
 describe('pdf-requests — canonical + legacy alias, honest status, secured against enumeration', () => {
-  it('creates a queued request and reports the same status back to the holder of its capability token', async () => {
+  it('records the request as UNAVAILABLE (no PDF worker exists) and never promises a delivery', async () => {
     const res = await app.request(
       '/api/v1/books/pdf-requests',
       { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'reader@example.com', bookSlug: 'girls-sticker-pack', childName: 'Gando', childAge: 6, coverType: 'hardcover' }) },
@@ -262,14 +262,21 @@ describe('pdf-requests — canonical + legacy alias, honest status, secured agai
     )
     expect(res.status).toBe(200)
     const created = await res.json()
-    expect(created.status).toBe('queued')
+    // T-03: the request is logged, but the honest status is "unavailable" —
+    // it is never queued, and the response never promises a PDF or an email.
+    expect(created.status).toBe('unavailable')
+    expect(String(created.message)).not.toMatch(/we.ll email|once your|is ready|queued/i)
     expect(typeof created.token).toBe('string')
 
     const statusRes = await app.request(`/api/v1/books/pdf-requests/${created.id}?token=${created.token}`, {}, env)
     expect(statusRes.status).toBe(200)
     const statusData = await statusRes.json()
-    expect(statusData.status).toBe('queued')
+    expect(statusData.status).toBe('unavailable')
     expect(statusData.email).toBeUndefined() // no PII in the response
+
+    // The stored row agrees with the response that was shown to the visitor.
+    const row = await env.DB.prepare('SELECT status FROM pdf_requests WHERE id = ?').bind(created.id).first<{ status: string }>()
+    expect(row!.status).toBe('unavailable')
   })
 
   it('denies status access with no token and with a tampered token — never a bare sequential id', async () => {

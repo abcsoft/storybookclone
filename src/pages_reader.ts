@@ -122,17 +122,19 @@ export function personalizedBookReaderPage(data: PersonalizedBookData) {
     </section>
 
     <!-- PDF Copy Email Capture Box -->
+    <!-- T-03: no PDF worker exists, so this is honest about that: it records
+         interest only, and never promises a PDF or an email. -->
     <section class="reader-section pdf-capture-section">
       <div class="pdf-capture-box">
         <div class="pdf-capture-label">
-          <span>Want the <strong>PDF copy</strong>? Enter your email, and we'll send it your way!</span>
+          <span><strong>PDF copies aren’t available yet.</strong> Enter your email to register interest — nothing will be sent in this version.</span>
         </div>
         <form class="pdf-capture-form" id="pdf-request-form">
           <div class="pdf-input-wrap">
             <i class="far fa-envelope pdf-mail-icon"></i>
             <input type="email" id="pdf-email" name="email" placeholder="Email Address" required class="pdf-input">
           </div>
-          <button type="submit" class="btn-pdf-submit" id="btn-pdf-submit" title="Send PDF copy">
+          <button type="submit" class="btn-pdf-submit" id="btn-pdf-submit" title="Record PDF interest (no PDF is sent)">
             <i class="fas fa-paper-plane"></i>
           </button>
         </form>
@@ -147,11 +149,11 @@ export function personalizedBookReaderPage(data: PersonalizedBookData) {
       <div class="book-preview-item" data-type="cover">
         <div class="book-3d-wrapper">
           <div class="book-3d-frame" id="frame-cover">
-            <img src="/static/img/preview-book-cover-ref.webp" alt="Personalised Book Front Cover" class="book-3d-img" id="img-cover-preview">
+            <img src="/static/img/placeholder-cover.svg" alt="Personalised Book Front Cover" class="book-3d-img" id="img-cover-preview">
             
             <!-- Dynamic Child Face Overlay -->
             <div class="book-cover-face-overlay" id="cover-face-overlay" style="${data.photoUrl ? '' : 'display:none;'}">
-              <img src="${esc(data.photoUrl || '/static/img/avatar-sample.png')}" alt="Child face" class="cover-child-face-img" id="cover-child-face-img">
+              <img src="${esc(data.photoUrl || '/static/img/photo-placeholder.svg')}" alt="Child face" class="cover-child-face-img" id="cover-child-face-img">
             </div>
 
             <!-- Dynamic Child Title Overlay if needed -->
@@ -176,11 +178,11 @@ export function personalizedBookReaderPage(data: PersonalizedBookData) {
       <div class="book-preview-item" data-type="spread">
         <div class="book-3d-wrapper">
           <div class="book-3d-frame" id="frame-spread">
-            <img src="/static/img/preview-book-spread-ref.webp" alt="Personalised Storybook Inside Spread" class="book-3d-img" id="img-spread-preview">
+            <img src="/static/img/placeholder-spread.svg" alt="Personalised Storybook Inside Spread" class="book-3d-img" id="img-spread-preview">
             
             <!-- Dynamic Child Face Overlay on Spread -->
             <div class="book-spread-face-overlay" id="spread-face-overlay" style="${data.photoUrl ? '' : 'display:none;'}">
-              <img src="${esc(data.photoUrl || '/static/img/avatar-sample.png')}" alt="Child face" class="spread-child-face-img" id="spread-child-face-img">
+              <img src="${esc(data.photoUrl || '/static/img/photo-placeholder.svg')}" alt="Child face" class="spread-child-face-img" id="spread-child-face-img">
             </div>
 
             <!-- Dynamic Story Text Overlay -->
@@ -236,7 +238,7 @@ export function personalizedBookReaderPage(data: PersonalizedBookData) {
       hardcoverPrice,
       softcoverPrice,
       cartImage: data.cartImage || data.coverImage,
-      photoUrl: data.photoUrl || '/static/img/avatar-sample.png',
+      photoUrl: data.photoUrl || '/static/img/photo-placeholder.svg',
       photoKey: data.photoKey || null,
       userBookId: data.userBookId || null,
       userBookVersion: data.userBookVersion ?? null,

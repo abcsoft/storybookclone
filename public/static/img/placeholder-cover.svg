@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-label="Personalised book cover placeholder">
+  <title>Personalised book cover placeholder</title>
+  <defs>
+    <linearGradient id="cover" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#8b5cf6"/>
+      <stop offset="1" stop-color="#6d28d9"/>
+    </linearGradient>
+  </defs>
+  <rect width="600" height="600" fill="url(#cover)"/>
+  <rect x="72" y="72" width="456" height="456" rx="18" fill="none" stroke="#fde68a" stroke-width="6"/>
+  <text x="300" y="290" text-anchor="middle" font-family="Georgia, serif" font-size="42" fill="#ffffff">Your child's</text>
+  <text x="300" y="342" text-anchor="middle" font-family="Georgia, serif" font-size="42" fill="#ffffff">personalised cover</text>
+  <text x="300" y="404" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="22" fill="#ede9fe">Preview artwork placeholder</text>
+</svg>

@@ -113,13 +113,10 @@ export function page(opts: {
       </section>
     </div>
     <div class="footer-bottom">
-      <div class="pay-marks" aria-label="Accepted payments">
-        <i class="fab fa-cc-visa"></i>
-        <i class="fab fa-cc-mastercard"></i>
-        <i class="fab fa-cc-amex"></i>
-        <i class="fab fa-cc-paypal"></i>
-        <i class="fab fa-cc-apple-pay"></i>
-      </div>
+      <!-- T-04: no card/PayPal/Apple-Pay marks. This version collects no real
+           payment (checkout states that on the page), so no payment brands are
+           advertised anywhere in the storefront. -->
+      <p>Test storefront — no real payments, printing or shipping in this version.</p>
       <p>WonderWraps © 2026 All rights reserved</p>
     </div>
   </footer>

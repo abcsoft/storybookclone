@@ -473,37 +473,37 @@ export const faqs: Faq[] = [
   {
     cat: 'Popular',
     q: 'How do I personalise a book?',
-    a: 'It’s easy! Choose the book you want personalised, upload a photo of your child (make sure it matches our recommendations), and enter their name and age. You’ll then get a preview of the book. If you’re happy with it, just proceed to payment to complete your order.'
+    a: 'Choose the book, upload a photo of your child (make sure it matches our recommendations), and enter their name and age. You can review and edit the book in the reader before adding it to your cart. Note: this version does not charge a real payment or produce a printed book.'
   },
   {
     cat: 'Popular',
     q: 'Do you ship internationally?',
-    a: 'Yes! We ship to over 200 countries and regions, so wherever you are, we’ll make sure your order reaches you. Simply enter your shipping details at checkout, and we’ll take care of the rest.'
+    a: 'No — shipping is not available in this version. Printing and delivery are later milestones, so no order placed today will be shipped. The checkout collects shipping details so the order record is complete.'
   },
   {
     cat: 'Popular',
     q: 'What is your refund policy?',
-    a: 'Yes, you can receive a full refund if your book hasn’t been printed yet, or a partial refund if it has been printed but not yet shipped. Once the book has been printed and shipped, we’re unable to offer a refund. To request a refund contact us through our support page or by email at support@wonderwraps.com.'
+    a: 'Not applicable yet — this version does not collect a real payment, so there is nothing to refund. Orders placed here are test orders.'
   },
   {
     cat: 'Popular',
     q: 'How long does shipping take?',
-    a: 'Shipping times depend on the shipping method you choose at checkout. Standard shipping usually takes 10 to 30 business days, while express shipping typically arrives within 7 to 20 business days. Please keep in mind that delivery times include only business days, so holidays or weekends may cause slight delays.'
+    a: 'Delivery is not scheduled in this version — there is no fulfilment or shipping integration yet.'
   },
   {
     cat: 'Popular',
     q: 'Are taxes and customs included?',
-    a: 'The prices listed on our website do not include any additional taxes, customs duties, or import fees. These charges may apply depending on your country’s regulations and are the responsibility of the recipient. We recommend checking with your local customs office for more information.'
+    a: 'Not applicable yet — no real payment, shipping or customs handling exists in this version.'
   },
   {
     cat: 'Popular',
     q: 'Can I review the book before it is printed?',
-    a: 'After payment, you’ll review and approve your book. If you’re not happy with it, you can request changes, and our dedicated support team will be happy to assist you.'
+    a: 'You can review and edit your book in the reader before ordering; every edit is saved as its own revision. There is no post-order approval or revision workflow in this version yet.'
   },
   {
     cat: 'Popular',
     q: 'What languages are your books available in?',
-    a: 'Our books are currently available in English, Spanish, Portuguese (Brazil), Arabic, French, Turkish, German, Italian, Dutch and Albanian. We are actively working on adding more languages soon.'
+    a: 'The personalisation form currently offers English, Spanish, Portuguese (Brazil), Arabic, French, Turkish, German, Italian, Dutch and Albanian.'
   },
   {
     cat: 'About Our Books',
@@ -523,22 +523,22 @@ export const faqs: Faq[] = [
   {
     cat: 'Shipping & Delivery',
     q: 'How can I track my order?',
-    a: 'If you placed your order recently, we’re likely still printing your book. If it’s been more than three business days, you can track your order using the tracking link we sent to your email. If you haven’t received that email, please contact us through our support page or at support@wonderwraps.com.'
+    a: 'Order tracking is not available in this version: no tracking emails or tracking links are sent, and no orders are printed or shipped. If you need the status of an order you placed here, contact us using the contact form.'
   },
   {
     cat: 'Shipping & Delivery',
     q: 'Can I change my shipping address?',
-    a: 'Yes, as long as your order hasn’t been shipped yet. Just send us an email at support@wonderwraps.com as soon as possible, and we’ll help you update it.'
+    a: 'Contact us using the contact form and we will look at the order record. Nothing ships in this version, so no shipment can be affected.'
   },
   {
     cat: 'Your Account',
     q: 'Do I need an account to order?',
-    a: 'No, you can check out as a guest. But creating an account lets you track orders and manage your purchases more easily.'
+    a: 'No, you can check out as a guest. Creating an account keeps the orders you place while signed in under My Books. Guest orders cannot be linked to an account in this version.'
   },
   {
     cat: 'Placing an Order',
     q: 'What payment methods do you accept?',
-    a: 'We accept PayPal and card payments. You can choose your preferred method during checkout for a secure and easy payment process.'
+    a: 'None — this version does not collect a real payment. Checkout records the order without charging anything and does not offer card or PayPal payment.'
   },
   {
     cat: 'About Us',

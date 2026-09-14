@@ -107,8 +107,8 @@ function tabBanner(p: Product, d: any) {
   return `<section class="a-card pdp-tab" data-tab="banner">
     <h2>Banner & Hero</h2>
     <form class="a-form" method="post" action="/admin/products/${p.id}/pdp/banner">
-      ${row('Banner text (top thin strip)', 'banner_text', 'text', d.page.banner_text, 'Save 20% on 3+ items using code: RATRI20')}
-      ${row('Code shown (highlighted)', 'banner_code', 'text', d.page.banner_code, 'RATRI20')}
+      ${row('Banner text (top thin strip)', 'banner_text', 'text', d.page.banner_text, 'Order 2+ books and save 20% automatically')}
+      ${row('Code shown (highlighted)', 'banner_code', 'text', d.page.banner_code, 'EXTRA20')}
       ${row('Save badge (next to price)', 'banner_badge', 'text', d.page.banner_badge, 'SAVE 40%')}
       ${area('Pre-order / below CTA note (optional)', 'preorder_note', d.page.preorder_note, 2)}
       <button class="a-btn" type="submit">Save banner</button>

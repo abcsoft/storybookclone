@@ -28,9 +28,11 @@ export function homePage(opts: {
             <span class="avatar-chip">🧒</span>
             <span class="avatar-chip">✨</span>
           </div>
+          <!-- T-06: no rating, review count or customer-count statistic is
+               rendered — none of it is verified in this version. -->
           <div>
-            <p class="stars-line">${stars(4.9)} <strong>4.9 / 5</strong></p>
-            <p class="tiny">Loved by over 100,000+ happy families worldwide</p>
+            <p class="stars-line"><strong>Your child, the hero</strong></p>
+            <p class="tiny">Every book is personalised with their name, age and photo.</p>
           </div>
         </div>
       </div>
@@ -274,7 +276,7 @@ export function productCard(p: Product) {
     <div class="card-body">
       <div class="card-meta">
         <span class="card-ages"><i class="fas fa-child"></i> ${esc(p.ages)}</span>
-        <span class="card-rating">${stars(p.rating)} (${p.reviews})</span>
+        ${/* T-06: no star rating / review count on cards — not verified data. */ ''}
       </div>
       <h3><a href="${link}">${esc(p.title)}</a></h3>
       <p class="card-tagline">${esc(p.tagline || p.description.slice(0, 80) + '…')}</p>
@@ -360,7 +362,8 @@ export function productPage(p: Product, pathPrefix: string, related: Product[] =
       <div class="pdp-details">
         <p class="eyebrow">${isSticker ? 'Personalised sticker pack' : 'Personalised storybook'}</p>
         <h1>${esc(p.title)}</h1>
-        <p class="review-line">${stars(p.rating)} <strong>${p.reviews.toLocaleString()}</strong> Reviews</p>
+        ${/* T-06: no star rating / review count — this version has no verified
+             reviewed data, so none is rendered. */ ''}
         <p class="pdp-tagline">${esc(p.tagline)}</p>
         <p class="pdp-description">${esc(p.description)}</p>
         <div class="pdp-price"><strong>${money(p.price)}</strong> ${p.compareAt ? `<s>${money(p.compareAt)}</s><span class="limited">Limited Time</span>` : ''}</div>
@@ -453,7 +456,7 @@ export function supportPage() {
   return `
   <section class="page-hero">
     <h1>Support</h1>
-    <p>We’re here to help with orders, previews, shipping, and personalisation.</p>
+    <p>We’re here to help with orders, personalisation and photos.</p>
   </section>
   <section class="section">
     <div class="wrap grid-3">
@@ -464,7 +467,7 @@ export function supportPage() {
       </article>
       <article class="product-card" style="padding:24px">
         <h3><i class="fas fa-circle-question"></i> FAQs</h3>
-        <p>Find answers about shipping, refunds, languages and more.</p>
+        <p>Find answers about personalisation, languages, photos and more.</p>
         <a class="link" href="/faqs">Browse FAQs</a>
       </article>
       <article class="product-card" style="padding:24px">
@@ -569,9 +572,12 @@ export function checkoutPage(user: { name?: string; email?: string } | null = nu
         <input id="country" name="country" required placeholder="United States">
         <label for="shipping">Shipping method</label>
         <select id="shipping" name="shipping">
-          <option value="standard">Standard — $12.00 (10–30 business days)</option>
-          <option value="express">Express — $28.00 (7–20 business days)</option>
+          <!-- T-05: the priced methods are real (the server quotes them), but
+               no delivery-time promise is made — fulfilment is not implemented. -->
+          <option value="standard">Standard — $12.00</option>
+          <option value="express">Express — $28.00</option>
         </select>
+        <p class="tiny">No delivery is scheduled in this version: printing and shipping are later milestones, so these amounts are recorded on the order only.</p>
         <p class="tiny">Code <strong>EXTRA20</strong> applies automatically: 20% off when you order 2 or more books.</p>
         <p class="tiny checkout-test-payment-notice"><i class="fas fa-flask"></i> Test checkout — no real payment is collected. A production payment provider is a later milestone.</p>
         <div id="checkout-error" class="notice" hidden></div>
@@ -584,14 +590,14 @@ export function checkoutPage(user: { name?: string; email?: string } | null = nu
 
 export function myBooksPage(loggedIn: boolean) {
   return `
-  <section class="page-hero"><h1>My Books & Orders</h1><p>Track your personalised storybooks and approval previews.</p></section>
+  <section class="page-hero"><h1>My Books & Orders</h1><p>Your saved personalised books and orders.</p></section>
   <section class="section">
     <div class="wrap" id="orders-root" ${loggedIn ? 'data-mode="list"' : ''}>
       ${!loggedIn ? `
         <div class="auth-required-box" style="text-align:center;padding:48px 24px;background:#fff;border-radius:16px;max-width:540px;margin:0 auto;box-shadow:0 4px 20px rgba(0,0,0,0.05)">
           <i class="fas fa-lock" style="font-size:36px;color:#8B5CF6;margin-bottom:16px"></i>
           <h2 style="margin-bottom:8px">Sign in to view your books</h2>
-          <p style="color:#6B7280;margin-bottom:24px">Log in to view all your created books, track order status, and review previews.</p>
+          <p style="color:#6B7280;margin-bottom:24px">Log in to see the books and orders saved to your account.</p>
           <a class="btn btn-purple" href="/login" style="margin-right:12px">Login</a>
           <a class="btn btn-outline" href="/register">Create Account</a>
         </div>
@@ -610,83 +616,149 @@ export function myBookOrderDetailPage(orderId: string | number) {
   <script type="module" src="/static/my-books.js"></script>`
 }
 
+/**
+ * The blog is record-backed (T-07). This registry is the source of truth: the
+ * index links only to posts that exist here, and an unknown slug returns null
+ * so the route renders a genuine 404 instead of a generic article.
+ *
+ * T-06: no fabricated statistics, expert bylines, awards or press
+ * endorsements are written here. The copy describes what the product does.
+ */
+export type BlogPost = { slug: string; title: string; category: string; excerpt: string; body: string; image: string }
+
+export const BLOG_POSTS: BlogPost[] = [
+  {
+    slug: 'why-personalised-books-work',
+    title: 'Why personalised books hold a child’s attention',
+    category: 'Parenting',
+    excerpt: 'Seeing their own name and face in a story gives a child a reason to keep turning the pages.',
+    image: '/static/img/cover-princess.webp',
+    body: `
+      <p>When a child opens a book and finds their own name — and a picture of themselves — the story stops being somebody else’s and becomes theirs. That ownership is the simplest reason a personalised book gets picked up again and again.</p>
+      <h2>1. Self-representation keeps attention</h2>
+      <p>A child who is the hero of the page has a reason to find out what happens next. That is the whole trick, and it does not need a study to explain: familiar characters are simply more interesting to a young reader.</p>
+      <h2>2. Reading together is the real habit</h2>
+      <p>Time spent reading side by side is what builds a habit. A personalised book gives you a prop that puts your child at the centre of that time, night after night.</p>
+      <h2>3. A keepsake you can edit before you order</h2>
+      <p>On this storefront you can upload a photo, set the name and age, and review each revision before adding the book to your cart.</p>`
+  },
+  {
+    slug: 'birthday-gift-ideas',
+    title: 'Choosing a personalised book as a birthday gift',
+    category: 'Gifts',
+    excerpt: 'A practical checklist for picking a story, an age range and a photo that will work on the page.',
+    image: '/static/img/cover-birthday-girl.webp',
+    body: `
+      <p>A personalised book works as a gift because it is specific to one child. Here is how to choose well.</p>
+      <h2>Pick the story to match what they already love</h2>
+      <p>Adventure, animals, space, dragons — start from the interest, not the artwork. The catalog lists an age range on each product page.</p>
+      <h2>Choose a photo that will read well</h2>
+      <p>A clear, front-facing, well-lit photo gives the best result. Blurry or side-on photos and harsh shadows are the usual cause of a disappointing page.</p>
+      <h2>Check the details before you order</h2>
+      <p>You can review and edit the name, age, language and dedication in the reader before you check out, and every edit is saved as its own revision.</p>`
+  },
+  {
+    slug: 'calm-bedtime-routines',
+    title: 'Building a calmer bedtime routine around a book',
+    category: 'Bedtime',
+    excerpt: 'A short, repeatable routine that ends with a story your child is part of.',
+    image: '/static/img/cover-dragon.webp',
+    body: `
+      <p>A routine works because it is predictable. A story at the end of it gives the whole sequence a destination.</p>
+      <h2>Keep the order the same each night</h2>
+      <p>Bath, teeth, pyjamas, story. The order matters more than the clock.</p>
+      <h2>Let them choose the book</h2>
+      <p>Giving your child one decision — which book — makes the rest of the routine easier to follow.</p>
+      <h2>End on the story, not on a screen</h2>
+      <p>Holding a physical book to the last page gives a natural, quiet stopping point for the day.</p>`
+  }
+]
+
 export function blogIndex() {
   return `
-  <section class="page-hero"><h1>WonderWraps Blog</h1><p>Tips, bedtime stories, parenting guides, and reading magic.</p></section>
+  <section class="page-hero"><h1>WonderWraps Blog</h1><p>Notes on personalising books, photos and bedtime reading.</p></section>
   <section class="section">
     <div class="wrap grid-3">
+      ${BLOG_POSTS.map(
+        (post) => `
       <article class="product-card">
-        <img src="/static/img/cover-princess.webp" alt="Blog cover" width="300" height="200">
+        <img src="${esc(post.image)}" alt="" width="300" height="200">
         <div style="padding:16px">
-          <p class="tiny muted">Parenting · 5 min read</p>
-          <h3>Why personalised books build lifelong reading habits</h3>
-          <p class="tiny">Research shows children engage 40% more when they recognise themselves as the hero…</p>
-          <a class="link" href="/blog/why-personalised-books-work">Read story <i class="fas fa-arrow-right"></i></a>
+          <p class="tiny muted">${esc(post.category)}</p>
+          <h3>${esc(post.title)}</h3>
+          <p class="tiny">${esc(post.excerpt)}</p>
+          <a class="link" href="/blog/${esc(post.slug)}">Read story <i class="fas fa-arrow-right"></i></a>
         </div>
-      </article>
-      <article class="product-card">
-        <img src="/static/img/cover-birthday-girl.webp" alt="Blog cover" width="300" height="200">
-        <div style="padding:16px">
-          <p class="tiny muted">Gifts · 4 min read</p>
-          <h3>10 Unique birthday gifts kids will remember forever</h3>
-          <p class="tiny">Move beyond disposable toys with timeless keepsake storybooks made just for them…</p>
-          <a class="link" href="/blog/unique-birthday-gifts">Read story <i class="fas fa-arrow-right"></i></a>
-        </div>
-      </article>
-      <article class="product-card">
-        <img src="/static/img/cover-dragon.webp" alt="Blog cover" width="300" height="200">
-        <div style="padding:16px">
-          <p class="tiny muted">Bedtime · 6 min read</p>
-          <h3>How to establish a calm and magical bedtime routine</h3>
-          <p class="tiny">Transform bedtime battles into cherished bonding moments with calming personalised tales…</p>
-          <a class="link" href="/blog/calm-bedtime-routines">Read story <i class="fas fa-arrow-right"></i></a>
-        </div>
-      </article>
+      </article>`
+      ).join('')}
     </div>
   </section>`
 }
 
-export function blogPost(slug: string) {
+/** Returns the matching post body, or null so the route renders a real 404 (T-07). */
+export function blogPost(slug: string): string | null {
+  const post = BLOG_POSTS.find((p) => p.slug === slug)
+  if (!post) return null
   return `
   <section class="page-hero">
     <div class="wrap" style="max-width:760px">
-      <p class="eyebrow">WonderWraps Stories</p>
-      <h1>Why personalised books build lifelong reading habits</h1>
-      <p class="tiny muted">Published August 2026 · By Dr. Emily Vance, Child Literacy Specialist</p>
+      <p class="eyebrow">WonderWraps Blog · ${esc(post.category)}</p>
+      <h1>${esc(post.title)}</h1>
     </div>
   </section>
   <section class="section">
     <article class="wrap" style="max-width:760px;line-height:1.8;color:#374151">
-      <p style="font-size:18px;font-weight:500;margin-bottom:24px">When a child opens a book and discovers their own name, their face, and their world on the pages, something truly magical happens.</p>
-      <p style="margin-bottom:20px">Studies conducted by reading foundation research show that children who read stories featuring themselves show a 40% increase in vocabulary acquisition and a dramatic jump in story retention.</p>
-      <h2 style="margin:32px 0 16px;color:#111827">1. The Power of Self-Representation</h2>
-      <p style="margin-bottom:20px">When children see themselves solving mysteries, rescuing unicorns, or steering spaceships, it fosters self-efficacy and imaginative confidence.</p>
-      <h2 style="margin:32px 0 16px;color:#111827">2. Turning Screen Time into Bedtime Wonder</h2>
-      <p style="margin-bottom:20px">Holding a physical, beautifully bound book creates tactile sensory connection that tablets simply cannot replicate.</p>
+      ${post.body}
       <div style="margin:40px 0;padding:24px;background:#F3F4F6;border-radius:12px">
         <h3 style="margin-bottom:8px">Ready to make your child the hero?</h3>
-        <p style="margin-bottom:16px">Browse our collection of award-winning personalised storybooks.</p>
+        <p style="margin-bottom:16px">Browse the personalised storybooks and sticker packs.</p>
         <a class="btn btn-purple" href="/books">Explore books</a>
       </div>
     </article>
   </section>`
 }
 
+/**
+ * S-14: these pages are explicitly-marked drafts, not final legal terms.
+ * The placeholder status must be visible on the rendered page and must stay
+ * until the owner and a qualified lawyer supply real, jurisdiction-aware copy
+ * (Phase 2/8). Nothing here should be relied on as legal advice or as binding
+ * terms.
+ */
 export function legalPage(kind: 'privacy' | 'terms') {
   const isPrivacy = kind === 'privacy'
   return `
   <section class="page-hero">
-    <h1>${isPrivacy ? 'Privacy Policy' : 'Terms & Conditions'}</h1>
-    <p>Last updated: August 2026 · WonderWraps Kept Kept Safe</p>
+    <h1>${isPrivacy ? 'Privacy Policy' : 'Terms & Conditions'} <span class="badge badge-new">Draft</span></h1>
+    <p>Placeholder content — not final legal terms.</p>
   </section>
   <section class="section">
     <div class="wrap" style="max-width:800px;line-height:1.7;color:#4B5563">
-      <h2>1. Overview</h2>
-      <p>WonderWraps is committed to protecting your and your children's privacy. Photos uploaded for personalisation are processed solely to create your custom illustrations and are never shared or sold.</p>
-      <h2>2. Data Security & Storage</h2>
-      <p>All uploads are encrypted in transit and stored in protected storage with strict access controls.</p>
-      <h2>3. Shipping & Returns</h2>
-      <p>Since each book and sticker pack is custom printed with your child's name and likeness, we provide a digital preview before printing to guarantee 100% satisfaction.</p>
+      <div class="notice" style="background:#FEF3C7;color:#92400E;padding:16px;border-radius:12px;margin-bottom:24px">
+        <strong>This page is a placeholder.</strong>
+        <p style="margin:8px 0 0">It has not been reviewed by a lawyer and is not final legal
+        text. It must be replaced with jurisdiction-aware content and reviewed by the site
+        owner and qualified legal counsel before this storefront accepts real customers,
+        payments or uploaded photographs of children. Any real payments, printing, shipping
+        and retention/deletion workflows it would need to describe are not implemented in
+        this version.</p>
+      </div>
+      <h2>1. Overview (draft)</h2>
+      <p>This draft describes the intended handling of personal data for a personalised
+      children's book service: photos uploaded for personalisation would be used solely to
+      create the ordered product.</p>
+      <h2>2. Data & security (draft)</h2>
+      <p>In the current implementation, uploaded photos are stored in private object storage
+      and are readable only through the application's ownership checks. Authentication
+      tokens and password-reset tokens are stored only as hashes. No retention/deletion
+      schedule is deployed in this version — see the operations notes in the repository
+      documentation.</p>
+      <h2>3. Orders, shipping and refunds (draft)</h2>
+      <p>Not applicable in this version: no real payment is collected, nothing is printed or
+      shipped, and therefore no refund, delivery or satisfaction guarantee applies.</p>
+      <h2>4. Legal review required</h2>
+      <p>Owner action required: engage legal counsel, then replace this page with reviewed
+      policy text before launch.</p>
     </div>
   </section>`
 }
@@ -706,7 +778,7 @@ function ctaBlock() {
     <div class="wrap cta-banner">
       <div class="cta-copy">
         <h2>Give the gift of wonder today</h2>
-        <p>Over 100,000 children have discovered the magic of being their own hero. Create their keepsake today.</p>
+        <p>Make your child the hero of their own illustrated storybook. Create their keepsake today.</p>
         <a class="btn btn-purple" href="/books">Create a storybook <i class="fas fa-arrow-right"></i></a>
       </div>
       <div class="cta-image">

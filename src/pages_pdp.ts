@@ -50,14 +50,17 @@ function defaultPdp(product: Product): Omit<PdpData, 'product'> {
   const defaultSteps: StepItem[] = [
     { step_no: 1, title: 'Upload Child\u2019s Photo', body: 'Pick a clear, front-facing photo showing their face. A bright, well-lit picture works best.' },
     { step_no: 2, title: isBook ? 'Choose Book style' : 'Choose Sticker Pack style', body: isBook ? 'Pick their favourite story — princess, adventure, sports and more.' : 'Pick their favourite sticker style — unicorns, superheroes, dinosaurs and more.' },
-    { step_no: 3, title: 'Preview & Add to Cart', body: 'Review every page, request tweaks, and checkout securely.' }
+    { step_no: 3, title: 'Save & Review in Your Cart', body: 'Your choices are saved to your own book, and the cart shows the same price the server charges.' }
   ]
   return {
-    page: { banner_text: 'Save 20% on 3+ items using code: RATRI20', banner_code: 'RATRI20', banner_badge: product.compareAt ? `SAVE ${Math.round((1 - product.price / product.compareAt) * 100)}%` : 'BEST PRICE', preorder_note: '' },
+    // T-04/T-06: the banner advertises only the discount that actually exists
+    // and auto-applies (EXTRA20, seeded by the app's own bootstrap) — never a
+    // code or a saving the server cannot honour.
+    page: { banner_text: 'Order 2+ books and save 20% automatically', banner_code: 'EXTRA20', banner_badge: product.compareAt ? `SAVE ${Math.round((1 - product.price / product.compareAt) * 100)}%` : '', preorder_note: '' },
     gallery: [{ id: 0, image_url: product.image, alt: product.title, sort_order: 1, active: 1 }],
     accordions: [
-      { id: 1, title: 'How is the book personalised for my child?', body: `Creating ${product.title} is quick: upload a clear front-facing photo, enter their name and age, then choose the style. Our artists use the photo to place their face across the story so they truly feel like the hero.`, sort_order: 1, active: 1 },
-      { id: 2, title: 'What if I need to make changes after personalising?', body: 'After you place your order we send a preview link. You can request free revisions to the layout, style or photo placement before we send it to print. Our support team replies within one business day.', sort_order: 2, active: 1 },
+      { id: 1, title: 'How is the book personalised for my child?', body: `Creating ${product.title} is quick: upload a clear front-facing photo, enter their name and age, then choose the style. The photo is used to place your child's face across the story so they truly feel like the hero.`, sort_order: 1, active: 1 },
+      { id: 2, title: 'What if I need to make changes after personalising?', body: 'You can edit your book from the cart at any time before ordering — each edit is saved as a new, immutable revision. After ordering, the details are fixed for that order.', sort_order: 2, active: 1 },
       { id: 3, title: 'Size & Quality', body: isBook ? 'Premium hardcover, large square format, 30+ beautifully illustrated pages. Designed to feel like a keepsake — sturdy, vibrant, and made to last.' : 'Six glossy vinyl sheets (40+ stickers) on premium self-adhesive vinyl. Water-resistant and built for kid hands.', sort_order: 3, active: 1 }
     ],
     steps: defaultSteps,
@@ -68,32 +71,28 @@ function defaultPdp(product: Product): Omit<PdpData, 'product'> {
       { id: 0, kind: 'good', label: 'Clear front face',     image_url: '', sort_order: 1 },
       { id: 0, kind: 'good', label: 'Bright natural light', image_url: '', sort_order: 2 }
     ],
-    magic: { heading: 'See How a Simple Photo Becomes a Beautiful Story', left_image: '', left_caption: 'Your real photo', right_image: '', right_caption: 'Personalised illustrated version', body: 'From a single photo, our artists craft a unique illustrated persona that appears on every page.' },
+    magic: { heading: 'See How a Simple Photo Becomes a Beautiful Story', left_image: '', left_caption: 'Your real photo', right_image: '', right_caption: 'Personalised illustrated version', body: 'Your photo is used to build the illustrated version of your child that appears on the pages.' },
+    // T-06: no invented counts, endorsements or press names. These are the
+    // service commitments the code can actually back today.
     trust: [
-      { id: 1, title: 'Years of Experience in Personalized Books', body: 'A team of illustrators and storytellers dedicated to crafting personalised keepsakes one child at a time.', icon: 'sparkle', sort_order: 1 },
-      { id: 2, title: 'Thousands of Happy Stories Families Worldwide', body: 'Over 100K families in 200+ countries celebrate bedtime, birthdays and big days with WonderWraps.', icon: 'globe', sort_order: 2 },
-      { id: 3, title: 'Highest Personalization Standards', body: 'Multiple artistic checks, secure uploads, and obsessive attention to detail on every page.', icon: 'shield', sort_order: 3 }
+      { id: 1, title: 'Private by Default', body: 'Photos are stored in private storage and are only readable by the browser that uploaded them, the order owner, or an admin.', icon: 'shield', sort_order: 1 },
+      { id: 2, title: 'You Control the Books', body: 'Your book lives under your own account or browser session, and every edit is preserved as a separate revision you can go back to.', icon: 'sparkle', sort_order: 2 },
+      { id: 3, title: 'Server-Verified Prices', body: 'Prices, discounts and totals are computed by the server on every quote and order — never read from the browser.', icon: 'globe', sort_order: 3 }
     ],
     reactions: [],
-    media: [
-      { id: 1, name: 'NBC',                  image_url: '', href: '#', sort_order: 1 },
-      { id: 2, name: 'ABC News',             image_url: '', href: '#', sort_order: 2 },
-      { id: 3, name: 'FOX News',             image_url: '', href: '#', sort_order: 3 },
-      { id: 4, name: 'AP',                   image_url: '', href: '#', sort_order: 4 },
-      { id: 5, name: 'Sports Illustrated',   image_url: '', href: '#', sort_order: 5 },
-      { id: 6, name: 'International Business Times', image_url: '', href: '#', sort_order: 6 },
-      { id: 7, name: 'Morning News',         image_url: '', href: '#', sort_order: 7 },
-      { id: 8, name: 'CBS',                  image_url: '', href: '#', sort_order: 8 }
-    ],
+    // T-06: hard-coded press/partner logos removed. Any media logos shown from
+    // here on must be real, owner-entered records (admin CMS, Phase 2) — this
+    // fallback invents nothing.
+    media: [],
     related: [],
     faqs: [
-      { id: 1, question: 'How do I place an order?', answer: 'Choose your personalised story, upload a clear photo, enter name & age, and we send a preview before printing.', sort_order: 1, active: 1 },
-      { id: 2, question: 'Do you ship to my location?', answer: 'Yes — we ship to 200+ countries and regions.', sort_order: 2, active: 1 },
-      { id: 3, question: 'Can I get a refund for my order?', answer: 'Full refund before printing; partial refund after printing but before shipping; no refund once shipped. Email support@wonderwraps.com.', sort_order: 3, active: 1 },
-      { id: 4, question: 'How long does shipping take?', answer: 'Standard: 10–30 business days. Express: 7–20 business days. Business days only.', sort_order: 4, active: 1 },
-      { id: 5, question: 'Will I have to pay duties or sales tax?', answer: 'Prices exclude local taxes, customs duties or import fees. The recipient is responsible for any charges.', sort_order: 5, active: 1 },
-      { id: 6, question: 'What if I have issues with my order?', answer: 'After payment you’ll review and approve your order. We accept free revisions before printing.', sort_order: 6, active: 1 },
-      { id: 7, question: 'How can I reach customer support?', answer: 'Email support@wonderwraps.com or use the contact form. We reply within one business day.', sort_order: 7, active: 1 },
+      { id: 1, question: 'How do I place an order?', answer: 'Choose your personalised story, upload a clear photo, enter name & age, then add it to your cart. Checkout re-verifies the price on the server.', sort_order: 1, active: 1 },
+      { id: 2, question: 'Do you ship to my location?', answer: 'Shipping is not available in this version yet — printing and delivery are later milestones. No order placed today will be shipped.', sort_order: 2, active: 1 },
+      { id: 3, question: 'Can I get a refund for my order?', answer: 'Refunds are not available in this version: no real payment is collected, so there is nothing to refund. Orders placed here are test orders.', sort_order: 3, active: 1 },
+      { id: 4, question: 'How long does shipping take?', answer: 'Not applicable yet — shipping is not implemented in this version.', sort_order: 4, active: 1 },
+      { id: 5, question: 'Will I have to pay duties or sales tax?', answer: 'Not applicable yet — no real payment, shipping or customs handling exists in this version.', sort_order: 5, active: 1 },
+      { id: 6, question: 'What if I have issues with my order?', answer: 'Use the contact form and we will look at your order. Order status changes are applied by our team from the admin side.', sort_order: 6, active: 1 },
+      { id: 7, question: 'How can I reach customer support?', answer: 'Use the contact form. Messages are stored in our inbox and read manually — replies are not instant.', sort_order: 7, active: 1 },
       { id: 8, question: 'What languages are your books available in?', answer: 'English, Spanish, Portuguese (Brazil), Arabic, French, Turkish, German, Italian, Dutch and Albanian.', sort_order: 8, active: 1 }
     ]
   }
@@ -175,7 +174,7 @@ export function productDetailPage(d: PdpData, pathPrefix: string) {
   const salePercent = sale || page.banner_badge
 
   return `<section class="pdp-banner">
-    <p><strong>${esc(page.banner_text || 'Save 20% on 3+ items using code: RATRI20')}</strong></p>
+    <p><strong>${esc(page.banner_text || 'Order 2+ books and save 20% automatically')}</strong></p>
   </section>
 
   <section class="pdp-hero">
@@ -191,10 +190,8 @@ export function productDetailPage(d: PdpData, pathPrefix: string) {
       </div>
       <div class="pdp-hero-info">
         <h1>${esc(p.title)}</h1>
-        <div class="pdp-rating">
-          ${stars(p.rating)}
-          <span class="pdp-reviews-count"><strong>(${p.reviews.toLocaleString()})</strong> Reviews</span>
-        </div>
+        <!-- T-06: no star rating / review count. There is no reviewed product
+             data in this version, so none is displayed or invented. -->
         <p class="pdp-tagline">${esc(p.tagline || (isSticker ? 'Personalized sticker packs that celebrate their big dreams' : 'A personalised adventure, starring your little one'))}</p>
 
         <div class="pdp-price-row">
@@ -203,12 +200,7 @@ export function productDetailPage(d: PdpData, pathPrefix: string) {
             ${p.compareAt ? `<span class="pdp-price-was"><s>${money(p.compareAt)}</s></span><span class="pdp-save-badge">${esc(page.banner_badge || salePercent || '')}</span>` : ''}
           </div>
         </div>
-
-        <div class="pdp-pay-methods" aria-label="Accepted payments">
-          <i class="fab fa-cc-paypal"></i>
-          <i class="fab fa-cc-mastercard"></i>
-          <i class="fab fa-cc-visa"></i>
-        </div>
+        <!-- T-04: no card/PayPal marks — this version collects no real payment. -->
 
         <div class="pdp-acc">
           ${accordions.map(a => `<details class="pdp-acc-item"><summary>${esc(a.title)}<span class="pdp-acc-toggle">+</span></summary><p>${esc(a.body)}</p></details>`).join('')}
@@ -227,7 +219,7 @@ export function productDetailPage(d: PdpData, pathPrefix: string) {
         <div class="pdp-personalise-left">
           <h2 class="pdp-personalise-title">Start Personalising</h2>
           <p class="pdp-personalise-desc">
-            Personalise your ${isSticker ? 'sticker pack' : 'storybook'} by uploading your child’s photo. Preview the ${isSticker ? 'stickers' : 'book'}, place your order, we’ll print and deliver it to your home.
+            Personalise your ${isSticker ? 'sticker pack' : 'storybook'} by uploading your child’s photo${isSticker ? '' : ', then review every page in the reader'}. Checkout re-verifies the price on our server${isSticker ? ' — printing and delivery are later milestones.' : '.'}
           </p>
 
           <div class="pdp-steps-horizontal">
@@ -238,7 +230,9 @@ export function productDetailPage(d: PdpData, pathPrefix: string) {
                   <i class="fas fa-arrow-up-from-bracket"></i>
                 </div>
                 <div class="pdp-step-avatar">
-                  <img src="/static/img/step-child-redhair.png" alt="Upload Child's Picture" class="pdp-step-img step-img-1">
+                  <!-- S-12/S-13: no real-person photo is shipped as UI artwork;
+                       this is the app's own illustration. -->
+                  <img src="/static/img/step-2.webp" alt="Upload your child's picture" class="pdp-step-img step-img-1">
                 </div>
               </div>
               <div class="pdp-step-label">
@@ -256,12 +250,12 @@ export function productDetailPage(d: PdpData, pathPrefix: string) {
                   <i class="fas fa-check"></i>
                 </div>
                 <div class="pdp-step-avatar book-thumb">
-                  <img src="${p.slug.includes('portugal') ? '/static/img/cover-portugal.webp' : (gallery[0]?.image_url || '/static/img/step-book-preview.png')}" alt="Preview Book and Order" class="pdp-step-img step-img-2">
+                  <img src="${p.slug.includes('portugal') ? '/static/img/cover-portugal.webp' : (gallery[0]?.image_url || '/static/img/step-3.webp')}" alt="Review the personalised book" class="pdp-step-img step-img-2">
                 </div>
               </div>
               <div class="pdp-step-label">
                 <span class="pdp-step-pill">2</span>
-                <span class="pdp-step-text">${isSticker ? 'Preview Stickers and Order' : 'Preview Book and Order'}</span>
+                <span class="pdp-step-text">${isSticker ? 'Review Your Sticker Pack' : 'Review Your Book'}</span>
               </div>
             </div>
 
@@ -270,16 +264,16 @@ export function productDetailPage(d: PdpData, pathPrefix: string) {
             <!-- Step 3 -->
             <div class="pdp-step-col">
               <div class="pdp-step-visual">
-                <div class="pdp-icon-circle dashed" title="Delivery Box">
-                  <i class="fas fa-box"></i>
+                <div class="pdp-icon-circle dashed" title="Saved to your cart">
+                  <i class="fas fa-cart-shopping"></i>
                 </div>
                 <div class="pdp-step-avatar">
-                  <img src="/static/img/step-delivered.png" alt="Premium Print Delivered" class="pdp-step-img step-img-3">
+                  <img src="/static/img/step-4.webp" alt="Saved to your cart" class="pdp-step-img step-img-3">
                 </div>
               </div>
               <div class="pdp-step-label">
                 <span class="pdp-step-pill">3</span>
-                <span class="pdp-step-text">Premium Print, Delivered to Your Door</span>
+                <span class="pdp-step-text">Save and Check Out</span>
               </div>
             </div>
           </div>
@@ -292,7 +286,7 @@ export function productDetailPage(d: PdpData, pathPrefix: string) {
             <!-- Uploaded Avatar Circle with 'X' close/delete button -->
             <div class="pdp-avatar-wrapper">
               <div class="pdp-avatar-container" id="avatar-container" title="Click to upload or change photo">
-                <img id="photo-preview" src="/static/img/avatar-sample.png" alt="Child photo preview" class="pdp-avatar-img">
+                <img id="photo-preview" src="/static/img/photo-placeholder.svg" alt="Child photo preview" class="pdp-avatar-img">
                 <div class="pdp-avatar-empty" id="avatar-empty" style="display: none;">
                   <i class="fas fa-camera"></i>
                   <span>Upload Photo</span>
@@ -403,7 +397,7 @@ export function productDetailPage(d: PdpData, pathPrefix: string) {
         <div class="book-preview-stage review-stage">
           <div class="review-summary">
             <div class="review-photo-wrap">
-              <img src="/static/img/avatar-sample.png" alt="Uploaded photo" id="preview-child-face" class="review-photo">
+              <img src="/static/img/photo-placeholder.svg" alt="Uploaded photo" id="preview-child-face" class="review-photo">
             </div>
             <dl class="review-fields">
               <div><dt>Dedication</dt><dd id="preview-dedication">—</dd></div>
@@ -458,7 +452,8 @@ export function productDetailPage(d: PdpData, pathPrefix: string) {
   ${trust.length ? `
   <section class="pdp-trust">
     <div class="pdp-trust-inner">
-      <h2>Why 100K+ parents trust WonderWraps</h2>
+      <!-- T-06: no unverified trust statistics in the heading. -->
+      <h2>What we promise for every order</h2>
       <div class="pdp-trust-grid">
         ${trust.map(t => `
           <div class="pdp-trust-card">
@@ -473,7 +468,7 @@ export function productDetailPage(d: PdpData, pathPrefix: string) {
   ${reactions.length ? `
   <section class="pdp-reactions">
     <div class="pdp-reactions-inner">
-      <h2>Reactions You Can Count On</h2>
+      <h2>Customer Reactions</h2>
       <div class="pdp-reactions-grid">
         ${reactions.map(r => `
           <article class="pdp-reaction">
@@ -484,13 +479,10 @@ export function productDetailPage(d: PdpData, pathPrefix: string) {
           </article>`).join('')}
       </div>
     </div>
-  </section>` : `
-  <section class="pdp-reactions pdp-reactions-empty">
-    <div class="pdp-reactions-inner">
-      <h2>Reactions You Can Count On</h2>
-      <p>Customer reviews placeholder — admins can add reactions for this product in the admin panel.</p>
-    </div>
-  </section>`}
+  </section>` : ''}
+  <!-- T-06: no review/reactions placeholder is rendered when there is no
+       reviewed record. An empty product page simply shows no reviews — it
+       never renders invented or placeholder social proof. -->
 
   ${media.length ? `
   <section class="pdp-media">

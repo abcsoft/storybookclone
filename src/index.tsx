@@ -356,8 +356,13 @@ function getOrSetUploadOwnerToken(c: Context<{ Bindings: Bindings; Variables: Va
   return token
 }
 
-function html(c: any, title: string, body: string, active?: string, description?: string) {
-  return c.html(page({ title, body, active, description }))
+function html(c: any, title: string, body: string, active?: string, description?: string, status?: 200 | 404) {
+  return status ? c.html(page({ title, body, active, description }), status) : c.html(page({ title, body, active, description }))
+}
+
+/** A missing product/sticker/article is a genuine 404 — never a 200 with a "not found" body (T-07). */
+function htmlNotFound(c: any) {
+  return html(c, 'Not found - Wonder Wraps', notFoundPage(), undefined, undefined, 404)
 }
 
 // ================= STOREFRONT =================
@@ -408,7 +413,7 @@ app.get('/stickers', async (c) =>
 
 app.get('/books/:slug', async (c) => {
   const p = await getProductBySlug(c.env.DB, c.req.param('slug'))
-  if (!p) return html(c, 'Not found - Wonder Wraps', notFoundPage())
+  if (!p) return htmlNotFound(c)
   const pdp = await loadPdp(c.env.DB, p)
   const variants = (await getProductVariants(c.env.DB, p.slug))?.variants
   const active = p.category === 'sticker' ? 'stickers' : 'books'
@@ -418,7 +423,7 @@ app.get('/books/:slug', async (c) => {
 
 app.get('/stickers/:slug', async (c) => {
   const p = await getProductBySlug(c.env.DB, c.req.param('slug'))
-  if (!p || p.category !== 'sticker') return html(c, 'Not found - Wonder Wraps', notFoundPage())
+  if (!p || p.category !== 'sticker') return htmlNotFound(c)
   const pdp = await loadPdp(c.env.DB, p)
   const variants = (await getProductVariants(c.env.DB, p.slug))?.variants
   return html(c, `${p.title} - Wonder Wraps`, productDetailPage({ product: p, variants, ...pdp }, '/stickers'), 'stickers', p.description)
@@ -646,8 +651,8 @@ app.post('/reset-password', async (c) => {
       ageMax: p?.ageMax ?? 18,
       hardcoverPrice: bookPrice,
       softcoverPrice: bookPrice,
-      coverImage: '/static/img/preview-book-cover-ref.webp',
-      spreadImage: '/static/img/preview-book-spread-ref.webp',
+      coverImage: '/static/img/placeholder-cover.svg',
+      spreadImage: '/static/img/placeholder-spread.svg',
       cartImage: p?.image,
       photoUrl: photoKey ? `/photos/${photoKey}` : undefined,
       photoKey,
@@ -727,7 +732,7 @@ app.get('/order-success', async (c) => {
       })
       if (it.photo_key) params.set('photoKey', it.photo_key)
       const href = `/my/books/${encodeURIComponent(it.slug)}?${params.toString()}`
-      return `<li class="order-success-item"><span>${esc(it.title || it.slug)}${it.child_name ? ` — ${esc(it.child_name)}` : ''}</span> <a class="link reader-link" href="${href}" data-order-item-id="${it.id}">Open reader / request PDF →</a></li>`
+      return `<li class="order-success-item"><span>${esc(it.title || it.slug)}${it.child_name ? ` — ${esc(it.child_name)}` : ''}</span> <a class="link reader-link" href="${href}" data-order-item-id="${it.id}">Open reader →</a></li>`
     })
     .join('')
 
@@ -736,10 +741,13 @@ app.get('/order-success', async (c) => {
     'Order confirmed - Wonder Wraps',
     `<section class="page-hero">
       <h1>Thank you!</h1>
-      <p>Your personalised order #${order.id} is being prepared. We’ll email a preview for approval before printing.</p>
+      ${/* T-01: no preview-email promise — no email/outbox worker exists, so
+           nothing is emailed to anyone. T-03: no PDF either. */ ''}
+      <p>Your order #${order.id} has been saved. Nothing has been charged.</p>
       <p class="tiny muted">Status: ${String(order.status).replace(/_/g, ' ')} · ${items.length} item${items.length === 1 ? '' : 's'} · Total ${money(order.total)}</p>
+      <p class="tiny">This version does not send emails, generate previews or produce PDFs yet, so do not wait for a confirmation or preview message.</p>
       ${readerLinks ? `<ul class="order-success-items">${readerLinks}</ul>` : ''}
-      ${!user ? `<p class="tiny">Bookmark this page to check back — guest orders are not linked to an account. <a class="link" href="/register">Create an account</a> to track it from My Books instead.</p>` : ''}
+      ${!user ? `<p class="tiny">Bookmark this page to check back. Guest orders cannot be linked to an account in this version, so creating one will not add this order to My Books.</p>` : ''}
       <a class="btn" href="${user ? '/my-books' : '/'}">${user ? 'View my books' : 'Continue shopping'}</a>
     </section>
     ${
@@ -766,7 +774,7 @@ app.get('/order-success', async (c) => {
 app.get('/blog', (c) => html(c, 'Blog - Wonder Wraps', blogIndex()))
 app.get('/blog/:slug', (c) => {
   const body = blogPost(c.req.param('slug'))
-  if (!body) return html(c, 'Not found - Wonder Wraps', notFoundPage())
+  if (!body) return htmlNotFound(c)
   return html(c, 'Blog - Wonder Wraps', body)
 })
 
@@ -1712,7 +1720,7 @@ async function handleCreatePdfRequest(c: Context<{ Bindings: Bindings; Variables
 
   const r = await c.env.DB.prepare(
     `INSERT INTO pdf_requests (email, book_slug, child_name, child_age, cover_type, user_id, order_item_id, status, access_token_hash, access_token_expires_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?)`
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'unavailable', ?, ?)`
   )
     .bind(email, bookSlug, childName, childAge, coverType, user?.id ?? null, orderItemId, tokenHash, expiresAt)
     .run()
@@ -1720,9 +1728,11 @@ async function handleCreatePdfRequest(c: Context<{ Bindings: Bindings; Variables
   return c.json({
     success: true,
     id: Number(r.meta.last_row_id),
-    status: 'queued',
+    // T-03: the request is recorded, but no PDF worker exists — the status is
+    // explicitly 'unavailable' and the response promises nothing.
+    status: 'unavailable',
     token: rawToken,
-    message: 'Request received and queued — we’ll email you once your digital copy is ready.'
+    message: 'Request recorded, but PDF copies are not available in this version. Nothing will be emailed and no digital copy exists to send yet.'
   })
 }
 // Never a bare sequential id: the caller must be the admin, the

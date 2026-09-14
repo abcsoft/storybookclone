@@ -65,10 +65,13 @@ export async function loadPdp(db: D1Database, product: Product) {
 }
 
 // Default ensure that a row exists for a given product (so editor has something to edit).
+// T-04/T-06: the seeded banner advertises only the discount the app itself
+// creates and auto-applies (EXTRA20 — see bootstrapLocalDefaults). It must
+// never advertise a code or saving the server cannot honour.
 export async function ensurePdpPageRow(db: D1Database, productId: number) {
   await db
     .prepare('INSERT OR IGNORE INTO pdp_page (product_id, banner_text, banner_code, banner_badge, preorder_note) VALUES (?, ?, ?, ?, ?)')
-    .bind(productId, 'Save 20% on 3+ items using code: RATRI20', 'RATRI20', 'SAVE 40%', '')
+    .bind(productId, 'Order 2+ books and save 20% automatically', 'EXTRA20', '', '')
     .run()
 }
 

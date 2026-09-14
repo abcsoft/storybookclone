@@ -36,7 +36,7 @@ async function renderOrdersList() {
       <div class="my-books-empty">
         <i class="fas fa-book" style="font-size:32px;color:#8B5CF6;margin-bottom:12px"></i>
         <h2>No books yet</h2>
-        <p>Once you place an order, it will show up here with its preview and shipping status.</p>
+        <p>Once you place an order, it will show up here.</p>
         <a class="btn btn-purple" href="/books">Browse Storybooks</a>
       </div>
     `

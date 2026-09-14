@@ -425,7 +425,7 @@ function rotateDraftKey(slug) {
       analysisState = 'none'
       setPhotoStatus('', false)
       if (photoPreview) {
-        photoPreview.src = '/static/img/avatar-sample.png'
+        photoPreview.src = '/static/img/photo-placeholder.svg'
         photoPreview.style.display = 'none'
       }
       if (avatarEmpty) avatarEmpty.style.display = ''
