@@ -26,9 +26,11 @@ import { adminPdpEditor } from './admin_pdp'
 import {
   queryProducts,
   getProductBySlug,
+  getProductVariants,
   quoteCart,
   shippingFor,
   round2,
+  minorToMajor,
   type CatalogQuery,
   type DiscountRow
 } from './db'
@@ -213,6 +215,29 @@ export async function bootstrapLocalDefaults(db: D1Database, bootstrap?: { email
     )
     if (batch.length) await db.batch(batch)
   }
+  // Keep the minor-unit price truth + the storefront's cover/format variants
+  // in sync for every catalog row, idempotently (D-08/D-09). Variants are
+  // priced from the product's own price — no new price is invented.
+  await db.prepare('UPDATE products SET price_minor = CAST(ROUND(price * 100) AS INTEGER) WHERE price_minor IS NULL').run()
+  await db.prepare('UPDATE products SET compare_at_price_minor = CAST(ROUND(compare_at * 100) AS INTEGER) WHERE compare_at IS NOT NULL AND compare_at_price_minor IS NULL').run()
+  await db
+    .prepare(
+      `INSERT OR IGNORE INTO product_variants (product_id, code, label, price_minor, compare_at_price_minor, currency, is_default, sort_order)
+       SELECT id, 'standard', 'Standard', CAST(ROUND(price * 100) AS INTEGER), NULL, 'USD', 1, 0 FROM products WHERE category <> 'book'`
+    )
+    .run()
+  await db
+    .prepare(
+      `INSERT OR IGNORE INTO product_variants (product_id, code, label, price_minor, compare_at_price_minor, currency, is_default, sort_order)
+       SELECT id, 'hardcover', 'Hardcover', CAST(ROUND(price * 100) AS INTEGER), NULL, 'USD', 1, 0 FROM products WHERE category = 'book'`
+    )
+    .run()
+  await db
+    .prepare(
+      `INSERT OR IGNORE INTO product_variants (product_id, code, label, price_minor, compare_at_price_minor, currency, is_default, sort_order)
+       SELECT id, 'softcover', 'Softcover', CAST(ROUND(price * 100) AS INTEGER), NULL, 'USD', 0, 1 FROM products WHERE category = 'book'`
+    )
+    .run()
 }
 
 /**
@@ -340,16 +365,18 @@ app.get('/books/:slug', async (c) => {
   const p = await getProductBySlug(c.env.DB, c.req.param('slug'))
   if (!p) return html(c, 'Not found - Wonder Wraps', notFoundPage())
   const pdp = await loadPdp(c.env.DB, p)
+  const variants = (await getProductVariants(c.env.DB, p.slug))?.variants
   const active = p.category === 'sticker' ? 'stickers' : 'books'
   const prefix = p.category === 'sticker' ? '/stickers' : '/books'
-  return html(c, `${p.title} - Wonder Wraps`, productDetailPage({ product: p, ...pdp }, prefix), active, p.description)
+  return html(c, `${p.title} - Wonder Wraps`, productDetailPage({ product: p, variants, ...pdp }, prefix), active, p.description)
 })
 
 app.get('/stickers/:slug', async (c) => {
   const p = await getProductBySlug(c.env.DB, c.req.param('slug'))
   if (!p || p.category !== 'sticker') return html(c, 'Not found - Wonder Wraps', notFoundPage())
   const pdp = await loadPdp(c.env.DB, p)
-  return html(c, `${p.title} - Wonder Wraps`, productDetailPage({ product: p, ...pdp }, '/stickers'), 'stickers', p.description)
+  const variants = (await getProductVariants(c.env.DB, p.slug))?.variants
+  return html(c, `${p.title} - Wonder Wraps`, productDetailPage({ product: p, variants, ...pdp }, '/stickers'), 'stickers', p.description)
 })
 
 app.get('/faqs', (c) => html(c, 'FAQ - Wonder Wraps', faqsPage(), 'support'))
@@ -519,16 +546,22 @@ app.post('/reset-password', async (c) => {
     const readOnly = q.readOnly === '1' || q.readonly === '1'
     const photoKey = String(revision?.photo_upload_key ?? (q.photoKey && q.photoKey.startsWith('uploads/') ? q.photoKey : '')) || undefined
 
-    // Cover/format options come from the SAME product realm the quote/order
-    // use (D-08). Books get hardcover/softcover; everything else is standard.
-    const isBook = p?.category === 'book'
-    const coverOptions = isBook ? (['hardcover', 'softcover'] as const) : (['standard'] as const)
+    // Cover/format options and their prices come from the SAME server-owned
+    // variants the quote and order snapshot use (D-08) — never a second,
+    // hard-coded "reader price" (previously ai_settings 49.20/34.20, which
+    // disagreed with the actual catalog price).
+    const variantInfo = p ? await getProductVariants(c.env.DB, p.slug) : null
+    const variants = variantInfo?.variants || []
+    const coverOptions = variants.length ? variants.map((v) => v.code) : ['standard']
+    const coverLabels = Object.fromEntries(variants.map((v) => [v.code, v.label]))
+    const coverPrices = Object.fromEntries(variants.map((v) => [v.code, v.price]))
+    const defaultVariant = variants.find((v) => v.isDefault) || variants[0]
     const requestedCover = String(q.cover || '')
-    const coverType = (coverOptions as readonly string[]).includes(requestedCover) ? requestedCover : coverOptions[0]
-    // Prices are the product's own server-side price — never a second,
-    // hard-coded "reader price" (D-08). Slice B reads the authoritative
-    // variant price; until then both cover options cost the product price.
-    const bookPrice = Number(p?.price ?? 0)
+    const coverType = coverOptions.includes(requestedCover) ? requestedCover : defaultVariant?.code || coverOptions[0]
+    // A forged/unavailable cover in the URL is ignored (the page falls back
+    // to the product's real default) — the server never trusts it as a price,
+    // and the quote/order reject an unknown variant outright.
+    const bookPrice = defaultVariant?.price ?? Number(p?.price ?? 0)
     const languages = (await c.env.DB.prepare('SELECT code, name FROM languages WHERE active = 1 ORDER BY name').all<{ code: string; name: string }>()).results || []
 
     const readerHtml = personalizedBookReaderPage({
@@ -540,6 +573,8 @@ app.post('/reset-password', async (c) => {
       dedication,
       coverType,
       coverOptions,
+      coverLabels,
+      coverPrices,
       languages,
       ageMin: p?.ageMin ?? 1,
       ageMax: p?.ageMax ?? 18,
@@ -792,23 +827,40 @@ app.get('/api/v1/uploads/photo-policy', (c) => c.json(photoPolicySummary()))
 async function handleQuote(c: Context<{ Bindings: Bindings; Variables: Vars }>) {
   const body = await c.req.json<{ items?: any[]; code?: string; shipping?: string }>()
   const items = Array.isArray(body.items) ? body.items : []
-  if (!items.length) return c.json({ subtotal: 0, discount: 0, shipping: 0, total: 0, bookCount: 0 })
+  if (!items.length) return c.json({ subtotal: 0, discount: 0, shipping: 0, total: 0, bookCount: 0, subtotalMinor: 0, discountMinor: 0, shippingMinor: 0, totalMinor: 0, currency: 'USD' })
   const quoteResult = await quoteCart(c.env.DB, items, body.code)
-  const ship = body.shipping ? shippingFor(String(body.shipping)).price : 0
-  const total = round2(quoteResult.subtotal - quoteResult.discount + ship)
+  const ship = body.shipping ? shippingFor(String(body.shipping)) : shippingFor('standard')
+  const shippingMinor = body.shipping ? ship.priceMinor : 0
+  // INTEGER minor units are the financial truth (D-09); the decimal fields
+  // are derived display values for compatibility.
+  const totalMinor = quoteResult.subtotalMinor - quoteResult.discountMinor + shippingMinor
   return c.json({
     subtotal: quoteResult.subtotal,
     discount: quoteResult.discount,
     code: quoteResult.appliedCode,
     bookCount: quoteResult.bookCount,
-    shipping: ship,
-    total,
+    shipping: minorToMajor(shippingMinor),
+    total: minorToMajor(totalMinor),
+    subtotalMinor: quoteResult.subtotalMinor,
+    discountMinor: quoteResult.discountMinor,
+    shippingMinor,
+    totalMinor,
+    currency: quoteResult.currency,
     invalid: quoteResult.invalid
   })
 }
 app.post('/api/v1/cart/quote', handleQuote)
 app.post('/api/quote', handleQuote)
 app.post('/api/cart/quote', handleQuote)
+
+// Server-owned cover/format variants (D-08) — the PDP, reader, cart, quote
+// and order snapshot all resolve prices from these rows, so they cannot
+// disagree. Available/unavailable is decided here, never by the browser.
+app.get('/api/v1/products/:slug/variants', async (c) => {
+  const pv = await getProductVariants(c.env.DB, c.req.param('slug'))
+  if (!pv) return c.json({ error: { code: 'unknown_product', message: 'Unknown or inactive product.' } }, 404)
+  return c.json({ productSlug: pv.product.slug, currency: pv.currency, variants: pv.variants })
+})
 
 // Place an order (guest or logged-in). Server recomputes ALL prices, writes
 // order+items atomically, and is idempotent under an `Idempotency-Key`

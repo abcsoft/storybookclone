@@ -3,7 +3,7 @@
 // access via an unforgeable HMAC-signed capability token (never a bare
 // sequential ID). Signing secrets come from environment bindings — see
 // src/secrets.ts resolveGuestOrderTokenSecrets() — never the database.
-import { quoteCart, shippingFor, round2, type CartLine } from './db'
+import { quoteCart, shippingFor, minorToMajor, type CartLine } from './db'
 import { checkUploadOwnership } from './uploads'
 import { sha256Hex, signWithRotation, hmacSha256Hex, timingSafeEqual, DEFAULT_GUEST_ORDER_TOKEN_TTL_SECONDS, type RotatingSecrets } from './secrets'
 import { PERSONALIZATION_LIMITS } from './personalization/user-books'
@@ -209,18 +209,40 @@ export async function createOrder(
     if (!check.ok) return { ok: false, status: 400, error: uploadOwnershipErrorMessage(check.reason) }
   }
 
-  const cartLines: CartLine[] = resolvedItems.map((i) => ({ slug: String(i.slug), kind: undefined, qty: i.qty }))
+  const cartLines: CartLine[] = resolvedItems.map((i) => ({ slug: String(i.slug), kind: undefined, qty: i.qty, variantCode: i.coverType }))
   const quote = await quoteCart(db, cartLines, input.code)
-  if (quote.invalid.length) return { ok: false, status: 400, error: `Unknown product(s): ${quote.invalid.join(', ')}` }
+  if (quote.invalid.length) return { ok: false, status: 400, error: `Unknown product(s) or unavailable option(s): ${quote.invalid.join(', ')}` }
   const ship = shippingFor(String(input.shippingMethod || 'standard'))
-  const total = round2(quote.subtotal - quote.discount + ship.price)
-
+  // INTEGER minor units are the financial truth (D-09); the legacy REAL
+  // columns are kept in sync for compatibility only.
+  const totalMinor = quote.subtotalMinor - quote.discountMinor + ship.priceMinor
+  const currency = quote.currency
   const orderStmt = db
     .prepare(
-      `INSERT INTO orders (user_id, full_name, email, address, city, country, shipping_method, shipping, subtotal, discount, discount_code, total, status, idempotency_key, idempotency_payload_hash)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending_preview', ?, ?)`
+      `INSERT INTO orders (user_id, full_name, email, address, city, country, shipping_method, shipping, subtotal, discount, discount_code, total, status, idempotency_key, idempotency_payload_hash, shipping_minor, subtotal_minor, discount_minor, total_minor, currency)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending_preview', ?, ?, ?, ?, ?, ?, ?)`
     )
-    .bind(ctx.userId, fullName, email, address, city, country, String(input.shippingMethod || 'standard'), ship.price, quote.subtotal, quote.discount, quote.appliedCode, total, idempotencyKey, payloadHash)
+    .bind(
+      ctx.userId,
+      fullName,
+      email,
+      address,
+      city,
+      country,
+      String(input.shippingMethod || 'standard'),
+      minorToMajor(ship.priceMinor),
+      quote.subtotal,
+      quote.discount,
+      quote.appliedCode,
+      minorToMajor(totalMinor),
+      idempotencyKey,
+      payloadHash,
+      ship.priceMinor,
+      quote.subtotalMinor,
+      quote.discountMinor,
+      totalMinor,
+      currency
+    )
 
   // Item rows resolve their order_id via a subquery on the just-inserted
   // idempotency_key rather than a bound literal ID — that's what lets the
@@ -228,12 +250,14 @@ export async function createOrder(
   // instead of two separate round-trips (order first, items after) where a
   // failure between them would orphan a paid-looking order with no items.
   const itemStmts = resolvedItems.map((it, i) => {
-    const meta = quote.priceMap.get(String(it.slug))!
+    // The per-line variant is authoritative for price AND snapshot (D-08):
+    // a price is never derived from a title and never taken from the browser.
+    const meta = quote.lineMeta[i]!
     return db
       .prepare(
-        `INSERT INTO order_items (order_id, product_id, slug, title, kind, unit_price, qty, child_name, child_age, language, dedication, photo_key, user_book_id, personalization_input_revision)
+        `INSERT INTO order_items (order_id, product_id, slug, title, kind, unit_price, qty, child_name, child_age, language, dedication, photo_key, user_book_id, personalization_input_revision, unit_price_minor, currency, variant_id, variant_code)
          VALUES ((SELECT id FROM orders WHERE idempotency_key = ?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-           (SELECT id FROM user_books WHERE public_id = ?), ?)`
+           (SELECT id FROM user_books WHERE public_id = ?), ?, ?, ?, ?, ?)`
       )
       .bind(
         idempotencyKey,
@@ -249,7 +273,11 @@ export async function createOrder(
         String(it.dedication || '').slice(0, PERSONALIZATION_LIMITS.dedicationMaxLength),
         String(it.photoKey || ''),
         it.userBookId || null,
-        resolvedRevisions[i]
+        resolvedRevisions[i],
+        meta.priceMinor,
+        meta.currency,
+        meta.variantId || null,
+        meta.variantCode
       )
   })
 

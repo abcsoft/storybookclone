@@ -129,40 +129,186 @@ export type CartLine = {
   slug: string
   kind?: string
   qty?: number
+  /** First-class cover/format variant code (D-08). Validated against the product's own active variants. */
+  variantCode?: string
   [k: string]: any
 }
 
-// Server-side pricing: recompute totals from the products table, never trust the client.
+export type VariantRow = {
+  id: number
+  product_id: number
+  code: string
+  label: string
+  price_minor: number
+  compare_at_price_minor: number | null
+  currency: string
+  is_default: number
+  active: number
+  sort_order: number
+}
+
+export type ProductVariant = {
+  id: number
+  code: string
+  label: string
+  priceMinor: number
+  price: number
+  compareAtPriceMinor: number | null
+  compareAtPrice: number | null
+  currency: string
+  isDefault: boolean
+  sortOrder: number
+}
+
+/** Minor -> major units for display/legacy fields. The minor integer stays authoritative. */
+export function minorToMajor(minor: number): number {
+  return Math.round(minor) / 100
+}
+
+/** Major -> minor, deterministic half-up rounding. */
+export function majorToMinor(major: number): number {
+  return Math.round(Number(major) * 100)
+}
+
+/**
+ * The product's active variants, ordered for display. A product with no
+ * variant rows (e.g. created out-of-band) falls back to a single synthetic
+ * `standard` variant derived from the product's own price, so the storefront
+ * and the quote never disagree about what "the price" is.
+ */
+export async function getProductVariants(db: D1Database, slug: string): Promise<{ product: Product; currency: string; variants: ProductVariant[] } | null> {
+  const product = await getProductBySlug(db, slug)
+  if (!product) return null
+  const rows = (
+    await db
+      .prepare('SELECT * FROM product_variants WHERE product_id = ? AND active = 1 ORDER BY sort_order, id')
+      .bind(product.id)
+      .all<VariantRow>()
+  ).results || []
+  const currency = (await db.prepare('SELECT currency FROM products WHERE id = ?').bind(product.id).first<{ currency: string }>())?.currency || 'USD'
+  if (!rows.length) {
+    // No variant rows (e.g. a product seeded after the migration backfill ran
+    // against an empty catalog). Derive the intended set from the product
+    // ITSELF — still server-owned, still priced from the product's own price,
+    // so the storefront/quote/order agree on both the option list and price.
+    const priceMinor = majorToMinor(product.price)
+    const compareAtMinor = product.compareAt != null ? majorToMinor(product.compareAt) : null
+    const base = (code: string, label: string, isDefault: boolean, sortOrder: number): ProductVariant => ({
+      id: 0,
+      code,
+      label,
+      priceMinor,
+      price: minorToMajor(priceMinor),
+      compareAtPriceMinor: compareAtMinor,
+      compareAtPrice: compareAtMinor != null ? minorToMajor(compareAtMinor) : null,
+      currency,
+      isDefault,
+      sortOrder
+    })
+    return {
+      product,
+      currency,
+      variants:
+        product.category === 'book'
+          ? [base('hardcover', 'Hardcover', true, 0), base('softcover', 'Softcover', false, 1)]
+          : [base('standard', 'Standard', true, 0)]
+    }
+  }
+  return {
+    product,
+    currency,
+    variants: rows.map((r) => ({
+      id: r.id,
+      code: r.code,
+      label: r.label,
+      priceMinor: r.price_minor,
+      price: minorToMajor(r.price_minor),
+      compareAtPriceMinor: r.compare_at_price_minor ?? null,
+      compareAtPrice: r.compare_at_price_minor != null ? minorToMajor(r.compare_at_price_minor) : null,
+      currency: r.currency || currency,
+      isDefault: !!r.is_default,
+      sortOrder: r.sort_order
+    }))
+  }
+}
+
+function pickVariant(variants: ProductVariant[], requested: string | undefined, category: string): { variant: ProductVariant | null; forged: boolean } {
+  if (requested) {
+    const match = variants.find((v) => v.code === requested)
+    // A requested-but-unavailable/unknown variant is a forged/unavailable
+    // selection and must be rejected, never silently substituted.
+    return { variant: match || null, forged: !match }
+  }
+  const def = variants.find((v) => v.isDefault) || variants.find((v) => v.code === (category === 'book' ? 'hardcover' : 'standard')) || variants[0]
+  return { variant: def || null, forged: false }
+}
+
+export type QuotePriceMeta = {
+  id: number
+  title: string
+  kind: string
+  price: number
+  priceMinor: number
+  currency: string
+  variantId: number
+  variantCode: string
+}
+
+// Server-side pricing: recompute totals from the products/variants tables in
+// INTEGER minor units, never trust the client (D-08/D-09). Pure function —
+// all per-quote state is local, so concurrent quotes can never interleave.
 export async function quoteCart(db: D1Database, lines: CartLine[], code?: string) {
   const slugs = [...new Set(lines.map((l) => String(l.slug)))]
-  const priceMap = new Map<string, { price: number; kind: string; title: string; id: number }>()
+  const productVariants = new Map<string, { product: Product; currency: string; variants: ProductVariant[] }>()
   for (const slug of slugs) {
-    const row = await db
-      .prepare('SELECT id, slug, price, category, title FROM products WHERE slug = ? AND active = 1')
-      .bind(slug)
-      .first<{ id: number; slug: string; price: number; category: string; title: string }>()
-    if (row) priceMap.set(slug, { price: row.price, kind: row.category, title: row.title, id: row.id })
+    const pv = await getProductVariants(db, slug)
+    if (pv) productVariants.set(slug, pv)
   }
-  let subtotal = 0
+
+  const priceMap = new Map<string, QuotePriceMeta>()
+  const lineMeta: QuotePriceMeta[] = []
+  let subtotalMinor = 0
+  let discountableMinor = 0
   let bookCount = 0
-  let discountable = 0
   const invalid: string[] = []
+
   for (const l of lines) {
-    const p = priceMap.get(String(l.slug))
-    const qty = Math.max(1, Math.min(10, Number(l.qty) || 1))
-    if (!p) {
-      invalid.push(String(l.slug))
+    const slug = String(l.slug)
+    const pv = productVariants.get(slug)
+    if (!pv) {
+      invalid.push(slug)
       continue
     }
-    subtotal += p.price * qty
-    if (p.kind === 'book') {
-      bookCount += qty
-      discountable += p.price * qty
+    const qty = Math.max(1, Math.min(10, Number(l.qty) || 1))
+    const requested = l.variantCode != null && l.variantCode !== '' ? String(l.variantCode) : undefined
+    const { variant, forged } = pickVariant(pv.variants, requested, pv.product.category)
+    // A requested-but-unknown/inactive variant is a forged or unavailable
+    // selection: reject the line rather than silently substituting another.
+    if (!variant || forged) {
+      invalid.push(slug)
+      continue
     }
+    const priceMinor = variant.priceMinor
+    subtotalMinor += priceMinor * qty
+    if (pv.product.category === 'book') {
+      bookCount += qty
+      discountableMinor += priceMinor * qty
+    }
+    const meta: QuotePriceMeta = {
+      id: pv.product.id as number,
+      title: pv.product.title,
+      kind: pv.product.category,
+      price: minorToMajor(priceMinor),
+      priceMinor,
+      currency: variant.currency || pv.currency,
+      variantId: variant.id,
+      variantCode: variant.code
+    }
+    lineMeta.push(meta)
+    if (!priceMap.has(slug)) priceMap.set(slug, meta)
   }
-  subtotal = round2(subtotal)
 
-  let discount = 0
+  let discountMinor = 0
   let appliedCode: string | null = null
   const discounts = (
     await db.prepare('SELECT * FROM discounts WHERE active = 1').all<DiscountRow>()
@@ -172,19 +318,32 @@ export async function quoteCart(db: D1Database, lines: CartLine[], code?: string
     const matchesCode = wanted ? d.code.toUpperCase() === wanted : !!d.auto_apply
     if (!matchesCode) continue
     if (bookCount < (d.min_books || 0)) continue
-    const base = d.applies_to === 'all' ? subtotal : discountable
-    const amt = round2((base * d.percent) / 100)
-    if (amt > discount) {
-      discount = amt
+    const baseMinor = d.applies_to === 'all' ? subtotalMinor : discountableMinor
+    const amt = Math.round((baseMinor * (Number(d.percent) || 0)) / 100)
+    if (amt > discountMinor) {
+      discountMinor = amt
       appliedCode = d.code
     }
   }
-  return { subtotal, discount, appliedCode, bookCount, invalid, priceMap }
+
+  const currency = lineMeta[0]?.currency || 'USD'
+  return {
+    subtotal: minorToMajor(subtotalMinor),
+    discount: minorToMajor(discountMinor),
+    subtotalMinor,
+    discountMinor,
+    currency,
+    appliedCode,
+    bookCount,
+    invalid,
+    priceMap,
+    lineMeta
+  }
 }
 
-export const SHIPPING_METHODS: Record<string, { label: string; price: number }> = {
-  standard: { label: 'Standard (10–30 business days)', price: 12 },
-  express: { label: 'Express (7–20 business days)', price: 28 }
+export const SHIPPING_METHODS: Record<string, { label: string; price: number; priceMinor: number }> = {
+  standard: { label: 'Standard (10–30 business days)', price: 12, priceMinor: 1200 },
+  express: { label: 'Express (7–20 business days)', price: 28, priceMinor: 2800 }
 }
 
 export function shippingFor(method: string) {

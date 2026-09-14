@@ -4,13 +4,8 @@
 import type { Product } from './db'
 import { money, languages } from './data'
 import { PHOTO_POLICY } from './photo-policy'
-import {
-  PERSONALIZATION_LIMITS,
-  CHILD_NAME_ALLOWED_CHARS_PATTERN,
-  CHILD_NAME_ALLOWED_CHARS_HINT,
-  AGE_BEHAVIOUR,
-  COVER_OPTIONS
-} from './personalization/user-books'
+import { PERSONALIZATION_LIMITS, CHILD_NAME_ALLOWED_CHARS_PATTERN, CHILD_NAME_ALLOWED_CHARS_HINT, AGE_BEHAVIOUR } from './personalization/user-books'
+import type { ProductVariant } from './db'
 
 // BCP-47 codes for the `languages` display list above, in the SAME order —
 // mirrors the seed rows in migrations/0010_personalization_catalog_domain.sql.
@@ -34,6 +29,8 @@ import type {
 
 type PdpData = {
   product: Product
+  /** Server-owned cover/format variants (D-08). */
+  variants?: ProductVariant[]
   page: PdpPageRow
   gallery: GalleryItem[]
   accordions: AccordionItem[]
@@ -107,9 +104,31 @@ export function productDetailPage(d: PdpData, pathPrefix: string) {
   const fallback = defaultPdp(p)
   const isBook = p.category === 'book'
   const isSticker = p.category === 'sticker'
-  // A first-class variant list per product realm (D-08): books choose a
-  // cover/format, other products have a single standard variant.
-  const coverOptions: readonly string[] = isBook ? COVER_OPTIONS : ['standard']
+  // First-class server-owned variants (D-08). When the caller supplies the
+  // product's variants we render exactly those, at THEIR prices; otherwise we
+  // fall back to the product's own single price so the page can never show a
+  // price the server would not charge.
+  const variants: ProductVariant[] =
+    d.variants && d.variants.length
+      ? d.variants
+      : [
+          {
+            id: 0,
+            code: isBook ? 'hardcover' : 'standard',
+            label: isBook ? 'Hardcover' : 'Standard',
+            priceMinor: Math.round(p.price * 100),
+            price: p.price,
+            compareAtPriceMinor: null,
+            compareAtPrice: p.compareAt ?? null,
+            currency: 'USD',
+            isDefault: true,
+            sortOrder: 0
+          }
+        ]
+  const defaultVariant = variants.find((v) => v.isDefault) || variants[0]
+  const coverOptions = variants.map((v) => v.code)
+  const coverLabels: Record<string, string> = Object.fromEntries(variants.map((v) => [v.code, v.label]))
+  const coverPrices: Record<string, number> = Object.fromEntries(variants.map((v) => [v.code, v.price]))
   // THE server-owned personalization contract for this product — the same
   // module values the schema endpoint returns and the API validates against
   // (D-01/D-02/D-03). Rendered into the HTML attributes below AND published
@@ -138,8 +157,7 @@ export function productDetailPage(d: PdpData, pathPrefix: string) {
     }
   }
   const ageValue = Math.min(Math.max(6, p.ageMin), p.ageMax)
-  const defaultCover = isBook ? 'hardcover' : 'standard'
-  const coverLabels: Record<string, string> = { hardcover: 'Hardcover', softcover: 'Softcover', standard: 'Standard' }
+  const defaultCover = defaultVariant?.code || 'standard'
   // Merge defaults so missing rows still render
   const page       = d.page.banner_text ? d.page : fallback.page
   const gallery    = d.gallery.length ? d.gallery : fallback.gallery
@@ -293,12 +311,12 @@ export function productDetailPage(d: PdpData, pathPrefix: string) {
             <div class="pdp-field-group">
               <span class="pdp-field-label">Cover</span>
               <div class="pdp-cover-options" id="cover-options">
-                ${contract.coverOptions
-                  .filter((c) => (isBook ? c !== 'standard' : c === 'standard'))
+                ${variants
                   .map(
-                    (c, i) => `<label class="pdp-cover-option${i === 0 ? ' active' : ''}" data-cover-type="${esc(c)}">
-                  <input type="radio" name="coverType" value="${esc(c)}" ${i === 0 ? 'checked' : ''}>
-                  <span>${esc(coverLabels[c] || c)}</span>
+                    (v, i) => `<label class="pdp-cover-option${v.code === defaultCover ? ' active' : ''}" data-cover-type="${esc(v.code)}" data-cover-price="${v.price}">
+                  <input type="radio" name="coverType" value="${esc(v.code)}" ${v.code === defaultCover ? 'checked' : ''}>
+                  <span>${esc(v.label)}</span>
+                  <span class="pdp-cover-price">${money(v.price)}</span>
                 </label>`
                   )
                   .join('')}
@@ -405,8 +423,8 @@ export function productDetailPage(d: PdpData, pathPrefix: string) {
 
       <footer class="book-modal-footer">
         <div class="book-modal-price">
-          <span class="price-label">Hardcover Keepsake</span>
-          <span class="price-value">${money(p.price)}</span>
+          <span class="price-label">${esc(coverLabels[defaultCover] || 'Cover')}</span>
+          <span class="price-value">${money(defaultVariant?.price ?? p.price)}</span>
         </div>
         <div class="book-modal-actions">
           <button type="button" class="btn btn-outline" id="btn-edit-personalise">Edit Details</button>

@@ -275,6 +275,58 @@ const ACCEPTED_PHASE_1_0009_MIGRATIONS = [
   console.log('OK [existing users/orders/uploads survive Phase 2]: all pre-existing rows intact, new columns NULL as expected.')
 }
 
+// 2f) Phase 1 money/variant backfill: apply the schema up to 0014, insert
+// LEGACY real-valued rows (the pre-Phase-1 shape), then apply 0015-0016 and
+// assert the integer backfill round-trips exactly and that the variant
+// backfill gives books a cover choice priced from the product's own price.
+{
+  const upTo0014 = allFiles.filter((f) => f < '0015_')
+  const from0015 = allFiles.filter((f) => f >= '0015_')
+  const db = new DatabaseSync(':memory:')
+  applyMigrationSet(db, upTo0014, 'money/variant backfill (0014 schema)')
+
+  db.exec(`
+    INSERT INTO products (id, slug, title, price, compare_at, image, category, age_min, age_max, active)
+      VALUES (1, 'legacy-book', 'Legacy Book', 34.99, 44.99, 'x.webp', 'book', 4, 8, 1),
+             (2, 'legacy-sticker', 'Legacy Sticker', 14.99, NULL, 'y.webp', 'sticker', 3, 10, 1);
+    INSERT INTO orders (id, full_name, email, address, city, country, shipping, subtotal, discount, total)
+      VALUES (1, 'A', 'a@b.c', 'x', 'y', 'z', 12, 69.98, 14.00, 67.98);
+    INSERT INTO order_items (id, order_id, product_id, slug, title, kind, unit_price, qty)
+      VALUES (1, 1, 1, 'legacy-book', 'Legacy Book', 'book', 34.99, 2);
+  `)
+
+  applyMigrationSet(db, from0015, 'money/variant backfill (upgrade 0015+)')
+
+  const prod = db.prepare('SELECT slug, price_minor, compare_at_price_minor, currency FROM products ORDER BY id').all()
+  const book = prod.find((r) => r.slug === 'legacy-book')
+  const sticker = prod.find((r) => r.slug === 'legacy-sticker')
+  const fail = (msg) => {
+    console.error(`FAIL [money/variant backfill]: ${msg}`)
+    process.exit(1)
+  }
+  if (book.price_minor !== 3499) fail(`products.price_minor backfill wrong: ${book.price_minor}`)
+  if (book.compare_at_price_minor !== 4499) fail(`products.compare_at_price_minor backfill wrong: ${book.compare_at_price_minor}`)
+  if (sticker.price_minor !== 1499) fail(`sticker price_minor backfill wrong: ${sticker.price_minor}`)
+  if (book.currency !== 'USD' || sticker.currency !== 'USD') fail('currency backfill wrong')
+
+  const order = db.prepare('SELECT subtotal_minor, discount_minor, shipping_minor, total_minor, currency FROM orders WHERE id = 1').get()
+  if (order.subtotal_minor !== 6998 || order.discount_minor !== 1400 || order.shipping_minor !== 1200 || order.total_minor !== 6798) {
+    fail(`orders minor backfill wrong: ${JSON.stringify(order)}`)
+  }
+  if (order.currency !== 'USD') fail('orders.currency backfill wrong')
+  const item = db.prepare('SELECT unit_price_minor, currency FROM order_items WHERE id = 1').get()
+  if (item.unit_price_minor !== 3499 || item.currency !== 'USD') fail(`order_items minor backfill wrong: ${JSON.stringify(item)}`)
+
+  const variants = db.prepare('SELECT product_id, code, price_minor, is_default FROM product_variants ORDER BY product_id, sort_order').all()
+  const bookVariants = variants.filter((v) => v.product_id === 1)
+  const stickerVariants = variants.filter((v) => v.product_id === 2)
+  if (bookVariants.map((v) => v.code).join(',') !== 'hardcover,softcover') fail(`book variants wrong: ${JSON.stringify(bookVariants)}`)
+  if (bookVariants.filter((v) => v.is_default === 1).length !== 1) fail('book must have exactly one default variant')
+  if (bookVariants.some((v) => v.price_minor !== 3499)) fail('book variants must be priced from the product price')
+  if (stickerVariants.map((v) => v.code).join(',') !== 'standard') fail(`sticker variants wrong: ${JSON.stringify(stickerVariants)}`)
+  console.log('OK [money/variant backfill]: legacy REAL rows backfilled to exact minor units + cover variants seeded.')
+}
+
 // 3) Repeated migration behavior — `wrangler d1 migrations apply` tracks
 // applied files by name (via its own d1_migrations bookkeeping) and never
 // blindly re-executes an already-applied file; that's what makes it safe

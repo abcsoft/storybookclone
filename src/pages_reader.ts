@@ -10,6 +10,9 @@ export type PersonalizedBookData = {
   language: string
   coverType: string
   coverOptions?: readonly string[]
+  /** Display label + price per cover variant, from the server-owned variants (D-08). */
+  coverLabels?: Record<string, string>
+  coverPrices?: Record<string, number>
   languages?: readonly { code: string; name: string }[]
   ageMin?: number
   ageMax?: number
@@ -42,7 +45,9 @@ export function personalizedBookReaderPage(data: PersonalizedBookData) {
   const ageMin = Number.isFinite(data.ageMin as number) ? (data.ageMin as number) : 1
   const ageMax = Number.isFinite(data.ageMax as number) ? (data.ageMax as number) : 18
   const coverOptions = data.coverOptions && data.coverOptions.length ? data.coverOptions : ['hardcover', 'softcover']
-  const coverLabels: Record<string, string> = { hardcover: 'Hardcover', softcover: 'Softcover', standard: 'Standard' }
+  const coverLabels: Record<string, string> = { hardcover: 'Hardcover', softcover: 'Softcover', standard: 'Standard', ...(data.coverLabels || {}) }
+  const coverPriceFor = (code: string) =>
+    data.coverPrices && Number.isFinite(data.coverPrices[code]) ? (data.coverPrices[code] as number) : code === 'softcover' ? softcoverPrice : hardcoverPrice
 
   return `
   <!-- The site-wide promo banner (layout.ts #promo-banner) already shows
@@ -95,10 +100,11 @@ export function personalizedBookReaderPage(data: PersonalizedBookData) {
       <div class="cover-options-grid">
         ${coverOptions
           .map((code, i) => {
-            const price = code === 'softcover' ? softcoverPrice : hardcoverPrice
+            const price = coverPriceFor(code)
+            const isDefault = code === data.coverType || (i === 0 && !coverOptions.includes(data.coverType))
             const thumb = code === 'softcover' ? '/static/img/thumb-softcover.webp' : '/static/img/thumb-hardcover.webp'
-            return `<label class="cover-option-card${i === 0 ? ' active' : ''}" id="card-${esc(code)}" data-cover-type="${esc(code)}" data-cover-price="${price}">
-          <input type="radio" name="coverOption" value="${esc(code)}" ${i === 0 ? 'checked' : ''} class="sr-only">
+            return `<label class="cover-option-card${isDefault ? ' active' : ''}" id="card-${esc(code)}" data-cover-type="${esc(code)}" data-cover-price="${price}">
+          <input type="radio" name="coverOption" value="${esc(code)}" ${isDefault ? 'checked' : ''} class="sr-only">
           ${i === 0 ? '<span class="cover-badge-best">BEST CHOICE</span>' : ''}
           <div class="cover-thumb-wrap">
             <img src="${thumb}" alt="${esc(coverLabels[code] || code)} book" class="cover-thumb-img">
@@ -107,7 +113,7 @@ export function personalizedBookReaderPage(data: PersonalizedBookData) {
             <div class="cover-text">
               <strong class="cover-name">${esc(coverLabels[code] || code)}</strong>
             </div>
-            <span class="cover-price">$${price.toFixed(2)}</span>
+            <span class="cover-price">${'$' + price.toFixed(2)}</span>
           </div>
         </label>`
           })
@@ -222,6 +228,8 @@ export function personalizedBookReaderPage(data: PersonalizedBookData) {
       dedication: data.dedication || '',
       coverType: data.coverType,
       coverOptions,
+      coverLabels,
+      coverPrices: data.coverPrices || null,
       ageMin,
       ageMax,
       childNameMaxLength: PERSONALIZATION_LIMITS.childNameMaxLength,
