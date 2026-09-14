@@ -72,17 +72,26 @@ function log(msg) {
   console.log(`[audit:${runLabel}] ${msg}`)
 }
 
-function killWhateverIsOnPort(port) {
-  if (process.platform !== 'win32') return
+/**
+ * Kills a spawned `wrangler pages dev` process TREE. `wrangler` is launched
+ * through npx/shell and spawns a workerd child; signalling only the wrapper
+ * leaves workerd alive (holding the port and the D1 file lock) and keeps this
+ * Node process's stdio pipes open, so `npm run audit:frontend` would never
+ * exit. Kills only OUR OWN spawned pid — never "whatever is on the port",
+ * which could be an unrelated app. Stale repo servers are already cleared by
+ * the `db:reset` step below.
+ */
+function killServerTree(pid) {
+  if (!pid) return
   try {
-    const out = execSync(`netstat -ano | findstr :${port} | findstr LISTENING`, { encoding: 'utf8' })
-    const pids = new Set(out.split('\n').map((l) => l.trim().split(/\s+/).pop()).filter(Boolean))
-    for (const pid of pids) {
-      try {
-        execFileSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' })
-      } catch {}
+    if (process.platform === 'win32') {
+      execFileSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' })
+    } else {
+      process.kill(-pid, 'SIGKILL')
     }
-  } catch {}
+  } catch {
+    /* already exited */
+  }
 }
 
 async function waitFor(url, timeoutMs = 45000) {
@@ -182,7 +191,9 @@ async function visit(page, path, name, viewportLabel, findings) {
 }
 
 async function main() {
-  killWhateverIsOnPort(PORT)
+  // `db:reset` (below) already stops this repo's stale wrangler/workerd
+  // processes, so no "kill whatever is on the port" step is needed — and that
+  // step could previously have killed an unrelated app.
   log('resetting local D1 to a clean, seeded state')
   execSync('npm run db:reset', { cwd: root, stdio: 'inherit' })
   execSync('npm run build', { cwd: root, stdio: 'inherit' })
@@ -204,7 +215,7 @@ async function main() {
   server.stderr.on('data', () => {})
 
   if (!(await waitFor(BASE + '/'))) {
-    killWhateverIsOnPort(PORT)
+    killServerTree(server.pid)
     throw new Error('server did not become ready')
   }
   log('server is up')
@@ -309,11 +320,13 @@ async function main() {
     for (const f of findings) console.log(`  - [${f.viewport}] ${f.path}: ${f.issue}`)
   } finally {
     await browser.close()
-    killWhateverIsOnPort(PORT)
+    killServerTree(server.pid)
   }
 }
 
-main().catch((err) => {
-  console.error(err)
-  process.exit(1)
-})
+main()
+  .then(() => process.exit(0))
+  .catch((err) => {
+    console.error(err)
+    process.exit(1)
+  })

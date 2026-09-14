@@ -10,7 +10,7 @@
     "db:migrate:local": "wrangler d1 migrations apply webapp-production --local",
     "cf-typegen": "wrangler types --env-interface CloudflareBindings",
     "db:seed": "wrangler d1 execute webapp-production --local --file=./seed.sql",
-    "db:reset": "rm -rf .wrangler/state/v3/d1 && npm run db:migrate:local && npm run db:seed",
+    "db:reset": "node scripts/reset-local-db.mjs",
     "db:console:local": "wrangler d1 execute webapp-production --local",
     "admin:bootstrap": "node scripts/create-admin.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json",

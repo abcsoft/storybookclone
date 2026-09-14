@@ -1,3 +1,20 @@
+> ## ⚠️ HISTORICAL / SUPERSEDED — DO NOT IMPLEMENT FROM THIS FILE
+>
+> This document is **superseded** by
+> [`STORYBOOKCLONE_COMPLETE_CODING_PACK_V2.md`](./STORYBOOKCLONE_COMPLETE_CODING_PACK_V2.md).
+>
+> - Its baseline (`main@4d76779`) is **obsolete**. The current baseline is
+>   `audit/current-baseline-v2@f76f446` (migrations `0001`–`0014`, Phase-2
+>   personalization domain) — see `docs/V2_BASELINE_TRACEABILITY.md`.
+> - Phase numbering, requirement/finding IDs and migration numbers here differ
+>   from the V2 pack. Use the V2 pack and its traceability matrix for all work.
+> - It is retained **only** as a historical record. Do not delete it, and do not
+>   re-implement from it.
+>
+> Any reference to `STORYBOOKCLONE_COMPLETION_CODING_PACK.md` remaining in source
+> comments means "this is not implemented yet"; the authoritative roadmap is the
+> V2 pack.
+
 # StorybookClone Completion Coding Pack
 
 ## Purpose

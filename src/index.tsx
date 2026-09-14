@@ -111,120 +111,69 @@ const app = new Hono<{ Bindings: Bindings; Variables: Vars }>()
 
 app.use('/api/*', cors())
 
-// ---------- bootstrap (idempotent, local-dev friendly) ----------
-let booted = false
-// Test-only: this worker isolate normally lives for the process lifetime, so
-// ensureSchema's idempotency guard never needs resetting in production.
+// ---------- schema authority + local-dev bootstrap ----------
+// `migrations/` is the ONE authoritative schema source. This module does not
+// (and must not) create tables at runtime: the previous inline `ensureSchema()`
+// fallback only ever covered the original 0001 tables and had silently drifted
+// from 0002+ for a long time (see V2 finding S-16). It has been retired in
+// favour of an explicit, actionable "your database predates these migrations"
+// failure.
+//
+// One-time-per-isolate guard. The worker isolate normally lives for the
+// process lifetime, so the guard only needs resetting in tests.
+let bootstrapped = false
+// Test-only.
 export function __resetBootedForTests() {
-  booted = false
+  bootstrapped = false
 }
-// Scope note (pre-existing, not a Phase 1 change): this inline fallback only
-// ever covered the original migration 0001 tables — it was already out of
-// sync with 0002 (pdp_*)/0003 (ai_settings, pdf_requests) before Phase 1, and
-// Phase 1's own migration 0004 additions (photo_uploads, app_secrets,
-// password_reset_tokens, rate_limit_events, orders/pdf_requests new columns)
-// are deliberately NOT added here either. `migrations/` is the one
-// authoritative schema source — run `npm run db:migrate:local` (README) before
-// relying on anything past the original 7 tables. Reconciling or retiring
-// this fallback is a reasonable follow-up but is out of this phase's scope.
-export async function ensureSchema(db?: D1Database, bootstrap?: { email?: string; password?: string }) {
-  if (!db || booted) return
-  booted = true
-  const stmts = [
-    `CREATE TABLE IF NOT EXISTS users (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL,
-      email TEXT UNIQUE NOT NULL,
-      password_hash TEXT NOT NULL,
-      role TEXT NOT NULL DEFAULT 'customer',
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`,
-    `CREATE TABLE IF NOT EXISTS sessions (
-      token TEXT PRIMARY KEY,
-      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      expires_at INTEGER NOT NULL,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`,
-    `CREATE TABLE IF NOT EXISTS products (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      slug TEXT UNIQUE NOT NULL,
-      title TEXT NOT NULL,
-      tagline TEXT DEFAULT '',
-      description TEXT DEFAULT '',
-      story TEXT DEFAULT '',
-      price REAL NOT NULL,
-      compare_at REAL,
-      image TEXT DEFAULT '',
-      gender TEXT NOT NULL DEFAULT 'unisex',
-      category TEXT NOT NULL DEFAULT 'book',
-      ages TEXT DEFAULT '',
-      age_min INTEGER DEFAULT 2,
-      age_max INTEGER DEFAULT 10,
-      pages INTEGER DEFAULT 32,
-      reviews INTEGER DEFAULT 0,
-      rating REAL DEFAULT 4.8,
-      bestseller INTEGER DEFAULT 0,
-      new_release INTEGER DEFAULT 0,
-      career INTEGER DEFAULT 0,
-      traits_json TEXT DEFAULT '[]',
-      active INTEGER DEFAULT 1,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`,
-    `CREATE TABLE IF NOT EXISTS discounts (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      code TEXT UNIQUE NOT NULL,
-      percent REAL NOT NULL,
-      min_books INTEGER DEFAULT 0,
-      applies_to TEXT DEFAULT 'books',
-      auto_apply INTEGER DEFAULT 0,
-      active INTEGER DEFAULT 1,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`,
-    `CREATE TABLE IF NOT EXISTS orders (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
-      full_name TEXT NOT NULL,
-      email TEXT NOT NULL,
-      address TEXT NOT NULL,
-      city TEXT NOT NULL,
-      country TEXT NOT NULL,
-      shipping_method TEXT NOT NULL DEFAULT 'standard',
-      shipping REAL NOT NULL DEFAULT 0,
-      subtotal REAL NOT NULL,
-      discount REAL NOT NULL DEFAULT 0,
-      discount_code TEXT,
-      total REAL NOT NULL,
-      status TEXT NOT NULL DEFAULT 'pending_preview',
-      admin_notes TEXT DEFAULT '',
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP)`,
-    `CREATE TABLE IF NOT EXISTS order_items (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      order_id INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
-      product_id INTEGER,
-      slug TEXT NOT NULL,
-      title TEXT NOT NULL,
-      kind TEXT NOT NULL DEFAULT 'book',
-      unit_price REAL NOT NULL,
-      qty INTEGER NOT NULL DEFAULT 1,
-      child_name TEXT DEFAULT '',
-      child_age INTEGER,
-      language TEXT DEFAULT 'English',
-      dedication TEXT DEFAULT '',
-      photo_key TEXT DEFAULT '',
-      preview_status TEXT NOT NULL DEFAULT 'pending',
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`,
-    `CREATE TABLE IF NOT EXISTS contacts (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL,
-      email TEXT NOT NULL,
-      topic TEXT,
-      message TEXT NOT NULL,
-      resolved INTEGER DEFAULT 0,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`,
-    `CREATE TABLE IF NOT EXISTS newsletter (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      email TEXT UNIQUE NOT NULL,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`
-  ]
-  await db.batch(stmts.map((s) => db.prepare(s)))
 
+// Tables that only exist if the FULL migration set (0001-0014) has been
+// applied. Chosen to span every era: 0001 (users), 0004/0006 (upload_claims),
+// 0009 (rate_limit_windows), 0010-0012 (personalization), 0014
+// (retention_failures). A database missing any of these has not been migrated.
+const REQUIRED_TABLES = [
+  'users',
+  'photo_uploads',
+  'upload_claims',
+  'rate_limit_windows',
+  'languages',
+  'user_books',
+  'personalization_inputs',
+  'detected_faces',
+  'preview_versions',
+  'approvals',
+  'user_book_events',
+  'retention_failures'
+] as const
+
+export class SchemaOutOfDateError extends Error {
+  constructor(public missingTables: string[]) {
+    super(
+      `Database schema is out of date: missing table(s) ${missingTables.join(', ')}. ` +
+        'This application never creates tables at runtime — `migrations/` is the only schema authority. ' +
+        'Run `npm run db:reset` (local) or `npx wrangler d1 migrations apply webapp-production --local` ' +
+        '(add --remote for a deployed database) before starting the app.'
+    )
+    this.name = 'SchemaOutOfDateError'
+  }
+}
+
+/** Fails with an actionable error if the database has not been migrated to the current schema. */
+export async function assertMigrationsApplied(db: D1Database): Promise<void> {
+  const rows = await db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all<{ name: string }>()
+  const present = new Set((rows.results || []).map((r) => r.name))
+  const missing = REQUIRED_TABLES.filter((t) => !present.has(t))
+  if (missing.length) throw new SchemaOutOfDateError([...missing])
+}
+
+/**
+ * Local-dev conveniences that are NOT schema creation and remain safe/idempotent
+ * after migrations have run: the explicitly-configured first admin (never a
+ * hard-coded default credential), the default discount code, and a catalog
+ * fallback seed only when `products` is genuinely empty. Runs at most once per
+ * isolate.
+ */
+export async function bootstrapLocalDefaults(db: D1Database, bootstrap?: { email?: string; password?: string }): Promise<void> {
   // Bootstrap the first admin only when explicitly configured (no hard-coded
   // default credential). Set ADMIN_BOOTSTRAP_EMAIL / ADMIN_BOOTSTRAP_PASSWORD
   // via `.dev.vars` locally, or `npm run admin:bootstrap` for a one-off local
@@ -261,6 +210,19 @@ export async function ensureSchema(db?: D1Database, bootstrap?: { email?: string
   }
 }
 
+/**
+ * Request-path entry point: verifies migrations have been applied (once per
+ * isolate) and then runs the idempotent local-dev bootstrap. Throws
+ * SchemaOutOfDateError — surfaced by the middleware below as a clear 500 — if
+ * the database predates the current migrations.
+ */
+export async function ensureSchemaReady(db: D1Database, bootstrap?: { email?: string; password?: string }): Promise<void> {
+  if (!db || bootstrapped) return
+  await assertMigrationsApplied(db)
+  await bootstrapLocalDefaults(db, bootstrap)
+  bootstrapped = true
+}
+
 // Fail fast and clearly if required Cloudflare bindings are missing, instead
 // of letting every route crash later with a confusing "cannot read property
 // of undefined". Placeholder wrangler.jsonc config only satisfies local dev;
@@ -276,12 +238,22 @@ app.use('*', async (c, next) => {
   await next()
 })
 
-// attach user on every request (after schema ready)
+// attach user on every request (after confirming migrations are applied)
 app.use('*', async (c, next) => {
-  await ensureSchema(c.env.DB, {
-    email: c.env.ADMIN_BOOTSTRAP_EMAIL,
-    password: c.env.ADMIN_BOOTSTRAP_PASSWORD
-  })
+  try {
+    await ensureSchemaReady(c.env.DB, {
+      email: c.env.ADMIN_BOOTSTRAP_EMAIL,
+      password: c.env.ADMIN_BOOTSTRAP_PASSWORD
+    })
+  } catch (err) {
+    if (err instanceof SchemaOutOfDateError) {
+      // Fail loudly and actionably rather than 500ing later with "no such
+      // table". This is a deployment/operations error, not a user error.
+      console.error(`[schema] ${err.message}`)
+      return c.text(`Server misconfigured: ${err.message}`, 500)
+    }
+    throw err
+  }
   await next()
 })
 app.use('*', attachUser)

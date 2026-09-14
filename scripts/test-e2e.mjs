@@ -11,15 +11,19 @@
 // click can't exercise cleanly.
 import { chromium } from 'playwright'
 import jpegCodec from 'jpeg-js'
-import { spawn, execSync, execFileSync } from 'node:child_process'
+import { spawn, execFileSync } from 'node:child_process'
 import { writeFileSync, mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
+import { createServer } from 'node:net'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)))
-const PORT = 8799
-const BASE = `http://127.0.0.1:${PORT}`
+// Port/base are chosen at runtime (see main()) so this run can never collide
+// with, or silently reuse, a foreign app already bound to a fixed dev port.
+// Set WW_E2E_PORT to force a specific port (the run then FAILS if it is busy).
+let PORT = 8799
+let BASE = `http://127.0.0.1:${PORT}`
 const runId = Date.now()
 // Phase 2's server-side child-name validation only allows letters/marks/
 // space/apostrophe/period/hyphen (src/personalization/user-books.ts) — a
@@ -77,15 +81,22 @@ async function waitFor(url, timeoutMs = 30000) {
   return false
 }
 
-function killWhateverIsOnPort(port) {
-  if (process.platform !== 'win32') return
-  try {
-    const out = execSync(`netstat -ano | findstr :${port} | findstr LISTENING`, { encoding: 'utf8' })
-    const pids = new Set(out.split('\n').map((l) => l.trim().split(/\s+/).pop()).filter(Boolean))
-    for (const pid of pids) killServerTree(pid)
-  } catch {
-    /* nothing listening — fine */
+/** True if nothing is listening on 127.0.0.1:port right now. */
+function isPortFree(port) {
+  return new Promise((resolve) => {
+    const probe = createServer()
+    probe.once('error', () => resolve(false))
+    probe.once('listening', () => probe.close(() => resolve(true)))
+    probe.listen(port, '127.0.0.1')
+  })
+}
+
+/** Picks an isolated, genuinely-free port so this run can't reuse a foreign app's server. */
+async function findFreePort(startPort = 8799, attempts = 100) {
+  for (let p = startPort; p < startPort + attempts; p++) {
+    if (await isPortFree(p)) return p
   }
+  throw new Error(`no free port found in ${startPort}-${startPort + attempts - 1}`)
 }
 
 /**
@@ -105,6 +116,53 @@ function killServerTree(pid) {
   } catch {
     /* already exited */
   }
+}
+
+/**
+ * Starts the repo's built app on the isolated port and returns { server, logs }.
+ * Cleanup is the caller's responsibility (killServerTree) — always in a finally.
+ */
+function startServer(port) {
+  log('setup', `starting wrangler pages dev on :${port}`)
+  const server = spawn(
+    'npx',
+    [
+      'wrangler', 'pages', 'dev', 'dist',
+      '--d1=webapp-production', '--r2=webapp-photos', '--local',
+      '--ip', '127.0.0.1', '--port', String(port),
+      // Deterministic fake face detection ONLY — this e2e run makes zero
+      // real calls to any external face-analysis provider (Phase 2 requires
+      // this). Never set in a real/deployed environment.
+      '--binding', 'FACE_ANALYSIS_PROVIDER=deterministic-fake'
+    ],
+    { cwd: root, shell: true, stdio: ['ignore', 'pipe', 'pipe'] }
+  )
+  const logs = { value: '' }
+  server.stdout.on('data', (d) => (logs.value += d.toString()))
+  server.stderr.on('data', (d) => (logs.value += d.toString()))
+  return { server, logs }
+}
+
+/**
+ * Project-specific fingerprint, checked over HTTP BEFORE any Playwright
+ * assertion. A foreign app that somehow answers on this port (an impostor, a
+ * stale process, a different checkout) cannot reproduce this endpoint's exact
+ * schema, so this fails closed instead of silently testing the wrong app.
+ */
+async function verifyServerFingerprint() {
+  log('fingerprint', 'verifying the app on this port is THIS project (photo-policy fingerprint)')
+  const res = await fetch(`${BASE}/api/v1/uploads/photo-policy`).catch(() => null)
+  if (!res || !res.ok) fail('fingerprint', `expected 200 from ${BASE}/api/v1/uploads/photo-policy, got ${res ? res.status : 'no response'}`)
+  const policy = await res.json().catch(() => null)
+  const okShape =
+    policy &&
+    Array.isArray(policy.allowedFormats) &&
+    policy.allowedFormats.includes('jpeg') &&
+    policy.allowedFormats.includes('png') &&
+    typeof policy.minDimensionPx === 'number' &&
+    typeof policy.maxMB === 'number'
+  if (!okShape) fail('fingerprint', `photo-policy fingerprint mismatch — the app on :${PORT} is not this project: ${JSON.stringify(policy)}`)
+  log('fingerprint', `confirmed project fingerprint (formats=${policy.allowedFormats.join('/')}, ${policy.minDimensionPx}px min, ${policy.maxMB}MB max)`)
 }
 
 /** Direct local-D1 query, sidestepping shell-quoting entirely via a temp .sql file (see scripts/create-admin.mjs for why --command is unsafe). */
@@ -797,54 +855,61 @@ async function verifyAppIdentity(browser) {
 
 async function main() {
   verifyRepoIdentity()
-  killWhateverIsOnPort(PORT) // a previous crashed run may have left a server holding this port/D1 lock
-  log('setup', 'resetting local D1 to a clean, seeded state')
-  execSync('npm run db:reset', { cwd: root, stdio: 'inherit' })
-  execSync('npm run build', { cwd: root, stdio: 'inherit' })
 
-  log('setup', `starting wrangler pages dev on :${PORT}`)
-  const server = spawn(
-    'npx',
-    [
-      'wrangler', 'pages', 'dev', 'dist',
-      '--d1=webapp-production', '--r2=webapp-photos', '--local',
-      '--ip', '127.0.0.1', '--port', String(PORT),
-      // Deterministic fake face detection ONLY — this e2e run makes zero
-      // real calls to any external face-analysis provider (Phase 2 requires
-      // this). Never set in a real/deployed environment.
-      '--binding', 'FACE_ANALYSIS_PROVIDER=deterministic-fake'
-    ],
-    { cwd: root, shell: true, stdio: ['ignore', 'pipe', 'pipe'] }
-  )
-  const serverLogRef = { value: '' }
-  server.stdout.on('data', (d) => (serverLogRef.value += d.toString()))
-  server.stderr.on('data', (d) => (serverLogRef.value += d.toString()))
-
-  const ready = await waitFor(BASE + '/', 45000)
-  if (!ready) {
-    console.error(serverLogRef.value)
-    fail('setup', 'server did not become ready in time')
+  // Pick an isolated, free port BEFORE touching anything. If WW_E2E_PORT is
+  // pinned, a busy port is a hard failure (never silently reused), so a
+  // foreign app on that port can never produce a false green.
+  if (process.env.WW_E2E_PORT) {
+    PORT = Number(process.env.WW_E2E_PORT)
+    BASE = `http://127.0.0.1:${PORT}`
+    if (!(await isPortFree(PORT))) fail('setup', `WW_E2E_PORT=${PORT} is already in use — refusing to run against a foreign app on that port`)
+  } else {
+    PORT = await findFreePort(8799)
+    BASE = `http://127.0.0.1:${PORT}`
   }
-  log('setup', 'server is up')
+  log('setup', `using isolated port ${PORT}`)
 
-  const tmpDir = mkdtempSync(join(tmpdir(), 'ww-e2e-'))
-  const photoPath = join(tmpDir, 'child-photo.jpg')
-  writeFileSync(photoPath, buildRealJpeg(900, 900))
+  log('setup', 'resetting local D1 to a clean, seeded state')
+  execFileSync('npm', ['run', 'db:reset'], { cwd: root, stdio: 'inherit', shell: true })
+  execFileSync('npm', ['run', 'build'], { cwd: root, stdio: 'inherit', shell: true })
 
-  const browser = await chromium.launch()
+  const { server, logs } = startServer(PORT)
+  let tmpDir = null
+  let browser = null
   try {
+    const ready = await waitFor(BASE + '/', 45000)
+    if (!ready) {
+      console.error(logs.value)
+      fail('setup', 'server did not become ready in time')
+    }
+    log('setup', 'server is up')
+
+    // Fingerprint check BEFORE any browser assertion.
+    await verifyServerFingerprint()
+
+    tmpDir = mkdtempSync(join(tmpdir(), 'ww-e2e-'))
+    const photoPath = join(tmpDir, 'child-photo.jpg')
+    writeFileSync(photoPath, buildRealJpeg(900, 900))
+
+    browser = await chromium.launch()
     await verifyAppIdentity(browser)
     await runGuestJourney(browser, photoPath)
     const { email: authEmail } = await runAuthenticatedJourney(browser, photoPath)
-    await finishPasswordReset(browser, serverLogRef, authEmail)
+    await finishPasswordReset(browser, logs, authEmail)
     await runDoubleSubmissionTest(browser, photoPath)
     await runMultiFaceJourney(browser, tmpDir)
 
     console.log('\n[e2e] ALL JOURNEYS PASSED (guest, authenticated, double-submission, multi-face)\n')
+  } catch (err) {
+    // Surface the local server log on failure only — never written to a file.
+    if (logs.value) console.error(`\n[e2e] server log:\n${logs.value}`)
+    throw err
   } finally {
-    await browser.close()
+    // Browser and wrangler/workerd must die on BOTH success and failure, or a
+    // later run inherits a busy port / locked D1 file.
+    if (browser) await browser.close().catch(() => {})
     killServerTree(server.pid)
-    rmSync(tmpDir, { recursive: true, force: true })
+    if (tmpDir) rmSync(tmpDir, { recursive: true, force: true })
   }
 }
 
