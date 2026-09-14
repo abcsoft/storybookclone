@@ -1,9 +1,9 @@
 // Auth utilities: PBKDF2-SHA-256 password hashing (Web Crypto), session cookies, guards.
 import { getCookie, setCookie, deleteCookie } from 'hono/cookie'
 import type { Context, MiddlewareHandler } from 'hono'
+import { secureCookieOptions, SESSION_TTL_SECONDS, issueCsrfCookie } from './security'
 
 const SESSION_COOKIE = 'ww_session'
-const SESSION_TTL = 60 * 60 * 24 * 30 // 30 days
 
 export type AuthUser = {
   id: number
@@ -51,8 +51,24 @@ export async function verifyPassword(password: string, stored: string): Promise<
 // --- sessions ---
 export async function createSession(db: D1Database, userId: number): Promise<string> {
   const token = toHex(crypto.getRandomValues(new Uint8Array(32)))
-  const expires = Math.floor(Date.now() / 1000) + SESSION_TTL
+  const expires = Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS
   await db.prepare('INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, ?)').bind(token, userId, expires).run()
+  return token
+}
+
+/**
+ * S-02 session rotation: authenticating ALWAYS issues a brand-new session and
+ * destroys the one the caller held before (if any), so a pre-authentication
+ * session id can never survive a privilege change (session fixation).
+ */
+export async function rotateSessionOnLogin(c: Context, db: D1Database, userId: number): Promise<string> {
+  const previous = readSessionToken(c)
+  if (previous) await destroySession(db, previous)
+  const token = await createSession(db, userId)
+  setSessionCookie(c, token)
+  // A new session always gets a fresh double-submit CSRF token, so the page
+  // that authenticates can immediately make authorized mutations.
+  await issueCsrfCookie(c, c.env as { ENVIRONMENT?: string })
   return token
 }
 
@@ -80,16 +96,17 @@ export async function getSessionUser(db: D1Database, token: string | undefined):
 }
 
 export function setSessionCookie(c: Context, token: string) {
-  setCookie(c, SESSION_COOKIE, token, {
-    path: '/',
-    httpOnly: true,
-    sameSite: 'Lax',
-    maxAge: SESSION_TTL
-  })
+  // S-02: the ONE cookie policy — HttpOnly + SameSite always, Secure in every
+  // environment except an explicitly-configured local development one.
+  setCookie(c, SESSION_COOKIE, token, secureCookieOptions(c.env as { ENVIRONMENT?: string }, SESSION_TTL_SECONDS))
 }
 
 export function clearSessionCookie(c: Context) {
-  deleteCookie(c, SESSION_COOKIE, { path: '/' })
+  deleteCookie(c, SESSION_COOKIE, { path: '/', secure: isProductionLike(c.env as { ENVIRONMENT?: string }), sameSite: 'Lax' })
+}
+
+function isProductionLike(env: { ENVIRONMENT?: string } | undefined): boolean {
+  return env?.ENVIRONMENT !== 'development'
 }
 
 export function readSessionToken(c: Context): string | undefined {

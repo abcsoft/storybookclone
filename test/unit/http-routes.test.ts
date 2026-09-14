@@ -26,7 +26,7 @@ function jpegFile(name = 'photo.jpg') {
 async function uploadPhoto(path: string, jar: CookieJar) {
   const form = new FormData()
   form.append('photo', jpegFile())
-  const res = await app.request(path, { method: 'POST', headers: { Cookie: jar.header() }, body: form }, env)
+  const res = await app.request(path, { method: 'POST', headers: { ...jar.headers() }, body: form }, env)
   jar.observe(res)
   return res
 }
@@ -60,7 +60,7 @@ describe('photo upload — canonical + legacy alias, real byte validation', () =
     const jar = new CookieJar()
     const form = new FormData()
     form.append('photo', new File([new TextEncoder().encode('not a real image'.repeat(20))], 'fake.jpg', { type: 'image/jpeg' }))
-    const res = await app.request('/api/v1/uploads/photo', { method: 'POST', headers: { Cookie: jar.header() }, body: form }, env)
+    const res = await app.request('/api/v1/uploads/photo', { method: 'POST', headers: { ...jar.headers() }, body: form }, env)
     expect(res.status).toBe(400)
   })
 
@@ -69,7 +69,7 @@ describe('photo upload — canonical + legacy alias, real byte validation', () =
     const form = new FormData()
     // Real PNG bytes, but the filename and Content-Type both lie and claim JPEG.
     form.append('photo', new File([makeValidPngBytes(900, 900)], 'photo.jpg', { type: 'image/jpeg' }))
-    const res = await app.request('/api/v1/uploads/photo', { method: 'POST', headers: { Cookie: jar.header() }, body: form }, env)
+    const res = await app.request('/api/v1/uploads/photo', { method: 'POST', headers: { ...jar.headers() }, body: form }, env)
     expect(res.status).toBe(200)
     const data = await res.json()
     // The stored key's extension reflects the REAL decoded format, proving
@@ -104,7 +104,7 @@ describe('order creation + guest access — full HTTP flow', () => {
       '/api/v1/orders',
       {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey, Cookie: jar.header() },
+        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey, ...jar.headers() },
         body: JSON.stringify({
           items: [{ slug: 'girls-sticker-pack', qty: 1, childName: 'Gando', childAge: 6, language: 'English', photoKey: key }],
           fullName: 'Jane Doe',
@@ -159,7 +159,7 @@ describe('order creation + guest access — full HTTP flow', () => {
       shippingMethod: 'standard',
       paymentMethod: 'test-manual'
     })
-    const init = { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'http-idem-double', Cookie: jar.header() }, body: requestBody }
+    const init = { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'http-idem-double', ...jar.headers() }, body: requestBody }
 
     const [firstRes, secondRes] = await Promise.all([app.request('/api/v1/orders', init, env), app.request('/api/v1/orders', init, env)])
     const [firstData, secondData] = await Promise.all([firstRes.json(), secondRes.json()])
@@ -179,7 +179,7 @@ describe('my/orders — ownership and cross-user denial (canonical + legacy alia
       '/api/v1/orders',
       {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'owner-a-order', Cookie: jarA.header() },
+        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'owner-a-order', ...jarA.headers() },
         body: JSON.stringify({
           items: [{ slug: 'girls-sticker-pack', qty: 1, childName: 'Kid A', childAge: 5, photoKey: keyA }],
           fullName: 'Customer A',
@@ -196,22 +196,22 @@ describe('my/orders — ownership and cross-user denial (canonical + legacy alia
 
     const jarB = await registerAndLogin('customer-b@example.com')
 
-    const listA = await app.request('/api/v1/my/orders', { headers: { Cookie: jarA.header() } }, env)
+    const listA = await app.request('/api/v1/my/orders', { headers: { ...jarA.headers() } }, env)
     const listAData = await listA.json()
     expect(listAData.orders.some((o: any) => o.id === orderAId)).toBe(true)
 
-    const listB = await app.request('/api/v1/my/orders', { headers: { Cookie: jarB.header() } }, env)
+    const listB = await app.request('/api/v1/my/orders', { headers: { ...jarB.headers() } }, env)
     const listBData = await listB.json()
     expect(listBData.orders.some((o: any) => o.id === orderAId)).toBe(false)
 
-    const detailByB = await app.request(`/api/v1/my/orders/${orderAId}`, { headers: { Cookie: jarB.header() } }, env)
+    const detailByB = await app.request(`/api/v1/my/orders/${orderAId}`, { headers: { ...jarB.headers() } }, env)
     expect(detailByB.status).toBe(404)
 
-    const detailByA = await app.request(`/api/v1/my/orders/${orderAId}`, { headers: { Cookie: jarA.header() } }, env)
+    const detailByA = await app.request(`/api/v1/my/orders/${orderAId}`, { headers: { ...jarA.headers() } }, env)
     expect(detailByA.status).toBe(200)
 
     // Legacy alias parity.
-    const legacyDetailByB = await app.request(`/api/my/orders/${orderAId}`, { headers: { Cookie: jarB.header() } }, env)
+    const legacyDetailByB = await app.request(`/api/my/orders/${orderAId}`, { headers: { ...jarB.headers() } }, env)
     expect(legacyDetailByB.status).toBe(404)
   })
 
@@ -234,7 +234,7 @@ describe('/photos/:key access control — never a permanently public URL', () =>
     const jar = new CookieJar()
     const uploadRes = await uploadPhoto('/api/v1/uploads/photo', jar)
     const { key } = await uploadRes.json()
-    const res = await app.request(`/photos/${key}`, { headers: { Cookie: jar.header() } }, env)
+    const res = await app.request(`/photos/${key}`, { headers: { ...jar.headers() } }, env)
     expect(res.status).toBe(200)
   })
 
@@ -248,7 +248,7 @@ describe('/photos/:key access control — never a permanently public URL', () =>
     const primed = await app.request('/', {}, env)
     jarStranger.observe(primed)
 
-    const res = await app.request(`/photos/${key}`, { headers: { Cookie: jarStranger.header() } }, env)
+    const res = await app.request(`/photos/${key}`, { headers: { ...jarStranger.headers() } }, env)
     expect(res.status).toBe(404)
   })
 })
@@ -292,16 +292,16 @@ describe('pdf-requests — canonical + legacy alias, honest status, secured agai
     const jarOwner = await registerAndLogin('pdfowner@example.com')
     const res = await app.request(
       '/api/v1/books/pdf-requests',
-      { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: jarOwner.header() }, body: JSON.stringify({ email: 'pdfowner@example.com', bookSlug: 'girls-sticker-pack' }) },
+      { method: 'POST', headers: { 'Content-Type': 'application/json', ...jarOwner.headers() }, body: JSON.stringify({ email: 'pdfowner@example.com', bookSlug: 'girls-sticker-pack' }) },
       env
     )
     const created = await res.json()
 
     const jarStranger = await registerAndLogin('pdfstranger@example.com')
-    const strangerRes = await app.request(`/api/v1/books/pdf-requests/${created.id}`, { headers: { Cookie: jarStranger.header() } }, env)
+    const strangerRes = await app.request(`/api/v1/books/pdf-requests/${created.id}`, { headers: { ...jarStranger.headers() } }, env)
     expect(strangerRes.status).toBe(404)
 
-    const ownerRes = await app.request(`/api/v1/books/pdf-requests/${created.id}`, { headers: { Cookie: jarOwner.header() } }, env)
+    const ownerRes = await app.request(`/api/v1/books/pdf-requests/${created.id}`, { headers: { ...jarOwner.headers() } }, env)
     expect(ownerRes.status).toBe(200)
   })
 
@@ -325,7 +325,7 @@ describe('pdf-requests — creation validation, expiry, ownership, admin endpoin
       '/api/v1/orders',
       {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey, Cookie: jar.header() },
+        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey, ...jar.headers() },
         body: JSON.stringify({
           items: [{ slug: 'girls-sticker-pack', qty: 1, childName: 'Gando', childAge: 6, language: 'English', photoKey: key }],
           fullName: 'Jane Doe',
@@ -369,7 +369,7 @@ describe('pdf-requests — creation validation, expiry, ownership, admin endpoin
 
     const ownRes = await app.request(
       '/api/v1/books/pdf-requests',
-      { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: jarOwner.header() }, body: JSON.stringify({ email: 'x@example.com', bookSlug: 'girls-sticker-pack', orderItemId }) },
+      { method: 'POST', headers: { 'Content-Type': 'application/json', ...jarOwner.headers() }, body: JSON.stringify({ email: 'x@example.com', bookSlug: 'girls-sticker-pack', orderItemId }) },
       env
     )
     expect(ownRes.status).toBe(200)
@@ -377,7 +377,7 @@ describe('pdf-requests — creation validation, expiry, ownership, admin endpoin
     const jarStranger = await registerAndLogin(`pdf-item-stranger-${Date.now()}@example.com`)
     const foreignRes = await app.request(
       '/api/v1/books/pdf-requests',
-      { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: jarStranger.header() }, body: JSON.stringify({ email: 'x@example.com', bookSlug: 'girls-sticker-pack', orderItemId }) },
+      { method: 'POST', headers: { 'Content-Type': 'application/json', ...jarStranger.headers() }, body: JSON.stringify({ email: 'x@example.com', bookSlug: 'girls-sticker-pack', orderItemId }) },
       env
     )
     expect(foreignRes.status).toBe(400)
@@ -387,7 +387,7 @@ describe('pdf-requests — creation validation, expiry, ownership, admin endpoin
     const jar = await registerAndLogin(`pdf-item-nonexist-${Date.now()}@example.com`)
     const res = await app.request(
       '/api/v1/books/pdf-requests',
-      { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: jar.header() }, body: JSON.stringify({ email: 'x@example.com', bookSlug: 'girls-sticker-pack', orderItemId: 999999 }) },
+      { method: 'POST', headers: { 'Content-Type': 'application/json', ...jar.headers() }, body: JSON.stringify({ email: 'x@example.com', bookSlug: 'girls-sticker-pack', orderItemId: 999999 }) },
       env
     )
     expect(res.status).toBe(400)
@@ -477,14 +477,14 @@ describe('pdf-requests — creation validation, expiry, ownership, admin endpoin
       const created = await res.json()
 
       const jarAdmin = await adminLogin()
-      const adminRes = await app.request(`/api/v1/admin/pdf-requests/${created.id}`, { headers: { Cookie: jarAdmin.header() } }, env)
+      const adminRes = await app.request(`/api/v1/admin/pdf-requests/${created.id}`, { headers: { ...jarAdmin.headers() } }, env)
       expect(adminRes.status).toBe(200)
       const adminData = await adminRes.json()
       expect(adminData.email).toBe('admin-visible@example.com')
       expect(adminData.child_name).toBe('Gando')
 
       const jarCustomer = await registerAndLogin(`pdf-admin-endpoint-customer-${Date.now()}@example.com`)
-      const customerRes = await app.request(`/api/v1/admin/pdf-requests/${created.id}`, { headers: { Cookie: jarCustomer.header() } }, env)
+      const customerRes = await app.request(`/api/v1/admin/pdf-requests/${created.id}`, { headers: { ...jarCustomer.headers() } }, env)
       expect(customerRes.status).not.toBe(200)
 
       const anonRes = await app.request(`/api/v1/admin/pdf-requests/${created.id}`, {}, env)
@@ -501,7 +501,7 @@ describe('pdf-requests — creation validation, expiry, ownership, admin endpoin
         '/api/v1/books/pdf-requests',
         {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', Cookie: jar.header() },
+          headers: { 'Content-Type': 'application/json', ...jar.headers() },
           body: JSON.stringify({
             email: 'x@example.com',
             orderItemId,
@@ -531,7 +531,7 @@ describe('pdf-requests — creation validation, expiry, ownership, admin endpoin
 
       const res = await app.request(
         '/api/v1/books/pdf-requests',
-        { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: jar.header() }, body: JSON.stringify({ email: 'x@example.com', orderItemId }) },
+        { method: 'POST', headers: { 'Content-Type': 'application/json', ...jar.headers() }, body: JSON.stringify({ email: 'x@example.com', orderItemId }) },
         env
       )
       expect(res.status).toBe(200)
@@ -608,7 +608,7 @@ describe('admin AI settings — no provider key ever stored in D1, honest "test 
     const jar = await adminLogin()
     const res = await app.request(
       '/api/admin/test-ai-connection',
-      { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: jar.header() }, body: JSON.stringify({ provider: 'custom', endpoint: 'https://example.com/generate' }) },
+      { method: 'POST', headers: { 'Content-Type': 'application/json', ...jar.headers() }, body: JSON.stringify({ provider: 'custom', endpoint: 'https://example.com/generate' }) },
       env
     )
     const data = await res.json()
@@ -624,7 +624,7 @@ describe('admin AI settings — no provider key ever stored in D1, honest "test 
       '/api/admin/test-ai-connection',
       {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Cookie: jar.header() },
+        headers: { 'Content-Type': 'application/json', ...jar.headers() },
         body: JSON.stringify({ provider: 'openai', endpoint: 'https://api.openai.com/v1', apiKey: fixtureKeyChars, model: 'gpt-4' })
       },
       env
@@ -644,7 +644,7 @@ describe('admin AI settings — no provider key ever stored in D1, honest "test 
     const fixtureKeyChars = ['t', 'e', 's', 't', '-', 'f', 'i', 'x', 't', 'u', 'r', 'e', '-', 'k', 'e', 'y', '-', '1', '2', '3'].join('')
     await app.request(
       '/admin/ai-settings',
-      { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: jar.header() }, body: new URLSearchParams({ api_provider: 'openai', api_endpoint: 'https://api.openai.com/v1', api_key: fixtureKeyChars, model: 'gpt' }) },
+      { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', ...jar.headers() }, body: new URLSearchParams({ api_provider: 'openai', api_endpoint: 'https://api.openai.com/v1', api_key: fixtureKeyChars, model: 'gpt' }) },
       env
     )
     const afterSave = await env.DB.prepare('SELECT api_key, model FROM ai_settings WHERE id = 1').first<{ api_key: string; model: string }>()
@@ -665,7 +665,7 @@ describe('admin AI settings — no provider key ever stored in D1, honest "test 
     const jar = await adminLogin()
     await app.request(
       '/admin/ai-settings',
-      { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: jar.header() }, body: new URLSearchParams({ api_provider: 'openai', api_endpoint: 'https://api.openai.com/v1', model: 'gpt-4o' }) },
+      { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', ...jar.headers() }, body: new URLSearchParams({ api_provider: 'openai', api_endpoint: 'https://api.openai.com/v1', model: 'gpt-4o' }) },
       env
     )
     const row = await env.DB.prepare('SELECT api_key FROM ai_settings WHERE id = 1').first<{ api_key: string }>()
@@ -674,7 +674,7 @@ describe('admin AI settings — no provider key ever stored in D1, honest "test 
 
   it('the AI settings page never renders a real key value in its HTML, and shows env-secret status (not a DB value)', async () => {
     const jar = await adminLogin()
-    const res = await app.request('/admin/ai-settings', { headers: { Cookie: jar.header() } }, env)
+    const res = await app.request('/admin/ai-settings', { headers: { ...jar.headers() } }, env)
     const html = await res.text()
     expect(html).not.toMatch(/sk-[a-zA-Z0-9-]{6,}/)
     expect(html).toMatch(/AI_PROVIDER_API_KEY/)
@@ -698,11 +698,11 @@ describe('admin AI settings — no provider key ever stored in D1, honest "test 
 
   it('a logged-in customer (not admin) cannot reach either admin AI endpoint', async () => {
     const jar = await registerAndLogin(`ai-customer-${Date.now()}@example.com`)
-    const settingsRes = await app.request('/admin/ai-settings', { headers: { Cookie: jar.header() } }, env)
+    const settingsRes = await app.request('/admin/ai-settings', { headers: { ...jar.headers() } }, env)
     expect(settingsRes.status).not.toBe(200)
     const testConnRes = await app.request(
       '/api/admin/test-ai-connection',
-      { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: jar.header() }, body: JSON.stringify({ provider: 'custom', endpoint: 'https://example.com' }) },
+      { method: 'POST', headers: { 'Content-Type': 'application/json', ...jar.headers() }, body: JSON.stringify({ provider: 'custom', endpoint: 'https://example.com' }) },
       env
     )
     expect(testConnRes.status).not.toBe(200)

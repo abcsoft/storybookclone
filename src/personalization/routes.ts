@@ -4,6 +4,8 @@
 import type { Hono, Context } from 'hono'
 import type { Bindings, Vars } from '../index'
 import { DomainError, errorBody, newRequestId } from './types'
+import { consumeRateLimit } from '../rate-limit'
+import { rateLimitKey } from '../security'
 import { resolveOwner, resolveOrCreateOwner, loadOwnedUserBook } from './ownership'
 import { initiateUpload, completeUpload, getOwnedCompletedUpload } from './uploads'
 import { getFaceAnalysisAdapter } from './face-analysis'
@@ -70,8 +72,13 @@ export function registerPersonalizationRoutes(app: Hono<{ Bindings: Bindings; Va
   )
 
   // ---- upload lifecycle ----
+  const UPLOAD_RATE_LIMIT = { max: 30, windowSeconds: 3600 }
+
   app.post('/api/v1/uploads/photo/initiate', async (c) =>
     withErrors(c, async () => {
+      // S-06: durable atomic limit — uploads are the expensive, abuse-prone path.
+      const limit = await consumeRateLimit(c.env.DB, rateLimitKey('upload-initiate', c), UPLOAD_RATE_LIMIT)
+      if (limit.limited) throw new DomainError('rate_limited', 'Too many upload attempts right now. Please try again later.', 429)
       const owner = await resolveOrCreateOwner(c, c.env.ENVIRONMENT)
       const body = await c.req.json<any>().catch(() => ({}))
       const result = await initiateUpload(c.env.DB, owner, { contentType: String(body.contentType || ''), byteSize: Number(body.byteSize || 0) })
@@ -81,6 +88,8 @@ export function registerPersonalizationRoutes(app: Hono<{ Bindings: Bindings; Va
 
   app.post('/api/v1/uploads/photo/complete', async (c) =>
     withErrors(c, async () => {
+      const completeLimit = await consumeRateLimit(c.env.DB, rateLimitKey('upload-complete', c), UPLOAD_RATE_LIMIT)
+      if (completeLimit.limited) throw new DomainError('rate_limited', 'Too many upload attempts right now. Please try again later.', 429)
       const owner = await resolveOwner(c)
       if (!owner) throw new DomainError('not_found', 'Upload session not found.', 404)
       if (!c.env.PHOTOS) throw new DomainError('storage_unavailable', 'Photo storage unavailable.', 503)
@@ -216,6 +225,9 @@ export function registerPersonalizationRoutes(app: Hono<{ Bindings: Bindings; Va
   // ---- user-books ----
   app.post('/api/v1/user-books', async (c) =>
     withErrors(c, async () => {
+      // S-06: a draft is cheap, but unbounded draft creation is still abuse.
+      const draftLimit = await consumeRateLimit(c.env.DB, rateLimitKey('user-book-create', c), { max: 60, windowSeconds: 3600 })
+      if (draftLimit.limited) throw new DomainError('rate_limited', 'Too many drafts created right now. Please try again later.', 429)
       const owner = await resolveOrCreateOwner(c, c.env.ENVIRONMENT)
       const body = await c.req.json<any>().catch(() => ({}))
       const idempotencyKey = c.req.header('Idempotency-Key') || body.idempotencyKey

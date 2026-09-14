@@ -7,13 +7,14 @@
 import { getCookie, setCookie } from 'hono/cookie'
 import type { Context } from 'hono'
 import { sha256Hex, timingSafeEqual } from '../secrets'
+import { secureCookieOptions, PROSPECT_COOKIE_TTL_SECONDS } from '../security'
 import { DomainError, type UserBookRow } from './types'
 
 export const PROSPECT_COOKIE = 'ww_prospect'
 // Bounded, not indefinite — a guest personalization session capability
 // expires and, past that, cannot be used to read or mutate anything
 // (see the retention service for what happens to the underlying data).
-const PROSPECT_TTL_SECONDS = 60 * 60 * 24 * 14 // 14 days
+export const PROSPECT_TTL_SECONDS = PROSPECT_COOKIE_TTL_SECONDS // 14 days
 
 export type Owner = { type: 'user'; userId: number } | { type: 'prospect'; prospectId: string }
 
@@ -50,13 +51,9 @@ export async function createProspect(c: Context<any>, environment: string | unde
 
   await c.env.DB.prepare('INSERT INTO prospects (id, capability_hash, expires_at) VALUES (?, ?, ?)').bind(id, capabilityHash, expiresAt).run()
 
-  setCookie(c, PROSPECT_COOKIE, `${id}.${rawCapability}`, {
-    path: '/',
-    httpOnly: true,
-    sameSite: 'Lax',
-    secure: environment !== 'development',
-    maxAge: PROSPECT_TTL_SECONDS
-  })
+  // S-02: the shared environment-aware cookie policy (Secure everywhere except
+  // an explicitly configured development environment).
+  setCookie(c, PROSPECT_COOKIE, `${id}.${rawCapability}`, secureCookieOptions({ ENVIRONMENT: environment }, PROSPECT_COOKIE_TTL_SECONDS))
 
   return {
     id,

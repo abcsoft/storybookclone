@@ -65,7 +65,7 @@ describe('C-06 admin PDP editor renders the real related-products picker', () =>
     const id = await seedProduct('admin-book')
     await seedProduct('second-book')
     const jar = await adminJar()
-    const res = await app.request(`/admin/products/${id}/pdp`, { headers: { Cookie: jar.header() } }, env)
+    const res = await app.request(`/admin/products/${id}/pdp`, { headers: { ...jar.headers() } }, env)
     expect(res.status).toBe(200)
     const html = await res.text()
     expect(html).not.toContain('[object Promise]')
@@ -81,14 +81,14 @@ describe('C-06 admin PDP editor renders the real related-products picker', () =>
     const jar = await adminJar()
     const save = await app.request(
       `/admin/products/${id}/pdp/related`,
-      { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: jar.header() }, body: new URLSearchParams({ related_ids: String(other) }) },
+      { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', ...jar.headers() }, body: new URLSearchParams({ related_ids: String(other) }) },
       env
     )
     expect(save.status).toBe(302)
     const rows = (await env.DB.prepare('SELECT related_id FROM pdp_related WHERE product_id = ?').bind(id).all<{ related_id: number }>()).results || []
     expect(rows.map((r) => r.related_id)).toContain(other)
     // Reload: the selection is present in the rendered current-state JSON.
-    const reload = await app.request(`/admin/products/${id}/pdp`, { headers: { Cookie: jar.header() } }, env)
+    const reload = await app.request(`/admin/products/${id}/pdp`, { headers: { ...jar.headers() } }, env)
     expect(await reload.text()).toContain(`window.__relatedCurrent = [${other}]`)
     // And an audit event was recorded for the PDP mutation (S-09 prerequisite).
     const audit = await env.DB.prepare("SELECT COUNT(*) AS n FROM admin_audit_events WHERE action = 'pdp.mutation'").first<{ n: number }>()
@@ -128,7 +128,7 @@ describe('S-07 validated order/preview transitions with immutable history', () =
     const jar = await adminJar()
     const res = await app.request(
       `/admin/orders/${orderId}/status`,
-      { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: jar.header() }, body: new URLSearchParams({ status: 'preview_sent' }) },
+      { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', ...jar.headers() }, body: new URLSearchParams({ status: 'preview_sent' }) },
       env
     )
     expect(res.status).toBe(302)
@@ -144,7 +144,7 @@ describe('S-07 validated order/preview transitions with immutable history', () =
     const jar = await adminJar()
     await app.request(
       `/admin/orders/${orderId}/status`,
-      { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: jar.header() }, body: new URLSearchParams({ status: 'definitely_not_a_status' }) },
+      { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', ...jar.headers() }, body: new URLSearchParams({ status: 'definitely_not_a_status' }) },
       env
     )
     const order = await env.DB.prepare('SELECT status FROM orders WHERE id = ?').bind(orderId).first<{ status: string }>()
@@ -158,7 +158,7 @@ describe('S-07 validated order/preview transitions with immutable history', () =
     const jar = await adminJar()
     await app.request(
       `/admin/orders/${orderId}/status`,
-      { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: jar.header() }, body: new URLSearchParams({ status: 'shipped' }) },
+      { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', ...jar.headers() }, body: new URLSearchParams({ status: 'shipped' }) },
       env
     )
     const order = await env.DB.prepare('SELECT status FROM orders WHERE id = ?').bind(orderId).first<{ status: string }>()
@@ -170,7 +170,7 @@ describe('S-07 validated order/preview transitions with immutable history', () =
     const jar = await adminJar()
     await app.request(
       `/admin/orders/${orderId}/status`,
-      { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: jar.header() }, body: new URLSearchParams({ status: 'cancelled' }) },
+      { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', ...jar.headers() }, body: new URLSearchParams({ status: 'cancelled' }) },
       env
     )
     let order = await env.DB.prepare('SELECT status FROM orders WHERE id = ?').bind(orderId).first<{ status: string }>()
@@ -178,7 +178,7 @@ describe('S-07 validated order/preview transitions with immutable history', () =
 
     await app.request(
       `/admin/orders/${orderId}/status`,
-      { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: jar.header() }, body: new URLSearchParams({ status: 'cancelled', reason: 'customer asked' }) },
+      { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', ...jar.headers() }, body: new URLSearchParams({ status: 'cancelled', reason: 'customer asked' }) },
       env
     )
     order = await env.DB.prepare('SELECT status FROM orders WHERE id = ?').bind(orderId).first<{ status: string }>()
@@ -192,7 +192,7 @@ describe('S-07 validated order/preview transitions with immutable history', () =
     const jar = await adminJar()
     await app.request(
       `/admin/orders/${orderId}/status`,
-      { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: jar.header() }, body: new URLSearchParams({ status: 'preview_sent' }) },
+      { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', ...jar.headers() }, body: new URLSearchParams({ status: 'preview_sent' }) },
       env
     )
     await expect(env.DB.prepare("UPDATE order_state_events SET to_state = 'shipped'").run()).rejects.toThrow(/immutable/)
@@ -205,7 +205,7 @@ describe('S-07 validated order/preview transitions with immutable history', () =
     const post = (status: string, reason?: string) =>
       app.request(
         `/admin/items/${itemId}/preview`,
-        { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: jar.header() }, body: new URLSearchParams(reason ? { preview_status: status, reason } : { preview_status: status }) },
+        { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', ...jar.headers() }, body: new URLSearchParams(reason ? { preview_status: status, reason } : { preview_status: status }) },
         env
       )
     await post('bogus_status')
@@ -230,10 +230,10 @@ describe('S-07 validated order/preview transitions with immutable history', () =
 describe('S-08/S-09 central admin authorization and audit', () => {
   it('a customer session is denied the admin pages and the admin API', async () => {
     const jar = await customerJar()
-    const page = await app.request('/admin', { headers: { Cookie: jar.header() } }, env)
+    const page = await app.request('/admin', { headers: { ...jar.headers() } }, env)
     expect(page.status).toBe(302)
     expect(page.headers.get('location')).toContain('/admin/login')
-    const api = await app.request('/api/admin/test-ai-connection', { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: jar.header() }, body: JSON.stringify({ endpoint: 'https://api.example' }) }, env)
+    const api = await app.request('/api/admin/test-ai-connection', { method: 'POST', headers: { 'Content-Type': 'application/json', ...jar.headers() }, body: JSON.stringify({ endpoint: 'https://api.example' }) }, env)
     expect([401, 403]).toContain(api.status)
   })
 
@@ -249,7 +249,7 @@ describe('S-08/S-09 central admin authorization and audit', () => {
     const jar = await adminJar()
     await app.request(
       `/admin/orders/${orderId}/status`,
-      { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: jar.header() }, body: new URLSearchParams({ status: 'preview_sent' }) },
+      { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', ...jar.headers() }, body: new URLSearchParams({ status: 'preview_sent' }) },
       env
     )
     const row = await env.DB.prepare("SELECT actor_email, action, entity_type, entity_id FROM admin_audit_events WHERE action = 'order.status_change'").first<any>()
@@ -286,7 +286,7 @@ describe('S-10 unpaid totals are labelled Order value, never Revenue', () => {
     const { orderId } = await seedOrder()
     await env.DB.prepare('UPDATE orders SET status = ? WHERE id = ?').bind('preview_sent', orderId).run()
     const jar = await adminJar()
-    const res = await app.request('/admin', { headers: { Cookie: jar.header() } }, env)
+    const res = await app.request('/admin', { headers: { ...jar.headers() } }, env)
     const html = await res.text()
     expect(html.toLowerCase()).not.toContain('revenue')
     expect(html).toContain('Order value')

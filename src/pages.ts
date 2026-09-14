@@ -422,12 +422,13 @@ export function faqsPage() {
   ${ctaBlock()}`
 }
 
-export function contactPage(sent?: boolean) {
+export function contactPage(sent?: boolean, error?: string) {
   return `
   <section class="page-hero"><h1>Contact WonderWraps</h1><p>Questions about an order, custom request, or photo? We’d love to help.</p></section>
   <section class="section">
     <div class="wrap" style="max-width:640px">
-      ${sent ? `<p class="notice ok">Thank you! Your message has been sent. We usually respond within 24 hours.</p>` : ''}
+      ${sent ? `<p class="notice ok">Thank you — your message was saved. We read this inbox manually, so replies are not instant.</p>` : ''}
+      ${error ? `<p class="notice error">${esc(error)}</p>` : ''}
       <form class="form" method="post" action="/contact">
         <label for="name">Your name</label>
         <input id="name" name="name" required>

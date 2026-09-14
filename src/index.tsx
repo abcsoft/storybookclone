@@ -39,7 +39,7 @@ import {
   attachUser,
   hashPassword,
   verifyPassword,
-  createSession,
+  rotateSessionOnLogin,
   destroySession,
   setSessionCookie,
   clearSessionCookie,
@@ -72,6 +72,20 @@ import { requestPasswordReset, resetPassword } from './password-reset'
 import { consumeRateLimit } from './rate-limit'
 import { registerPersonalizationRoutes } from './personalization/routes'
 import { transitionOrderStatus, transitionPreviewStatus } from './orders-status'
+import {
+  csrfGuard,
+  corsGuard,
+  securityHeaders,
+  secureCookieOptions,
+  injectCsrfFormTokens,
+  hasSessionCookie,
+  CSRF_COOKIE,
+  rateLimitKey,
+  SESSION_TTL_SECONDS,
+  UPLOAD_COOKIE_TTL_SECONDS,
+  PROSPECT_COOKIE_TTL_SECONDS
+} from './security'
+import { consumeRateLimit as durableRateLimit } from './rate-limit'
 import { recordAdminAudit } from './admin-audit'
 import { resolveOwner as resolvePersonalizationOwner } from './personalization/ownership'
 import { ownerToken as personalizationOwnerToken } from './personalization/uploads'
@@ -115,11 +129,19 @@ export type Bindings = {
   FACE_ANALYSIS_API_URL?: string
   FACE_ANALYSIS_API_KEY?: string
 }
-export type Vars = { user: AuthUser | null; requestId: string | null }
+export type Vars = { user: AuthUser | null; requestId: string | null; csrfToken?: string }
 
 const app = new Hono<{ Bindings: Bindings; Variables: Vars }>()
 
-app.use('/api/*', cors())
+// S-04: no default CORS. The storefront is same-origin, so NO CORS headers
+// are emitted unless an origin is explicitly allowlisted via ALLOWED_ORIGINS;
+// an unknown Origin is never reflected.
+app.use('/api/*', corsGuard())
+
+// S-05: central security headers on every response (CSP, nosniff, frame
+// protection, referrer, permissions, and a safe cache policy for private /
+// token-bearing pages). Registered first so it wraps everything.
+app.use('*', securityHeaders())
 
 // ---------- schema authority + local-dev bootstrap ----------
 // `migrations/` is the ONE authoritative schema source. This module does not
@@ -291,6 +313,21 @@ app.use('*', async (c, next) => {
 })
 app.use('*', attachUser)
 
+// S-01: the central CSRF/Origin gate for every cookie-authenticated mutation.
+app.use('*', csrfGuard())
+
+// Server-rendered pages get a hidden CSRF field injected into every POST
+// form, so the HTML and JSON mutation paths share one protection model.
+app.use('*', async (c, next) => {
+  await next()
+  const type = c.res.headers.get('Content-Type') || ''
+  const token = c.get('csrfToken') || getCookie(c, CSRF_COOKIE)
+  if (type.includes('text/html') && token) {
+    const body = await c.res.text()
+    c.res = new Response(injectCsrfFormTokens(body, token), c.res)
+  }
+})
+
 // A per-request correlation id, available to every handler/audit event. It is
 // request-scoped (Hono Variables) — never module/global state.
 app.use('*', async (c, next) => {
@@ -313,12 +350,8 @@ function getOrSetUploadOwnerToken(c: Context<{ Bindings: Bindings; Variables: Va
   let token = getCookie(c, UPLOAD_OWNER_COOKIE)
   if (!token) {
     token = crypto.randomUUID()
-    setCookie(c, UPLOAD_OWNER_COOKIE, token, {
-      path: '/',
-      httpOnly: true,
-      sameSite: 'Lax',
-      maxAge: 60 * 60 * 24 * 30
-    })
+    // S-02: same environment-aware policy as every other cookie.
+    setCookie(c, UPLOAD_OWNER_COOKIE, token, secureCookieOptions(c.env as { ENVIRONMENT?: string }, UPLOAD_COOKIE_TTL_SECONDS))
   }
   return token
 }
@@ -397,11 +430,24 @@ app.get('/support', (c) => html(c, 'Support - Wonder Wraps', supportPage(), 'sup
 app.get('/contact', (c) => html(c, 'Contact Us - Wonder Wraps', contactPage(), 'support'))
 app.post('/contact', async (c) => {
   const body = await c.req.parseBody()
+  // S-06 + T-08: durable atomic limit, and an HONEST failure (never a fake
+  // success when persistence fails).
+  const contactLimit = await durableRateLimit(c.env.DB, rateLimitKey('contact', c), { max: 5, windowSeconds: 3600 })
+  if (contactLimit.limited) {
+    return c.html(contactPage(false, 'You have sent several messages already. Please try again a little later.'), 429)
+  }
+  let saved = false
   try {
     await c.env.DB.prepare('INSERT INTO contacts (name, email, topic, message) VALUES (?, ?, ?, ?)')
       .bind(String(body.name || ''), String(body.email || ''), String(body.topic || ''), String(body.message || ''))
       .run()
+    saved = true
   } catch {}
+  // T-08: only claim success when the row actually persisted; otherwise say so
+  // and let the visitor retry (the form is re-rendered with their error).
+  if (!saved) {
+    return html(c, 'Contact Us - Wonder Wraps', contactPage(false, 'We could not save your message just now — please try again in a moment.'), 'support')
+  }
   return html(c, 'Contact Us - Wonder Wraps', contactPage(true), 'support')
 })
 
@@ -416,18 +462,25 @@ app.get('/register', (c) => {
 })
 app.get('/forgot-password', (c) => html(c, 'Forgot Password - Wonder Wraps', authPage('forgot'), 'my-books'))
 
+const AUTH_RATE_LIMIT = { max: 10, windowSeconds: 15 * 60 }
+
 app.post('/login', async (c) => {
   const body = await c.req.parseBody()
   const email = String(body.email || '').toLowerCase().trim()
   const password = String(body.password || '')
+  // S-06: durable atomic limit, keyed by action + client identity + IP.
+  const limit = await durableRateLimit(c.env.DB, rateLimitKey('login', c, email), AUTH_RATE_LIMIT)
+  if (limit.limited) {
+    return html(c, 'Login - Wonder Wraps', authPage('login', 'Too many attempts. Please wait a few minutes and try again.'), 'my-books')
+  }
   const user = await c.env.DB.prepare('SELECT id, name, email, role, password_hash FROM users WHERE email = ?')
     .bind(email)
     .first<AuthUser & { password_hash: string }>()
   if (!user || !(await verifyPassword(password, user.password_hash))) {
     return html(c, 'Login - Wonder Wraps', authPage('login', 'Invalid email or password.'), 'my-books')
   }
-  const token = await createSession(c.env.DB, user.id)
-  setSessionCookie(c, token)
+  // S-02: authentication always rotates the session id.
+  await rotateSessionOnLogin(c, c.env.DB, user.id)
   return c.redirect(user.role === 'admin' ? '/admin' : '/my-books')
 })
 
@@ -439,12 +492,16 @@ app.post('/register', async (c) => {
   if (!name || !email || password.length < 6) {
     return html(c, 'Create Account - Wonder Wraps', authPage('register', 'Please fill all fields (password 6+ characters).'), 'my-books')
   }
+  const registerLimit = await durableRateLimit(c.env.DB, rateLimitKey('register', c), AUTH_RATE_LIMIT)
+  if (registerLimit.limited) {
+    return html(c, 'Create Account - Wonder Wraps', authPage('register', 'Too many sign-up attempts right now. Please try again shortly.'), 'my-books')
+  }
   try {
     const r = await c.env.DB.prepare('INSERT INTO users (name, email, password_hash) VALUES (?, ?, ?)')
       .bind(name, email, await hashPassword(password))
       .run()
-    const token = await createSession(c.env.DB, Number(r.meta.last_row_id))
-    setSessionCookie(c, token)
+    // S-02: rotate (destroy any pre-registration session) on authentication.
+    await rotateSessionOnLogin(c, c.env.DB, Number(r.meta.last_row_id))
     return c.redirect('/my-books')
   } catch {
     return html(c, 'Create Account - Wonder Wraps', authPage('register', 'That email is already registered.'), 'my-books')
@@ -457,12 +514,9 @@ app.post('/logout', async (c) => {
   clearSessionCookie(c)
   return c.redirect('/')
 })
-app.get('/logout', async (c) => {
-  const token = readSessionToken(c)
-  if (token) await destroySession(c.env.DB, token)
-  clearSessionCookie(c)
-  return c.redirect('/')
-})
+// S-03: a GET must never mutate session state (a link, prefetch or
+// <img src> must not be able to log someone out). It is a plain redirect.
+app.get('/logout', (c) => c.redirect('/'))
 
 // Generic response regardless of whether the email exists — prevents account
 // enumeration via this form. requestPasswordReset() itself is rate-limited
@@ -776,9 +830,15 @@ app.get('/api/me', (c) => {
 app.post('/api/newsletter', async (c) => {
   const { email } = await c.req.json<{ email: string }>()
   if (!email) return c.json({ error: 'Email required' }, 400)
+  // S-06: durable atomic limit by action + IP (+ the address itself).
+  const limit = await durableRateLimit(c.env.DB, rateLimitKey('newsletter', c, String(email)), { max: 5, windowSeconds: 3600 })
+  if (limit.limited) return c.json({ error: 'Too many sign-up attempts right now. Please try again later.' }, 429)
+  // T-08: never report success when persistence failed.
   try {
     await c.env.DB.prepare('INSERT OR IGNORE INTO newsletter (email) VALUES (?)').bind(String(email).toLowerCase().trim()).run()
-  } catch {}
+  } catch {
+    return c.json({ error: 'We could not save your sign-up just now — please try again in a moment.' }, 503)
+  }
   return c.json({ ok: true })
 })
 
@@ -884,6 +944,12 @@ async function handleCreateOrder(c: Context<{ Bindings: Bindings; Variables: Var
   const body = await c.req.json<CreateOrderInput>().catch(() => null)
   if (!body) return c.json({ error: 'Invalid JSON body' }, 400)
   const idempotencyKey = c.req.header('Idempotency-Key') || body.idempotencyKey
+  // S-06: order creation is rate limited by action + IP (identity is hashed
+  // into the bucket key, never stored).
+  const orderLimit = await durableRateLimit(c.env.DB, rateLimitKey('order-create', c), { max: 20, windowSeconds: 3600 })
+  if (orderLimit.limited) {
+    return c.json({ error: 'Too many orders attempted right now. Please try again in a little while.' }, 429)
+  }
   const user = c.get('user')
   const ownerToken = getOrSetUploadOwnerToken(c)
 
@@ -989,14 +1055,17 @@ app.post('/admin/login', async (c) => {
   const body = await c.req.parseBody()
   const email = String(body.email || '').toLowerCase().trim()
   const password = String(body.password || '')
+  // S-06: admin login is a credential-guessing target and is rate limited too.
+  const limit = await durableRateLimit(c.env.DB, rateLimitKey('admin-login', c, email), { max: 5, windowSeconds: 15 * 60 })
+  if (limit.limited) return c.html(adminLogin('Too many attempts. Please wait before trying again.'))
   const user = await c.env.DB.prepare("SELECT id, name, email, role, password_hash FROM users WHERE email = ? AND role = 'admin'")
     .bind(email)
     .first<AuthUser & { password_hash: string }>()
   if (!user || !(await verifyPassword(password, user.password_hash))) {
     return c.html(adminLogin('Invalid admin credentials.'))
   }
-  const token = await createSession(c.env.DB, user.id)
-  setSessionCookie(c, token)
+  // S-02: rotating session on admin authentication too.
+  await rotateSessionOnLogin(c, c.env.DB, user.id)
   return c.redirect('/admin')
 })
 

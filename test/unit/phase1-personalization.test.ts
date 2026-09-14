@@ -32,7 +32,7 @@ async function seedProduct(slug = 'phase1-book', ageMin = 4, ageMax = 8, e: Test
 }
 
 async function createBook(jar: CookieJar, slug = 'phase1-book', e: TestEnv = env) {
-  const res = await app.request('/api/v1/user-books', { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: jar.header() }, body: JSON.stringify({ productSlug: slug }) }, e)
+  const res = await app.request('/api/v1/user-books', { method: 'POST', headers: { 'Content-Type': 'application/json', ...jar.headers() }, body: JSON.stringify({ productSlug: slug }) }, e)
   jar.observe(res)
   return res.json()
 }
@@ -41,7 +41,7 @@ async function uploadPhoto(jar: CookieJar, faces = 1, e: TestEnv = env) {
   const bytes = withFaceCountTrailer(makeValidJpegBytes(900, 900), faces)
   const initRes = await app.request(
     '/api/v1/uploads/photo/initiate',
-    { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: jar.header() }, body: JSON.stringify({ contentType: 'image/jpeg', byteSize: bytes.byteLength }) },
+    { method: 'POST', headers: { 'Content-Type': 'application/json', ...jar.headers() }, body: JSON.stringify({ contentType: 'image/jpeg', byteSize: bytes.byteLength }) },
     e
   )
   jar.observe(initRes)
@@ -50,7 +50,7 @@ async function uploadPhoto(jar: CookieJar, faces = 1, e: TestEnv = env) {
   form.append('photo', new File([bytes], 'photo.jpg', { type: 'image/jpeg' }))
   form.append('uploadId', initiated.uploadId)
   form.append('completionToken', initiated.completionToken)
-  const completeRes = await app.request('/api/v1/uploads/photo/complete', { method: 'POST', headers: { Cookie: jar.header() }, body: form }, e)
+  const completeRes = await app.request('/api/v1/uploads/photo/complete', { method: 'POST', headers: { ...jar.headers() }, body: form }, e)
   jar.observe(completeRes)
   expect(completeRes.status).toBe(200)
   return initiated.uploadId as string
@@ -61,7 +61,7 @@ async function personalize(jar: CookieJar, bookId: string, photoUploadKey: strin
     `/api/v1/user-books/${bookId}/personalization`,
     {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json', Cookie: jar.header() },
+      headers: { 'Content-Type': 'application/json', ...jar.headers() },
       body: JSON.stringify({ childName: 'Maya', childAge: 6, languageCode: 'en', dedication: '', photoUploadKey, ...extra })
     },
     e
@@ -72,7 +72,7 @@ async function personalize(jar: CookieJar, bookId: string, photoUploadKey: strin
 
 async function analyze(jar: CookieJar, uploadKey: string, e: TestEnv = env) {
   // The upload key contains a "/" — it must be percent-encoded to match the :id param.
-  const res = await app.request(`/api/v1/uploads/${encodeURIComponent(uploadKey)}/analysis`, { headers: { Cookie: jar.header() } }, e)
+  const res = await app.request(`/api/v1/uploads/${encodeURIComponent(uploadKey)}/analysis`, { headers: { ...jar.headers() } }, e)
   jar.observe(res)
   return { status: res.status, body: await res.json() }
 }
@@ -296,7 +296,7 @@ describe('C-02/C-03 honest analysis outcome and checkout agreement', () => {
     const bookState = await e.DB.prepare('SELECT state FROM user_books WHERE public_id = ?').bind(book.id).first<{ state: string }>()
     expect(bookState!.state).toBe('manual_photo_review')
 
-    const orderRes = await app.request('/api/v1/orders', { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: jar.header() }, body: JSON.stringify(orderPayload(book.id)) }, e)
+    const orderRes = await app.request('/api/v1/orders', { method: 'POST', headers: { 'Content-Type': 'application/json', ...jar.headers() }, body: JSON.stringify(orderPayload(book.id)) }, e)
     expect(orderRes.status).toBe(200)
   })
 
@@ -315,7 +315,7 @@ describe('C-02/C-03 honest analysis outcome and checkout agreement', () => {
     const state = await env.DB.prepare('SELECT state FROM user_books WHERE public_id = ?').bind(book.id).first<{ state: string }>()
     expect(state!.state).toBe('awaiting_photo_analysis')
 
-    const orderRes = await app.request('/api/v1/orders', { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: jar.header() }, body: JSON.stringify(orderPayload(book.id)) }, env)
+    const orderRes = await app.request('/api/v1/orders', { method: 'POST', headers: { 'Content-Type': 'application/json', ...jar.headers() }, body: JSON.stringify(orderPayload(book.id)) }, env)
     expect(orderRes.status).toBe(400)
   })
 
@@ -330,7 +330,7 @@ describe('C-02/C-03 honest analysis outcome and checkout agreement', () => {
     expect(body.faces).toHaveLength(1)
     const state = await env.DB.prepare('SELECT state FROM user_books WHERE public_id = ?').bind(book.id).first<{ state: string }>()
     expect(state!.state).toBe('ready_to_generate')
-    const orderRes = await app.request('/api/v1/orders', { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: jar.header() }, body: JSON.stringify(orderPayload(book.id)) }, env)
+    const orderRes = await app.request('/api/v1/orders', { method: 'POST', headers: { 'Content-Type': 'application/json', ...jar.headers() }, body: JSON.stringify(orderPayload(book.id)) }, env)
     expect(orderRes.status).toBe(200)
   })
 })
@@ -407,7 +407,7 @@ describe('D-04 stable user-book draft identity', () => {
 
     const key = 'pdp-phase1-book-stable-key'
     const fire = () =>
-      app.request('/api/v1/user-books', { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: jar.header(), 'Idempotency-Key': key }, body: JSON.stringify({ productSlug: 'phase1-book' }) }, env)
+      app.request('/api/v1/user-books', { method: 'POST', headers: { 'Content-Type': 'application/json', ...jar.headers(), 'Idempotency-Key': key }, body: JSON.stringify({ productSlug: 'phase1-book' }) }, env)
     const [a, b] = await Promise.all([fire(), fire()])
     jar.observe(a)
     const [ja, jb] = await Promise.all([a.json(), b.json()])
@@ -424,7 +424,7 @@ describe('D-04 stable user-book draft identity', () => {
     await seedProduct()
     const jar = new CookieJar()
     const one = await createBook(jar)
-    const res = await app.request('/api/v1/user-books', { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: jar.header(), 'Idempotency-Key': 'other-key' }, body: JSON.stringify({ productSlug: 'phase1-book' }) }, env)
+    const res = await app.request('/api/v1/user-books', { method: 'POST', headers: { 'Content-Type': 'application/json', ...jar.headers(), 'Idempotency-Key': 'other-key' }, body: JSON.stringify({ productSlug: 'phase1-book' }) }, env)
     const two = await res.json()
     expect(two.id).not.toBe(one.id)
   })
@@ -444,13 +444,13 @@ describe('D-06 cross-owner personalization reference denial', () => {
     const jarB = new CookieJar()
     const patchRes = await app.request(
       `/api/v1/user-books/${book.id}/personalization`,
-      { method: 'PATCH', headers: { 'Content-Type': 'application/json', Cookie: jarB.header() }, body: JSON.stringify({ childName: 'Nope', childAge: 6, photoUploadKey: key }) },
+      { method: 'PATCH', headers: { 'Content-Type': 'application/json', ...jarB.headers() }, body: JSON.stringify({ childName: 'Nope', childAge: 6, photoUploadKey: key }) },
       env
     )
     jarB.observe(patchRes)
     expect(patchRes.status).toBe(404)
 
-    const orderRes = await app.request('/api/v1/orders', { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: jarB.header() }, body: JSON.stringify(orderPayload(book.id)) }, env)
+    const orderRes = await app.request('/api/v1/orders', { method: 'POST', headers: { 'Content-Type': 'application/json', ...jarB.headers() }, body: JSON.stringify(orderPayload(book.id)) }, env)
     jarB.observe(orderRes)
     expect(orderRes.status).toBe(400)
   })

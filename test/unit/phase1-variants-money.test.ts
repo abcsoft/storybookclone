@@ -37,7 +37,7 @@ async function uploadPhoto(jar: CookieJar): Promise<string> {
   const bytes = makeValidJpegBytes(900, 900)
   const form = new FormData()
   form.append('photo', new File([bytes], 'photo.jpg', { type: 'image/jpeg' }))
-  const res = await app.request('/api/v1/uploads/photo', { method: 'POST', headers: { Cookie: jar.header() }, body: form }, env)
+  const res = await app.request('/api/v1/uploads/photo', { method: 'POST', headers: { ...jar.headers() }, body: form }, env)
   jar.observe(res)
   expect(res.status).toBe(200)
   return (await res.json()).key as string
@@ -70,7 +70,7 @@ describe('D-09 integer minor-unit money is the authority', () => {
       '/api/v1/orders',
       {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Cookie: jar.header() },
+        headers: { 'Content-Type': 'application/json', ...jar.headers() },
         body: JSON.stringify({
           items: [{ slug: 'variant-book', qty: 2, childName: 'Maya', childAge: 6, photoKey }],
           fullName: 'J', email: 'j@example.com', address: 'a', city: 'c', country: 'X',
@@ -175,7 +175,7 @@ describe('D-08 first-class cover/format variants', () => {
       '/api/v1/orders',
       {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Cookie: jar.header() },
+        headers: { 'Content-Type': 'application/json', ...jar.headers() },
         body: JSON.stringify({
           items: [{ slug: 'variant-book', qty: 1, coverType: 'diamond', childName: 'Maya', childAge: 6, photoKey, unitPrice: 0.01 }],
           fullName: 'J', email: 'j@example.com', address: 'a', city: 'c', country: 'X',
@@ -213,7 +213,7 @@ describe('D-08 first-class cover/format variants', () => {
       '/api/v1/orders',
       {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Cookie: jar.header() },
+        headers: { 'Content-Type': 'application/json', ...jar.headers() },
         body: JSON.stringify({
           items: [{ slug: 'variant-book', qty: 1, coverType: 'softcover', childName: 'Maya', childAge: 6, photoKey }],
           fullName: 'J', email: 'j@example.com', address: 'a', city: 'c', country: 'X',

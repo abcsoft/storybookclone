@@ -21,7 +21,7 @@ async function registerAndLogin(email: string): Promise<CookieJar> {
 }
 
 async function createBook(jar: CookieJar, slug: string) {
-  const res = await app.request('/api/v1/user-books', { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: jar.header() }, body: JSON.stringify({ productSlug: slug }) }, env)
+  const res = await app.request('/api/v1/user-books', { method: 'POST', headers: { 'Content-Type': 'application/json', ...jar.headers() }, body: JSON.stringify({ productSlug: slug }) }, env)
   jar.observe(res)
   return res.json()
 }
@@ -30,7 +30,7 @@ async function initiateAndComplete(jar: CookieJar, faces = 1) {
   const bytes = withFaceCountTrailer(makeValidJpegBytes(900, 900), faces)
   const initRes = await app.request(
     '/api/v1/uploads/photo/initiate',
-    { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: jar.header() }, body: JSON.stringify({ contentType: 'image/jpeg', byteSize: bytes.byteLength }) },
+    { method: 'POST', headers: { 'Content-Type': 'application/json', ...jar.headers() }, body: JSON.stringify({ contentType: 'image/jpeg', byteSize: bytes.byteLength }) },
     env
   )
   jar.observe(initRes)
@@ -40,7 +40,7 @@ async function initiateAndComplete(jar: CookieJar, faces = 1) {
   form.append('photo', new File([bytes], 'photo.jpg', { type: 'image/jpeg' }))
   form.append('uploadId', initiated.uploadId)
   form.append('completionToken', initiated.completionToken)
-  const completeRes = await app.request('/api/v1/uploads/photo/complete', { method: 'POST', headers: { Cookie: jar.header() }, body: form }, env)
+  const completeRes = await app.request('/api/v1/uploads/photo/complete', { method: 'POST', headers: { ...jar.headers() }, body: form }, env)
   jar.observe(completeRes)
   expect(completeRes.status).toBe(200)
   return initiated.uploadId
@@ -54,7 +54,7 @@ describe('personalization routes — guest prospect lifecycle', () => {
     expect(created.state).toBe('draft')
     expect(jar.header()).toMatch(/ww_prospect=/)
 
-    const getRes = await app.request(`/api/v1/user-books/${created.id}`, { headers: { Cookie: jar.header() } }, env)
+    const getRes = await app.request(`/api/v1/user-books/${created.id}`, { headers: { ...jar.headers() } }, env)
     expect(getRes.status).toBe(200)
   })
 
@@ -64,7 +64,7 @@ describe('personalization routes — guest prospect lifecycle', () => {
     const created = await createBook(jarA, 'http-book')
 
     const jarB = new CookieJar()
-    const res = await app.request(`/api/v1/user-books/${created.id}`, { headers: { Cookie: jarB.header() } }, env)
+    const res = await app.request(`/api/v1/user-books/${created.id}`, { headers: { ...jarB.headers() } }, env)
     expect(res.status).toBe(404)
   })
 
@@ -88,7 +88,7 @@ describe('personalization routes — guest prospect lifecycle', () => {
     const id = decodeURIComponent(raw).split('.')[0]
     await env.DB.prepare('UPDATE prospects SET expires_at = ? WHERE id = ?').bind(Math.floor(Date.now() / 1000) - 10, id).run()
 
-    const res = await app.request(`/api/v1/user-books/${created.id}`, { headers: { Cookie: jarA.header() } }, env)
+    const res = await app.request(`/api/v1/user-books/${created.id}`, { headers: { ...jarA.headers() } }, env)
     expect(res.status).toBe(404)
   })
 
@@ -96,7 +96,7 @@ describe('personalization routes — guest prospect lifecycle', () => {
     await seedProduct()
     const jar = await registerAndLogin(`ub-user-${Date.now()}@example.com`)
     const created = await createBook(jar, 'http-book')
-    const res = await app.request(`/api/v1/user-books/${created.id}`, { headers: { Cookie: jar.header() } }, env)
+    const res = await app.request(`/api/v1/user-books/${created.id}`, { headers: { ...jar.headers() } }, env)
     expect(res.status).toBe(200)
   })
 })
@@ -110,20 +110,20 @@ describe('personalization routes — full HTTP flow: upload -> analysis -> perso
 
     const patchRes = await app.request(
       `/api/v1/user-books/${created.id}/personalization`,
-      { method: 'PATCH', headers: { 'Content-Type': 'application/json', Cookie: jar.header() }, body: JSON.stringify({ childName: 'Kiddo', childAge: 6, languageCode: 'en', photoUploadKey: uploadId }) },
+      { method: 'PATCH', headers: { 'Content-Type': 'application/json', ...jar.headers() }, body: JSON.stringify({ childName: 'Kiddo', childAge: 6, languageCode: 'en', photoUploadKey: uploadId }) },
       env
     )
     expect(patchRes.status).toBe(200)
     expect((await patchRes.json()).state).toBe('awaiting_photo_analysis')
 
-    const analysisRes = await app.request(`/api/v1/uploads/${encodeURIComponent(uploadId)}/analysis`, { headers: { Cookie: jar.header() } }, env)
+    const analysisRes = await app.request(`/api/v1/uploads/${encodeURIComponent(uploadId)}/analysis`, { headers: { ...jar.headers() } }, env)
     expect(analysisRes.status).toBe(200)
     const analysis = await analysisRes.json()
     expect(analysis.status).toBe('complete')
     expect(analysis.faces.length).toBe(1)
     expect(analysis.faceSelectionRequired).toBe(false)
 
-    const bookRes = await app.request(`/api/v1/user-books/${created.id}`, { headers: { Cookie: jar.header() } }, env)
+    const bookRes = await app.request(`/api/v1/user-books/${created.id}`, { headers: { ...jar.headers() } }, env)
     expect((await bookRes.json()).state).toBe('ready_to_generate')
   })
 
@@ -135,26 +135,26 @@ describe('personalization routes — full HTTP flow: upload -> analysis -> perso
 
     await app.request(
       `/api/v1/user-books/${created.id}/personalization`,
-      { method: 'PATCH', headers: { 'Content-Type': 'application/json', Cookie: jar.header() }, body: JSON.stringify({ childName: 'Kiddo', childAge: 6, languageCode: 'en', photoUploadKey: uploadId }) },
+      { method: 'PATCH', headers: { 'Content-Type': 'application/json', ...jar.headers() }, body: JSON.stringify({ childName: 'Kiddo', childAge: 6, languageCode: 'en', photoUploadKey: uploadId }) },
       env
     )
-    const analysisRes = await app.request(`/api/v1/uploads/${encodeURIComponent(uploadId)}/analysis`, { headers: { Cookie: jar.header() } }, env)
+    const analysisRes = await app.request(`/api/v1/uploads/${encodeURIComponent(uploadId)}/analysis`, { headers: { ...jar.headers() } }, env)
     const analysis = await analysisRes.json()
     expect(analysis.faces.length).toBe(3)
     expect(analysis.faceSelectionRequired).toBe(true)
 
-    let bookRes = await app.request(`/api/v1/user-books/${created.id}`, { headers: { Cookie: jar.header() } }, env)
+    let bookRes = await app.request(`/api/v1/user-books/${created.id}`, { headers: { ...jar.headers() } }, env)
     expect((await bookRes.json()).state).toBe('awaiting_face_selection')
 
     const selectRes = await app.request(
       `/api/v1/uploads/${encodeURIComponent(uploadId)}/select-face`,
-      { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: jar.header() }, body: JSON.stringify({ userBookId: created.id, faceId: analysis.faces[1].id }) },
+      { method: 'POST', headers: { 'Content-Type': 'application/json', ...jar.headers() }, body: JSON.stringify({ userBookId: created.id, faceId: analysis.faces[1].id }) },
       env
     )
     expect(selectRes.status).toBe(200)
     expect((await selectRes.json()).state).toBe('ready_to_generate')
 
-    bookRes = await app.request(`/api/v1/user-books/${created.id}`, { headers: { Cookie: jar.header() } }, env)
+    bookRes = await app.request(`/api/v1/user-books/${created.id}`, { headers: { ...jar.headers() } }, env)
     expect((await bookRes.json()).selectedFaceId).toBe(analysis.faces[1].id)
   })
 
@@ -165,13 +165,13 @@ describe('personalization routes — full HTTP flow: upload -> analysis -> perso
     const uploadId = await initiateAndComplete(jar, 0)
     await app.request(
       `/api/v1/user-books/${created.id}/personalization`,
-      { method: 'PATCH', headers: { 'Content-Type': 'application/json', Cookie: jar.header() }, body: JSON.stringify({ childName: 'Kiddo', childAge: 6, languageCode: 'en', photoUploadKey: uploadId }) },
+      { method: 'PATCH', headers: { 'Content-Type': 'application/json', ...jar.headers() }, body: JSON.stringify({ childName: 'Kiddo', childAge: 6, languageCode: 'en', photoUploadKey: uploadId }) },
       env
     )
-    const analysisRes = await app.request(`/api/v1/uploads/${encodeURIComponent(uploadId)}/analysis`, { headers: { Cookie: jar.header() } }, env)
+    const analysisRes = await app.request(`/api/v1/uploads/${encodeURIComponent(uploadId)}/analysis`, { headers: { ...jar.headers() } }, env)
     const analysis = await analysisRes.json()
     expect(analysis.faces.length).toBe(0)
-    const bookRes = await app.request(`/api/v1/user-books/${created.id}`, { headers: { Cookie: jar.header() } }, env)
+    const bookRes = await app.request(`/api/v1/user-books/${created.id}`, { headers: { ...jar.headers() } }, env)
     expect((await bookRes.json()).state).toBe('awaiting_photo_analysis') // still blocked, honestly
   })
 
@@ -182,16 +182,16 @@ describe('personalization routes — full HTTP flow: upload -> analysis -> perso
     const uploadIdA = await initiateAndComplete(jarA, 2)
     await app.request(
       `/api/v1/user-books/${createdA.id}/personalization`,
-      { method: 'PATCH', headers: { 'Content-Type': 'application/json', Cookie: jarA.header() }, body: JSON.stringify({ childName: 'Kiddo', childAge: 6, languageCode: 'en', photoUploadKey: uploadIdA }) },
+      { method: 'PATCH', headers: { 'Content-Type': 'application/json', ...jarA.headers() }, body: JSON.stringify({ childName: 'Kiddo', childAge: 6, languageCode: 'en', photoUploadKey: uploadIdA }) },
       env
     )
-    const analysisA = await (await app.request(`/api/v1/uploads/${encodeURIComponent(uploadIdA)}/analysis`, { headers: { Cookie: jarA.header() } }, env)).json()
+    const analysisA = await (await app.request(`/api/v1/uploads/${encodeURIComponent(uploadIdA)}/analysis`, { headers: { ...jarA.headers() } }, env)).json()
 
     const jarB = new CookieJar()
     await createBook(jarB, 'http-book')
     const res = await app.request(
       `/api/v1/uploads/${encodeURIComponent(uploadIdA)}/select-face`,
-      { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: jarB.header() }, body: JSON.stringify({ userBookId: createdA.id, faceId: analysisA.faces[0].id }) },
+      { method: 'POST', headers: { 'Content-Type': 'application/json', ...jarB.headers() }, body: JSON.stringify({ userBookId: createdA.id, faceId: analysisA.faces[0].id }) },
       env
     )
     expect(res.status).toBe(404)
@@ -224,7 +224,7 @@ describe('canonical JSON error shape', () => {
     const created = await createBook(jar, 'http-book')
     const res = await app.request(
       `/api/v1/user-books/${created.id}/personalization`,
-      { method: 'PATCH', headers: { 'Content-Type': 'application/json', Cookie: jar.header() }, body: JSON.stringify({ childName: '', languageCode: 'en' }) },
+      { method: 'PATCH', headers: { 'Content-Type': 'application/json', ...jar.headers() }, body: JSON.stringify({ childName: '', languageCode: 'en' }) },
       env
     )
     expect(res.status).toBe(400)

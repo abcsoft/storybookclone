@@ -3,10 +3,25 @@
 // checkout.js/my-books.js/reader.js never duplicate that logic. See
 // docs/API_V1.md for the full contract each of these calls.
 
+// The double-submit CSRF token (S-01). It is mirrored from its own
+// non-HttpOnly cookie into a header on every mutation; the server rejects the
+// request unless the two match and the request is same-origin.
+function csrfToken() {
+  const match = document.cookie.match(/(?:^|;\s*)ww_csrf=([^;]+)/)
+  return match ? decodeURIComponent(match[1]) : ''
+}
+
+function withCsrf(opts) {
+  const headers = Object.assign({}, opts.headers)
+  const token = csrfToken()
+  if (token) headers['X-CSRF-Token'] = token
+  return Object.assign({}, opts, { headers })
+}
+
 async function request(path, opts) {
   let res
   try {
-    res = await fetch(path, opts)
+    res = await fetch(path, withCsrf(opts))
   } catch {
     return { ok: false, status: 0, error: 'Network error — please check your connection and try again.' }
   }
