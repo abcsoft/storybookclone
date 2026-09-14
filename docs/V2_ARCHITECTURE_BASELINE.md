@@ -150,18 +150,21 @@ Every transition is a compare-and-swap (`WHERE id=? AND version=?`) that bumps
 
 `expired`/`cancelled` are terminal (further transitions rejected).
 
-### 7.2 Order (current — string status, no transition service)
+### 7.2 Order (Phase 1: validated enum + transition service + history)
 
 ```text
 created as: pending_preview
-admin may set ANY status string (POST /admin/orders/:id/status) — defect S-07
-order_items.preview_status: pending | preview_ready | changes_requested | approved (free string too)
+POST /admin/orders/:id/status  -> transitionOrderStatus()  (enum-checked, reason-guarded, audited)
+POST /admin/items/:id/preview  -> transitionPreviewStatus() (enum-checked, reason-guarded)
+every accepted transition writes an append-only order_state_events row (migration 0015)
+an invalid target state is rejected with ?error=... and the stored status is unchanged
 ```
 
 The target order machine (`draft → awaiting_payment → paid → awaiting_preview →
 preview_ready → approved → production_queued → printing → shipped → delivered`,
-plus payment/refund/fulfilment companions) does **not** exist; there is no
-payment step at order creation (defect T-04 / `COM-11`).
+plus payment/refund/fulfilment companions) is still a Phase 4/5 concern; there
+is no payment step at order creation (T-04 / `COM-11`). Phase 1 closed S-07: the
+admin can no longer write an arbitrary status string.
 
 ## 8. Provider boundaries (generation / payment / email / PDF / fulfilment)
 
@@ -209,7 +212,18 @@ honest in earlier phases and must stay honest: `POST /api/generate-book` (always
 Consequence: retention has a retryable tombstone design and tests, but it never
 runs in production (`S-11`, `PLT-10`).
 
-## 11. False or non-operational UI claims (must be corrected, not repeated)
+**Phase 1 status (S-11):** deliberately left unscheduled, and documented as such
+here and in `README.md` ("Known limitations") and
+`docs/V2_PHASE1_COMPLETION_REPORT.md` §9. No page or documentation claims a
+retention/cleanup schedule runs. Deploying the Cron binding, observing real
+scheduled executions and proving deletion outcomes is Phase 8 (`PLT-10`).
+
+## 11. False or non-operational UI claims (corrected in Phase 1, regression-locked)
+
+Every row below was removed or made truthful in Phase 1 and is asserted absent
+on the real rendered routes by `test/unit/phase1-truthful-claims.test.ts`
+(unit) and the `disabled-claims` browser journey (`scripts/test-e2e.mjs`), so
+the claim cannot come back with a refactor.
 
 | Claim / surface | Reality | ID |
 |---|---|---|
@@ -224,10 +238,18 @@ runs in production (`S-11`, `PLT-10`).
 | Admin "Test AI connection" / AI settings | No generation pipeline; never actually tested | T-01/GEN |
 | Reader/PDP/cart cover + price | No first-class variant; can disagree | D-08 |
 
-Reference-derived assets that must be replaced before launch (owner phase 2):
-`public/static/img/wonderwraps_preview_ref.jpg`, `reference_ui.jpg`,
-`cart_ref_ui.jpg`, `preview-book-cover-ref.webp`, `preview-book-spread-ref.webp`,
-`public/static/media/*.svg` (broadcast logos), `public/static/reviews/*.svg`.
+Reference-derived assets **deleted in Phase 1**:
+`wonderwraps_preview_ref.jpg`, `reference_ui.jpg`, `cart_ref_ui.jpg`,
+`preview-book-cover-ref.webp`, `preview-book-spread-ref.webp`,
+`step-book-preview.{png,webp}` — plus six real-person photographs that were
+tracked and used as UI artwork (`avatar-sample.*`, `step-child-redhair.*`,
+`step-delivered.*`), replaced by `photo-placeholder.svg`,
+`placeholder-cover.svg` and `placeholder-spread.svg`.
+
+Still reference-derived (owner phase 2, CMS/content replacement): the catalog
+`cover-*.webp` product art and the `WonderWraps` name/logo. The real-person
+photographs also remain in **git history** — removing them from history is an
+owner decision (no history rewrite was authorised in Phase 1).
 
 ## 12. Security posture summary
 
@@ -238,10 +260,37 @@ limiting; prospect/user ownership separation; immutable revisions/approvals/
 events; compare-and-swap user-book transitions; byte-signature photo validation;
 retention tombstones; fail-closed email/face-analysis defaults.
 
-Open (owner phase 1 unless noted): no systematic CSRF/Origin middleware (S-01);
-session/upload cookies not guaranteed `Secure` in production (S-02); GET logout
-mutates state (S-03); broad default `/api/*` CORS (S-04); incomplete security
-headers (S-05); incomplete rate limits (S-06); arbitrary admin status writes
-(S-07); admin single-role model and revenue overstatement (S-08/S-10); no
-deployed retention Cron (S-11); D1 dump must never ship (S-12); placeholder
-reference content (S-13); placeholder legal pages (S-14).
+Closed in Phase 1 — the central policy now lives in `src/security.ts` and is
+applied to every request, in this order:
+
+```text
+app.use('/api/*', corsGuard())        # explicit allowlist only; never reflects an unknown Origin
+app.use('*',      securityHeaders())  # CSP / HSTS(HTTPS only) / nosniff / frame / referrer /
+                                      # permissions / private-page no-store (wraps everything)
+app.use('*',      DB binding guard)   # 500 with an actionable message if DB is unbound
+app.use('*',      ensureSchemaReady)  # migrations are the only schema authority
+app.use('*',      attachUser)         # session cookie -> c.user
+app.use('*',      csrfGuard())        # Origin/Referer + double-submit token for EVERY mutation
+app.use('*',      CSRF form injection)# hidden token into every server-rendered POST form
+app.use('*',      requestId)          # per-request correlation id (never module state)
+```
+
+* **S-01** CSRF/Origin for every cookie-authenticated mutation (HTML forms and
+  JSON APIs); tokens are secret-bound and rotate with the session.
+* **S-02** one environment-aware cookie policy (HttpOnly + SameSite always,
+  `Secure` everywhere except an explicitly-configured development environment);
+  session rotation destroys the previous session id.
+* **S-03** POST-only logout (a real storefront control renders it).
+* **S-04** no default CORS grant; never reflects an arbitrary Origin.
+* **S-05** central security headers, private/token-bearing pages `no-store`.
+* **S-06** durable atomic rate limits on login, register, admin login, contact,
+  newsletter, upload initiate/complete, draft creation and order creation, keyed
+  by action + coarse client identity and stored only as hashes.
+* **S-07/S-10** validated order/preview transitions with append-only history;
+  the dashboard reports order **value**, not revenue.
+
+Still open (owner phase): S-08/S-09 RBAC, high-risk re-auth and the full audit
+UI (Phase 6); ledger-backed revenue (Phase 4); deployed retention Cron (Phase 8);
+reference catalog artwork/branding (Phase 2); legal content review (owner +
+Phase 2/8); the removed personal photographs remaining in git history (owner
+decision).

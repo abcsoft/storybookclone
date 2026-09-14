@@ -43,7 +43,7 @@ API contract: `docs/API_V1.md`'s "Phase 2" section. In short:
 - **Home**: `/` · **Books**: `/books` (`?gender=girl|boy`, `?career=1`, `?q=`) · **Ages**: `/books/age/2-4|4-6|6-8`
 - **Product**: `/books/:slug` (books and legacy sticker URLs), `/stickers/:slug` · **Stickers**: `/stickers`
 - **Commerce**: `/cart`, `/checkout`, `/order-success?id=`
-- **Account**: `/login`, `/register`, `/forgot-password`, `/logout`, `/my-books`
+- **Account**: `/login`, `/register`, `/forgot-password`, `POST /logout` (GET is a no-op redirect — S-03), `/my-books`
 - **Help/Legal/Blog**: `/faqs`, `/support`, `/contact`, `/support/privacy-policy`, `/support/terms-and-conditions`, `/blog`, `/blog/:slug`
 
 ### Admin panel — `/admin` (role-gated)
@@ -137,15 +137,52 @@ This writes directly to your local `.wrangler` D1 state only (`--remote` is refu
 | Command | What it does |
 |---|---|
 | `npm run typecheck` | `tsc --noEmit` — must report zero errors |
-| `npm test` | Unit tests (Vitest): password hashing, authorization separation, cart migration/validation, upload byte-signature validation, order idempotency/atomicity, database-enforced (trigger-level) upload-claim ownership, versioned/expiring/nonce-bearing guest-token tampering and rotation (fake-clock boundaries), PDF-request capability expiry/ownership/rate-limiting, password-reset tokens, and more — see `test/unit/` |
+| `npm test` | Unit tests (Vitest, **343 across 19 files**): password hashing, authorization separation, cart migration/validation, upload byte-signature validation (including revoked/expired/consumed denial), order idempotency/atomicity, database-enforced (trigger-level) upload-claim ownership, versioned/expiring/nonce-bearing guest-token tampering and rotation (fake-clock boundaries), PDF-request capability expiry/ownership/rate-limiting, password-reset tokens, the **central security controls** (CSRF/Origin, cookie policy per environment, session rotation, POST-only logout, CORS deny/allowlist, security headers, durable rate limits — `test/unit/phase1-security.test.ts`), the **truthful-claims guards** for every rendered public route (T-01…T-08, S-12…S-14 — `test/unit/phase1-truthful-claims.test.ts`), and more — see `test/unit/` |
 | `npm run test:integration` | Migration smoke test (Node's built-in SQLite) — applies every file in `migrations/` to an empty DB, from the accepted Phase 0 baseline, from the accepted Phase 1 (`0009`) baseline, with pre-existing rows (a legacy non-empty `ai_settings.api_key`, a pre-0006 `upload_claims` row, and — Phase 2 — pre-existing users/orders/uploads surviving the Phase 2 upgrade untouched) present before the upgrade, and repeated-apply behavior — asserting every expected table/column/trigger exists and legacy data is handled correctly |
-| `npm run test:e2e` | Real, separate browser journeys (Chromium via Playwright, real local `wrangler dev` + local D1/R2, `FACE_ANALYSIS_PROVIDER=deterministic-fake`): a **guest** checkout (never logs in — Phase 2 user_book/upload/personalization flow, verifies `user_id IS NULL`, the exact `order_items.user_book_id`/revision link, the signed guest link stays valid on reopen, tampered/cross-order/missing token denial, and the full order-success → reader → PDF-request flow with the guest capability token captured from a URL fragment, scrubbed from the address bar, never in localStorage, and its own missing/tampered/another-request/expired-token denial), an **authenticated** checkout (same Phase 2 flow, My Books, exact user_book/revision link, cross-customer denial, PDF request, forgot/reset password), a **browser-level double-submission race** (two genuinely concurrent same-Idempotency-Key requests from the page's own JS, proving exactly one order/claim results, plus a same-key-changed-payload request proving `409`), and a **deterministic multi-face** scenario (a 3-face fixture photo forces an explicit face-selection UI before `ready_to_generate`, verified against D1) |
+| `npm run test:e2e` | Real, separate browser journeys (Chromium via Playwright, real local `wrangler dev` + local D1/R2, `FACE_ANALYSIS_PROVIDER=deterministic-fake`, plus the app's own one-time admin bootstrap for the admin journey): a **guest** checkout (never logs in — Phase 2 user_book/upload/personalization flow, verifies `user_id IS NULL`, the exact `order_items.user_book_id`/revision link, the signed guest link stays valid on reopen, tampered/cross-order/missing token denial, and the full order-success → reader → PDF-request flow with the guest capability token captured from a URL fragment, scrubbed from the address bar, never in localStorage, and its own missing/tampered/another-request/expired-token denial), an **authenticated** checkout (same Phase 2 flow, My Books, exact user_book/revision link, cross-customer denial, PDF request, forgot/reset password), a **browser-level double-submission race** (two genuinely concurrent same-Idempotency-Key requests from the page's own JS, proving exactly one order/claim results, plus a same-key-changed-payload request proving `409`), a **deterministic multi-face** scenario (a 3-face fixture photo forces an explicit face-selection UI before `ready_to_generate`, verified against D1), **upload-attack denials** (incomplete/expired/revoked/already-claimed/wrong-owner uploads are all refused with a clear 400 and write no order), a **cart reload** (the persisted item keeps a working, authorized thumbnail and never stores a `blob:`/`data:` URL), **cover agreement** (the selected cover and its minor-unit price agree across PDP → reader → cart → server quote → order snapshot), **CSRF** (valid same-origin mutation passes; missing/invalid/foreign-origin all fail), **admin** (related-products picker renders/saves/reloads, an invalid status transition is refused without writing, two concurrent editor renders keep their own product context), and **disabled-capability truthfulness** (no payment/email/PDF/shipping/refund/tracking claim is presented as operational) |
 | `npm run secrets:scan` | Pattern-based scan of tracked files for hash/key/token-shaped secrets |
 | `npm run check` | Runs all of the above plus `npm run build` — the CI-equivalent local gate |
 | `node scripts/audit-frontend.mjs <label>` | Live-browser visual/functional audit of every public + admin route at desktop and mobile widths — see `docs/FRONTEND_AUDIT.md` |
 
 ## Known baseline limitations
-This repository is being brought to production readiness in phases; see `STORYBOOKCLONE_COMPLETION_CODING_PACK.md` for the full plan. As of the Phase 2 (`feat/personalization-domain`) branch:
+This repository is being brought to production readiness in phases; see
+`STORYBOOKCLONE_COMPLETE_CODING_PACK_V2.md` for the authoritative plan and
+`docs/V2_PHASE1_COMPLETION_REPORT.md` for the Phase 1 (critical correctness,
+security and truth recovery) result. As of the Phase 1
+(`fix/phase2-critical-recovery`) branch:
+
+- **Security controls are centralised** in `src/security.ts` and applied to
+  every request: same-origin/CSRF enforcement for all cookie-authenticated
+  mutations, an environment-aware cookie policy (Secure everywhere except an
+  explicitly-configured development environment), POST-only logout, allowlist-only
+  CORS, security headers, and durable atomic rate limits. See
+  `docs/API_V1.md` "Security requirements for callers".
+- **Retention is NOT scheduled (S-11).** `src/personalization/retention.ts`
+  implements the sweep and it is unit-tested, but there is **no Cron trigger**
+  in `wrangler.jsonc` and no `scheduled` export, so nothing runs automatically in
+  any environment. Uploaded data lives until an operator acts. Deploying and
+  observing the schedule is Phase 8.
+- **Disabled capabilities are disabled truthfully**, never simulated: no real
+  payment (checkout records `test-manual` orders and says so, and no card/PayPal
+  marks are rendered), no email delivery (the dev console adapter prints reset
+  links; production fails closed — no outbox exists), no PDF generation
+  (`POST /api/v1/books/pdf-requests` records interest with status
+  `"unavailable"` and promises nothing), no shipping/refunds/order tracking, and
+  no AI generation (`POST /api/generate-book` → honest `501`).
+- **The legal pages are drafts** with a visible "requires review by the owner
+  and legal counsel" banner (`S-14`). Do not treat them as final terms.
+- **Reference content**: the reference-brand screenshots, product mockups and
+  the six tracked real-person photographs (two of them children) used as UI
+  artwork have been deleted and replaced with the app's own neutral SVG
+  placeholders (**S-12/S-13**). The catalog `cover-*.webp` artwork and the
+  `WonderWraps` name/logo are still reference-derived and are replaced by the
+  Phase 2 CMS/branding work. **The removed photographs remain in git history** —
+  removing them from history requires an owner decision (no history rewrite was
+  performed).
+- **`npm audit` reports 3 high** in the dev-only `sharp ← miniflare ← wrangler`
+  chain (`npm audit --omit=dev` is clean); resolving it needs a pre-release
+  `wrangler` bump.
+
 - The browse → personalize → photo upload → cart → server quote → checkout → order → My Books → reader/PDF-request journey works end to end (see `docs/API_V1.md`), and personalization now lives in a durable, versioned **user-book domain** (`docs/PHASE_2_PERSONALIZATION_DOMAIN.md`) instead of only on the `orders`/`order_items` schema — but generation/payment/email/PDF/fulfillment remain unimplemented (Phases 3–6, see below).
 - The admin panel (dashboard, orders, products, PDP editor, discounts, users, messages, AI settings) renders correctly and is reachable via the bootstrap above (`docs/FRONTEND_AUDIT.md`), but is not yet the complete operational control plane described in the completion pack's Phase 6 (granular roles, audit log, generation/refund/fulfillment operator views).
 - AI book generation is genuinely not implemented, not simulated: `POST /api/generate-book` returns an honest `501`, `/api/admin/test-ai-connection` makes zero outbound requests for any provider, and no provider API key is ever stored in D1 (`ai_settings.api_key` is always empty — a real key can only ever live in the `AI_PROVIDER_API_KEY` environment secret, unused by any code path yet). Face *detection* (Phase 2, distinct from book generation) is the same pattern: `src/personalization/face-analysis.ts`'s production default is disabled/fail-closed, and only a deterministic offline fixture exists for tests — no real vision provider is called anywhere. See `docs/FRONTEND_AUDIT.md`'s third corrective round.
@@ -155,7 +192,8 @@ This repository is being brought to production readiness in phases; see `STORYBO
 - **Platform**: Cloudflare Pages + D1 + R2
 - **Local**: `npm install` → `npm run db:migrate:local` → `npx wrangler d1 execute webapp-production --local --file=./seed.sql` → `npx wrangler d1 execute webapp-production --local --file=./seed_pdp.sql` → `npm run admin:bootstrap -- --email you@example.com --password '...'` → `npm run build` → `pm2 start ecosystem.config.cjs` (or `npx wrangler pages dev dist --d1=webapp-production --r2=webapp-photos --local --port 3000`)
 - **Reset local DB**: `npm run db:reset`
-- **Before any production deploy**: run `npm run check`, review `docs/SECURITY_INCIDENT_REMEDIATION.md`, and configure real (non-placeholder) D1/R2 bindings in `wrangler.jsonc`.
-- **Last Updated**: 2026-09-14
+- **Before any production deploy**: run `npm run check`, review `docs/SECURITY_INCIDENT_REMEDIATION.md`, configure real (non-placeholder) D1/R2 bindings in `wrangler.jsonc`, set `GUEST_ORDER_TOKEN_SECRET` (and rotate `GUEST_ORDER_TOKEN_SECRET_PREV` if applicable), leave `ENVIRONMENT` unset (absence means production rules apply), and have the legal pages reviewed and replaced (`S-14`).
+- **No scheduled work is deployed**: `wrangler.jsonc` has no `triggers.crons`, so the retention sweep never runs automatically (`S-11` — Phase 8).
+- **Last Updated**: 2026-09-15 (Phase 1)
 
 # storybookclone

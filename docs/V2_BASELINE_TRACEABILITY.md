@@ -27,6 +27,14 @@
 | Runtime | Hono + TypeScript on Cloudflare Pages/Workers; D1; R2 binding `PHOTOS`; Vite build |
 | E2E at start | BLOCKED (`db:reset` `rm -rf` failed on locked D1 state) |
 | E2E after Phase 0 | **PASS** (real Chromium, isolated port, fingerprint-checked) |
+| **Phase 1 branch** | `fix/phase2-critical-recovery` |
+| **Phase 1 start / final HEAD** | `e9640b3` → see `docs/V2_PHASE1_COMPLETION_REPORT.md` §11 |
+| **Migrations after Phase 1** | `0001`–`0017` (`0015` integrity/security, `0016` variants+money, `0017` truthful PDP banner) |
+| **Unit tests after Phase 1** | **343/343 across 19 files** |
+| **Integration after Phase 1** | 9/9 migration scenarios OK |
+| **E2E after Phase 1** | **PASS** — 10 journey groups (guest, authenticated, double-submit, multi-face, upload-attack, cart-reload, cover-agreement, CSRF, admin, disabled-claims) |
+| **Audit after Phase 1** | 0 findings (desktop 1280 + mobile 390, public + admin) |
+| **Build after Phase 1** | `_worker.js` 283.07 kB / gzip 84.53 kB |
 
 ## 2. Current architecture map
 
@@ -306,19 +314,78 @@ not invalidate the evidence; the line numbers are the Phase-0 baseline
 | S-10 | dashboard metric | `src/index.tsx:926-927` (`SUM(total) … status NOT IN ('cancelled')`), label `src/admin.ts:82` (`'Revenue (paid orders)'`) | every non-cancelled order counted as revenue |
 | S-11 | `scheduledRetentionHandler()` | `src/personalization/retention.ts:173`; `wrangler.jsonc` (no `triggers.crons`, no `scheduled` export) | retention sweep never deployed |
 
+### 6.6 Phase 1 closure (authoritative status for the C/D/T/S IDs in scope)
+
+Scope per V2 pack §12: C-01…C-07, D-01…D-09, T-01…T-08, S-01…S-16
+(prerequisite level). `proof` names the committed file that carries the
+behaviour; `test/browser proof` names the gate that demonstrates it. The full
+report is `docs/V2_PHASE1_COMPLETION_REPORT.md`.
+
+| ID | Status after Phase 1 | Code proof | Test / browser proof | Remaining limitation (owner phase) |
+|---|---|---|---|---|
+| C-01 | **closed** (truthful boundary; real provider Phase 3) | `src/personalization/face-analysis.ts` (configurable adapter; disabled default fails closed) | `test/unit/phase1-personalization.test.ts`; e2e multi-face (deterministic fake only) | No production vision provider is configured (GEN-03, Phase 3) |
+| C-02 | **closed** | `src/personalization/state-machine.ts`, `public/static/pdp.js` | unit blocked/manual-review; e2e multi-face + guest | — |
+| C-03 | **closed** | `src/orders.ts` | `test/unit/orders.test.ts`; e2e guest + auth checkout | — |
+| C-04 | **closed** | `src/personalization/uploads.ts::getOwnedCompletedUpload` | `test/unit/phase1-personalization.test.ts` | — |
+| C-05 | **closed** | reader route + `src/pages_pdp.ts` + client JS; offending artwork deleted | unit; e2e reader | — |
+| C-06 | **closed** | `src/admin_pdp.ts` (awaited, server-rendered) | e2e admin.2/admin.3 | — |
+| C-07 | **closed** | `src/admin_pdp.ts`, `src/index.tsx` | e2e admin.5 (concurrent renders) | — |
+| D-01 | **closed** | `src/personalization/user-books.ts` shared limits | unit boundaries | — |
+| D-02 | **closed** | `src/photo-policy.ts` single source | unit truthful-claims (UI policy == enforced policy) | — |
+| D-03 | **closed** | `patchPersonalization` age band == message | unit boundaries | — |
+| D-04 | **closed** | `src/index.tsx` + `pdp.js` stable idempotency key | unit; e2e reload | — |
+| D-05 | **closed** | `public/static/cart.js`/`app.js` | e2e cart-reload (no blob:/data:, authorized thumbnail loads) | — |
+| D-06 | **closed** | owned `userBookId` cross-sell reference | unit foreign-ref denial | — |
+| D-07 | **closed** | `PATCH /api/v1/user-books/:id/personalization` (`expectedVersion`, immutable revisions) | unit + e2e reader edit | — |
+| D-08 | **closed** | `product_variants` (0016) across PDP/reader/cart/quote/order snapshot | `test/unit/phase1-variants-money.test.ts`; e2e cover-agreement | — |
+| D-09 | **closed** | integer minor units (0016) | unit + integration backfill | Multi-currency ISO handling beyond USD (Phase 4) |
+| D-10 | **deferred** | — | — | Catalog/scene/template content authoring (Phase 2/3) |
+| T-01 | **closed** | order-success copy | unit truthful-claims; e2e admin/disabled-claims | Durable outbox itself is Phase 3/5 (PLT-05) |
+| T-02 | **closed** (claim disabled truthfully) | order-success guest copy | unit truthful-claims | Verified guest claim is Phase 5 (CUS-04) |
+| T-03 | **closed** (states unavailable) | PDF API `status: 'unavailable'`; reader capture copy | unit truthful-claims + http-routes; e2e | Real PDF jobs are Phase 7 (FUL-06) |
+| T-04 | **closed** | footer/PDP/FAQ/checkout; server still requires a test payment method | unit truthful-claims; e2e disabled-claims | Real payment methods are Phase 4 (COM-07) |
+| T-05 | **closed** | checkout/FAQ/support/legal/my-books copy | unit truthful-claims; e2e disabled-claims | Shipping/refunds/tracking are Phase 4/7 |
+| T-06 | **closed** | rendered routes render no ratings/counts/press/experts/statistics; press-logo fallback emptied | unit truthful-claims (per route); e2e disabled-claims | Reviewed-content CMS is Phase 2 (ADM-15) |
+| T-07 | **closed** | `BLOG_POSTS` registry; unknown slug/product → real 404 status | unit truthful-claims; e2e | Record-backed blog CMS is Phase 2 (SF-12) |
+| T-08 | **closed** | contact/newsletter honest failure + error UI | unit truthful-claims (forced persistence failure) | Durable outbox/notifications Phase 3/5 |
+| S-01 | **closed** | `src/security.ts::csrfGuard` (app-wide), hidden-field injection, `api.js` header mirror | 8 unit CSRF tests; e2e CSRF journey | Nonce/hash CSP is Phase 8 (PLT-01) |
+| S-02 | **closed** | `secureCookieOptions` + `rotateSessionOnLogin` | unit (flags per env, old session destroyed); e2e | — |
+| S-03 | **closed** | POST-only logout + storefront header control | unit; e2e logout helper | — |
+| S-04 | **closed** | `corsGuard` allowlist-only | unit deny/allowlist/preflight | — |
+| S-05 | **closed** | `securityHeaders` | unit (public + private routes) | CSP hardening (nonces) Phase 8 |
+| S-06 | **closed** | durable limiter on login/register/admin-login/contact/newsletter/upload x2/user-book create/order create | unit (block + hashed key); e2e | Distributed edge rate limiting Phase 8 (PLT-02) |
+| S-07 | **closed** | `src/orders-status.ts` + `order_state_events` (0015) | `test/unit/phase1-admin.test.ts`; e2e admin.4 | Full order machine Phase 4 |
+| S-08 | **deferred** | single `admin` role today | — | RBAC/permission matrix Phase 6 (ADM-02) |
+| S-09 | **partial** (audit exists; re-auth deferred) | `admin_audit_events`, `recordAdminAudit` | `test/unit/phase1-admin.test.ts` | High-risk re-auth + full audit UI Phase 6 |
+| S-10 | **closed** (dashboard shows order value) | `src/index.tsx` (`SUM(total_minor)`, non-cancelled, labelled value) | `test/unit/phase1-admin.test.ts` | Ledger-backed paid/net revenue Phase 4 |
+| S-11 | **documented, not scheduled** | `src/personalization/retention.ts` exists; **no** `triggers.crons` / `scheduled` export | unit retention tests | Deployed Cron + observation Phase 8 (PLT-10) |
+| S-12 | **closed for the working tree** | real-person photos deleted; neutral placeholders; no dump/PII tracked | unit truthful-claims (files absent + unreferenced); `git ls-files` review | **History still contains the removed photos** — owner decision (rewrite vs accept) |
+| S-13 | **partial** (rendered reference assets/copy removed) | reference screenshots + reader mockups deleted; PDP banner advertises only the real discount (0017) | unit truthful-claims | Catalog artwork + brand replacement Phase 2 (SF-01) |
+| S-14 | **closed as draft (owner/legal review required)** | `legalPage` draft banner + section copy | unit truthful-claims | Jurisdiction-aware content/workflows Phase 2/8 |
+| S-15 | **closed** (Phase 0) | `scripts/secrets-scan.mjs` | `test/unit/secrets-scan.test.ts`; both scan modes pass | — |
+| S-16 | **closed** (Phase 0) | migrations are the only schema authority | `test/unit/admin-bootstrap.test.ts` | — |
+
+**Nothing in the Phase-1 range is silently open:** every ID is either closed with
+proof, closed-as-disabled truthfully, or explicitly deferred to its owner phase
+with the limitation named above.
+
 ## 7. Verification state captured in Phase 0
 
-| Command | Baseline | After Phase 0 |
-|---|---|---|
-| `npm run typecheck` | 0 errors | 0 errors |
-| `npm run test` | 204/204 (11 files) | **226/226 (13 files)** |
-| `npm run test:integration` | 8/8 migration scenarios | 8/8 (unchanged) |
-| `npm run secrets:scan` | PASS git mode only | PASS git + archive modes |
-| `npm run build` | 261.25 kB / 76.20 kB gz | 258.80 kB / 75.94 kB gz |
-| `npm run test:e2e` | **BLOCKED** (`db:reset` lock) | **PASS** (guest/auth/double-submit/multi-face) |
-| `npm run audit:frontend` | see §16 report | see §16 report |
-| `npm audit --omit=dev` | 0 vulnerabilities | 0 vulnerabilities |
-| `npm audit` | 3 high (dev: sharp←miniflare←wrangler) | 3 high (unchanged; dev-tool chain, pre-release update required) |
+| Command | Baseline | After Phase 0 | After Phase 1 |
+|---|---|---|---|
+| `npm run typecheck` | 0 errors | 0 errors | 0 errors |
+| `npm run test` | 204/204 (11 files) | 226/226 (13 files) | **343/343 (19 files)** |
+| `npm run test:integration` | 8/8 migration scenarios | 8/8 | **9/9** |
+| `npm run secrets:scan` | PASS git mode only | PASS git + archive | PASS git (176 files) + archive (177 files) |
+| `npm run build` | 261.25 kB / 76.20 kB gz | 258.80 kB / 75.94 kB gz | 283.06 kB / 84.52 kB gz |
+| `npm run test:e2e` | **BLOCKED** (`db:reset` lock) | PASS (guest/auth/double-submit/multi-face) | **PASS** (10 journey groups, above) |
+| `npm run audit:frontend` | see §16 report | see §16 report | **PASS, 0 findings** |
+| `npm audit --omit=dev` | 0 vulnerabilities | 0 vulnerabilities | 0 vulnerabilities |
+| `npm audit` | 3 high (dev: sharp←miniflare←wrangler) | 3 high (unchanged) | 3 high (unchanged; dev-tool chain only) |
+
+Phase-1 closure status per ID, with code proof, test/browser proof, remaining
+limitation and next owning phase, is recorded in §6.6 below and in the
+authoritative `docs/V2_PHASE1_COMPLETION_REPORT.md`.
 
 ## 8. Requirement traceability (no ID omitted)
 
@@ -340,7 +407,7 @@ the **current** baseline status.
 | SF-08 | missing | Collection landing routes + copy | Route + content test |
 | SF-09 | defective | `src/pages_pdp.ts` gallery/variants/reviews/FAQ/related | PDP browser test |
 | SF-10 | defective | Loading/empty/error/404 states | 404 + error-state browser test |
-| SF-11 | defective | Footer/newsletter/support links truthful | Content audit |
+| SF-11 | **partial** (Phase 1: payment/shipping/contact/newsletter copy + honest failures; T-04/T-05/T-08) | Footer/newsletter/support links truthful | Content audit; unit truthful-claims |
 | SF-12 | defective | `/blog`, `/faqs`, legal pages record-backed | Unknown-slug 404 test |
 
 ### 8.2 Personalization — `PER-01`…`PER-10`
@@ -352,11 +419,11 @@ the **current** baseline status.
 | PER-03 | existing | 2 | `GET /personalization-schema` | Unit: schema contract |
 | PER-04 | existing | 2 | `patchPersonalization` validation | Unit: field validation |
 | PER-05 | existing | 2 | two-phase upload + `validatePhotoBytes` | Unit: byte/size/dimension negatives |
-| PER-06 | defective | 3 | real adapter boundary + multi-face selection | Unit multi-face; browser selection |
+| PER-06 | **existing** (Phase 1: adapter boundary + truthful blocked/manual-review) | 3 | real adapter boundary + multi-face selection | Unit multi-face; browser selection |
 | PER-07 | existing | 2 | immutable `personalization_inputs` | Unit: new revision, old untouched |
-| PER-08 | defective | 5 | resume across refresh/login/cart | E2E resume + login continuity |
+| PER-08 | **partial** (Phase 1: refresh/reload resume + cart edit proven; full login-continuity acceptance Phase 5) | 5 | resume across refresh/login/cart | E2E resume + login continuity |
 | PER-09 | existing | 5 | consent version + retention deadline | Unit retention/consent |
-| PER-10 | defective | 2/3 | reuse via opaque ref, no raw key exposure | Unit: no `photo_key` in cart |
+| PER-10 | **existing** (Phase 1: opaque `userBookId` only; D-05/D-06) | 2/3 | reuse via opaque ref, no raw key exposure | Unit: no `photo_key` in cart |
 
 ### 8.3 Generation — `GEN-01`…`GEN-12` (owner phase 3 unless noted)
 
@@ -380,8 +447,8 @@ the **current** baseline status.
 | ID | Status | Expected code proof | Expected test/browser proof |
 |---|---|---|---|
 | COM-01 | missing (client cart today) | server cart + items (0018) | Server cart CRUD tests |
-| COM-02 | missing | variants/covers/price versions | Variant price tests |
-| COM-03 | missing | integer minor units + ISO currency | Money-unit tests |
+| COM-02 | **partial** (Phase 1: first-class `product_variants`, 0016) | variants/covers/price versions | Variant price tests; e2e cover-agreement |
+| COM-03 | **existing (USD)** (Phase 1: minor-unit truth, 0016) | integer minor units + ISO currency | Money-unit tests; integration backfill |
 | COM-04 | existing (floating) | server quote, expiring (fix D-09) | Quote expiry/consume tests |
 | COM-05 | existing (basic) | coupon scope/date/min/usage/stacking | Coupon rule tests |
 | COM-06 | missing | addresses/shipping/tax boundary | Shipping/tax quote tests |
@@ -392,7 +459,7 @@ the **current** baseline status.
 | COM-11 | defective | explicit order state machine + history | transition tests |
 | COM-12 | missing | full/partial refunds + reconciliation | Refund > captured rejected |
 | COM-13 | existing (partial) | idempotency/double-submit/recovery | E2E double-submit |
-| COM-14 | defective | sticker cross-sell without leakage (D-06) | Foreign-ref denial |
+| COM-14 | **existing** (Phase 1: owned `userBookId` cross-sell) | sticker cross-sell without leakage (D-06) | Foreign-ref denial |
 
 ### 8.5 Customer — `CUS-01`…`CUS-14` (owner phase 5 unless noted)
 
@@ -417,7 +484,7 @@ the **current** baseline status.
 
 | ID | Status | Owner phase | Expected code proof | Expected test/browser proof |
 |---|---|---|---|---|
-| ADM-01 | existing (partial) | 1/6 | one-time bootstrap (`scripts/create-admin.mjs`, env bootstrap) | no-default-admin tests |
+| ADM-01 | **existing** (Phase 1: env bootstrap driven and asserted by the e2e admin journey) | 1/6 | one-time bootstrap (`scripts/create-admin.mjs`, env bootstrap) | no-default-admin tests; e2e admin.1 |
 | ADM-02 | missing | 6 | RBAC + permission matrix | Permission matrix tests |
 | ADM-03 | defective | 4/6 | ledger-derived revenue | Revenue reconciliation |
 | ADM-04 | existing (partial) | 6 | orders/items/timeline/actions | Admin order tests |
@@ -458,10 +525,10 @@ the **current** baseline status.
 
 | ID | Status | Owner phase | Expected code proof | Expected test/browser proof |
 |---|---|---|---|---|
-| PLT-01 | defective | 1 | CSRF/Origin/cookies/CORS/headers (S-01..S-05) | Negative security tests |
-| PLT-02 | existing (partial) | 1/8 | atomic rate limits by action/IP (S-06) | Limit tests |
+| PLT-01 | **existing** (Phase 1: `src/security.ts`) | 1 | CSRF/Origin/cookies/CORS/headers (S-01..S-05) | Negative security tests; e2e CSRF journey |
+| PLT-02 | **existing** (Phase 1: durable atomic limits on every sensitive mutation) | 1/8 | atomic rate limits by action/IP (S-06) | Limit tests; hashed-bucket test |
 | PLT-03 | existing | 1 | ownership + short-lived private access | Ownership denials |
-| PLT-04 | defective | 1/8 | secret/env validation + rotation | Missing-secret fail-closed tests |
+| PLT-04 | **partial** (Phase 1: missing-secret fail-closed paths + env-aware cookie/CSRF policy) | 1/8 | secret/env validation + rotation | Missing-secret fail-closed tests |
 | PLT-05 | missing | 5 | email provider + durable outbox (T-01) | Outbox idempotency tests |
 | PLT-06 | existing (partial) | 8 | localization/RTL/fallback (`languages` seeded) | RTL/fallback tests |
 | PLT-07 | missing | 8 | country/currency availability + localization | Pricing tests |
@@ -483,7 +550,7 @@ frozen and never modified.
 | Order | Phase | Branch | Suggested migrations | Depends on |
 |---|---|---|---|---|
 | 0 | Baseline/contract lock | `audit/current-baseline-v2` | none | — |
-| 1 | Critical correctness/security/truth | `fix/phase2-critical-recovery` | `0015_integrity_security_recovery.sql` (optional; guards/indexes/audit/RBAC foundation) | Phase 0 |
+| 1 | Critical correctness/security/truth | `fix/phase2-critical-recovery` | **done:** `0015_integrity_security_recovery.sql`, `0016_phase1_variants_money.sql`, `0017_truthful_pdp_banner.sql` | Phase 0 |
 | 2 | Original storefront/catalog/CMS | `feat/original-storefront-cms` | `0016_catalog_variants_cms.sql` | Phase 1 |
 | 3 | Templates/AI generation/preview | `feat/generation-pipeline-v2` | `0017_generation_jobs.sql` | Phase 2 (catalog/media) |
 | 4 | Cart/money/quotes/payments/refunds | `feat/commerce-payments-v2` | `0018_carts_quotes_money.sql`, `0019_payments_refunds.sql` | Phase 3 (variants, jobs) |

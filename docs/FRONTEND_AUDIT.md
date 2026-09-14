@@ -170,3 +170,21 @@ the complete operational admin control plane described in the completion
 pack's Phase 6 (roles/permissions beyond admin/customer, audit log,
 generation-job/refund/fulfillment operator views, etc.) — those remain
 correctly assigned to later phases and nothing here claims otherwise.
+
+## Phase 1 addendum — security, truth and journey gates
+
+The Phase 1 branch (`fix/phase2-critical-recovery`, see
+`docs/V2_PHASE1_COMPLETION_REPORT.md`) changed several surfaces this audit
+exercises, and the audit gate was updated with it:
+
+- The `role-check` step now treats a `401/403` (the central CSRF/authorization
+  gate rejecting a request before the admin guard runs) as the denial it is;
+  only a processed `2xx` customer POST is a finding.
+- Press-endorsement wording ("Featured on") was removed from the PDP section and
+  the admin media tab (T-06); the admin tab is now labelled "Media links".
+- The PDP no longer renders ratings/review counts, payment-method marks, or
+  reference-brand preview artwork, and the reader states plainly that PDF copies
+  are unavailable (T-03/T-04/T-06, S-12/S-13).
+
+Latest run: `npm run audit:frontend -- phase1-critical-recovery` → **0 findings**
+at desktop 1280 and mobile 390 across every public and admin route.

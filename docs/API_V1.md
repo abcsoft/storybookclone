@@ -7,10 +7,41 @@ raw `fetch()` to them.
 
 Conventions: JSON request/response bodies unless noted. Errors are
 `{ "error": "human-readable message" }` with a non-2xx status. Money is
-returned as a plain number of major currency units (matches the existing
-`quoteCart`/`orders` schema — Phase 4 is where integer-minor-units payment
-work happens). Cookies used: `ww_session` (auth, httpOnly), `ww_upload`
-(upload-ownership correlation, httpOnly, works for guests).
+returned in both integer **minor units** (authoritative — `*Minor` fields,
+Phase 1 / D-09) and the derived major-unit number kept for compatibility.
+Cookies used: `ww_session` (auth, httpOnly), `ww_upload` (upload-ownership
+correlation, httpOnly, works for guests), `ww_prospect` (guest personalization
+capability, httpOnly), `ww_csrf` (double-submit token, readable by JS on
+purpose). In every environment except an explicitly-configured development one
+they are `Secure`.
+
+## Security requirements for callers (Phase 1 — S-01…S-06)
+
+Every **mutation** (anything other than GET/HEAD/OPTIONS) is checked centrally:
+
+1. **Same-origin proof.** If the request carries any auth cookie
+   (`ww_session`, `ww_upload`, `ww_prospect`), a present `Origin`/`Referer`
+   must be same-origin, or the request is rejected `403`
+   `{ error: { code: "csrf_origin" } }`.
+2. **Double-submit CSRF token.** A request carrying `ww_session` must also
+   present the `ww_csrf` cookie's value, either as an `X-CSRF-Token` header or
+   as a `csrf_token` form field. A missing/mismatched/wrong value is `403`
+   `{ error: { code: "csrf_token" } }`. Server-rendered HTML forms get the
+   field injected automatically; `public/static/api.js` mirrors the cookie into
+   the header for every fetch.
+3. **Rate limits are durable and atomic** (D1, hashed bucket keys — no raw IP
+   or email is stored): login/admin login, register, contact, newsletter,
+   upload initiate/complete, draft creation and order creation each have their
+   own bucket; exceeded requests get `429` and a human-readable message.
+4. **CORS**: the storefront is same-origin and no CORS grant is emitted by
+   default. Only an explicitly allowlisted origin (`ALLOWED_ORIGINS`) is
+   echoed, and an unknown `Origin` is never reflected.
+5. **Logout is a POST** (`POST /logout`). `GET /logout` is a plain redirect and
+   never mutates the session (S-03).
+6. Security headers (`CSP`, `X-Content-Type-Options`, `X-Frame-Options`,
+   `Referrer-Policy`, `Permissions-Policy`, HSTS over HTTPS only, and
+   `Cache-Control: private, no-store` on private/token-bearing pages) are added
+   to every response centrally.
 
 ## GET /api/v1/uploads/photo-policy
 Public. Returns the one authoritative set of upload limits — `src/photo-policy.ts` —
@@ -195,10 +226,12 @@ one implementation of the rules, not a parallel one for the HTML forms.
 
 ## POST /api/v1/books/pdf-requests
 Body: `{ email, bookSlug, childName?, childAge?, coverType?, orderItemId?, guestOrderToken? }`.
-Writes a row to `pdf_requests` and returns immediately — **this queues a
-request, it does not generate a PDF** (that pipeline is Phase 7). The
-response and the stored `status` are always `"queued"` in this baseline;
-never claim `"ready"`/`"sent"` here. Validated before anything is written:
+Writes a row to `pdf_requests` and returns immediately — **this records
+interest in a PDF; it does not generate, queue or send one** (that pipeline is
+Phase 7). The response and the stored `status` are therefore always
+**`"unavailable"`** (Phase 1, T-03), and the message states plainly that
+nothing will be emailed and no digital copy exists yet. Never claim
+`"queued"`/`"ready"`/`"sent"` here. Validated before anything is written:
 - `coverType` (if supplied) must be exactly `"hardcover"` or `"softcover"`.
 - **`orderItemId`, when supplied, is authoritative**: once ownership
   verifies (below), `bookSlug`/`childName`/`childAge` are OVERWRITTEN from
@@ -226,7 +259,7 @@ never claim `"ready"`/`"sent"` here. Validated before anything is written:
   going to be authorized (bad coverType, foreign orderItemId) cannot burn
   through someone else's quota.
 
-→ `{ success: true, id, status: "queued", message }`
+→ `{ success: true, id, status: "unavailable", token, message }`
 
 **Response includes a `token`** — a random capability token whose SHA-256
 hash alone is stored (`pdf_requests.access_token_hash`); shown only in this
