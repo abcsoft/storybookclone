@@ -3,6 +3,14 @@
 // All sections are data-driven from the per-product PDP rows so admins can edit them.
 import type { Product } from './db'
 import { money, languages } from './data'
+import { PHOTO_POLICY } from './photo-policy'
+import {
+  PERSONALIZATION_LIMITS,
+  CHILD_NAME_ALLOWED_CHARS_PATTERN,
+  CHILD_NAME_ALLOWED_CHARS_HINT,
+  AGE_BEHAVIOUR,
+  COVER_OPTIONS
+} from './personalization/user-books'
 
 // BCP-47 codes for the `languages` display list above, in the SAME order —
 // mirrors the seed rows in migrations/0010_personalization_catalog_domain.sql.
@@ -97,6 +105,41 @@ function defaultPdp(product: Product): Omit<PdpData, 'product'> {
 export function productDetailPage(d: PdpData, pathPrefix: string) {
   const p = d.product
   const fallback = defaultPdp(p)
+  const isBook = p.category === 'book'
+  const isSticker = p.category === 'sticker'
+  // A first-class variant list per product realm (D-08): books choose a
+  // cover/format, other products have a single standard variant.
+  const coverOptions: readonly string[] = isBook ? COVER_OPTIONS : ['standard']
+  // THE server-owned personalization contract for this product — the same
+  // module values the schema endpoint returns and the API validates against
+  // (D-01/D-02/D-03). Rendered into the HTML attributes below AND published
+  // to the browser so client-side validation can never drift from the server.
+  const contract = {
+    productSlug: p.slug,
+    ageRange: { min: p.ageMin, max: p.ageMax, behaviour: AGE_BEHAVIOUR },
+    childName: {
+      required: true,
+      maxLength: PERSONALIZATION_LIMITS.childNameMaxLength,
+      allowedCharsPattern: CHILD_NAME_ALLOWED_CHARS_PATTERN,
+      allowedCharsHint: CHILD_NAME_ALLOWED_CHARS_HINT
+    },
+    dedication: { required: false, maxLength: PERSONALIZATION_LIMITS.dedicationMaxLength },
+    coverOptions,
+    photo: {
+      allowedFormats: [...PHOTO_POLICY.allowedFormats],
+      allowedMimeTypes: [...PHOTO_POLICY.allowedMimeTypes],
+      allowedExtensions: [...PHOTO_POLICY.allowedExtensions],
+      accept: PHOTO_POLICY.allowedMimeTypes.join(','),
+      minBytes: PHOTO_POLICY.minBytes,
+      maxBytes: PHOTO_POLICY.maxBytes,
+      maxMB: Math.round(PHOTO_POLICY.maxBytes / (1024 * 1024)),
+      minDimensionPx: PHOTO_POLICY.minDimensionPx,
+      maxDimensionPx: PHOTO_POLICY.maxDimensionPx
+    }
+  }
+  const ageValue = Math.min(Math.max(6, p.ageMin), p.ageMax)
+  const defaultCover = isBook ? 'hardcover' : 'standard'
+  const coverLabels: Record<string, string> = { hardcover: 'Hardcover', softcover: 'Softcover', standard: 'Standard' }
   // Merge defaults so missing rows still render
   const page       = d.page.banner_text ? d.page : fallback.page
   const gallery    = d.gallery.length ? d.gallery : fallback.gallery
@@ -110,8 +153,6 @@ export function productDetailPage(d: PdpData, pathPrefix: string) {
   const faqs       = d.faqs.length ? d.faqs : fallback.faqs
   const related    = d.related.length ? d.related : fallback.related
 
-  const isBook = p.category === 'book'
-  const isSticker = p.category === 'sticker'
   const sale = p.compareAt ? `-${Math.round((1 - p.price / p.compareAt) * 100)}%` : ''
   const salePercent = sale || page.banner_badge
 
@@ -228,7 +269,7 @@ export function productDetailPage(d: PdpData, pathPrefix: string) {
 
         <!-- Right Column: Personalisation Form Card -->
         <div class="pdp-personalise-right">
-          <form class="pdp-form-card" id="personalise-form" data-slug="${p.slug}" data-title="${esc(p.title)}" data-image="${esc(p.image)}" data-kind="${p.category}" data-price="${p.price}">
+          <form class="pdp-form-card" id="personalise-form" data-slug="${p.slug}" data-title="${esc(p.title)}" data-image="${esc(p.image)}" data-kind="${p.category}" data-price="${p.price}" data-default-cover="${esc(defaultCover)}">
             
             <!-- Uploaded Avatar Circle with 'X' close/delete button -->
             <div class="pdp-avatar-wrapper">
@@ -242,10 +283,27 @@ export function productDetailPage(d: PdpData, pathPrefix: string) {
                   <i class="fas fa-xmark"></i>
                 </button>
               </div>
-              <input id="photo" name="photo" type="file" accept="image/jpeg,image/png,image/webp" class="sr-only">
+              <input id="photo" name="photo" type="file" accept="${contract.photo.accept}" class="sr-only">
             </div>
 
             <p class="pdp-photo-status" id="upload-status" hidden></p>
+
+            <!-- Cover/format — a first-class selection that flows through
+                 PDP -> reader -> cart -> server quote -> order snapshot (D-08). -->
+            <div class="pdp-field-group">
+              <span class="pdp-field-label">Cover</span>
+              <div class="pdp-cover-options" id="cover-options">
+                ${contract.coverOptions
+                  .filter((c) => (isBook ? c !== 'standard' : c === 'standard'))
+                  .map(
+                    (c, i) => `<label class="pdp-cover-option${i === 0 ? ' active' : ''}" data-cover-type="${esc(c)}">
+                  <input type="radio" name="coverType" value="${esc(c)}" ${i === 0 ? 'checked' : ''}>
+                  <span>${esc(coverLabels[c] || c)}</span>
+                </label>`
+                  )
+                  .join('')}
+              </div>
+            </div>
 
             <!-- Book Language Field -->
             <div class="pdp-field-group">
@@ -263,15 +321,15 @@ export function productDetailPage(d: PdpData, pathPrefix: string) {
               <div class="pdp-field-group pdp-name-field">
                 <label for="child-name" class="pdp-field-label">Child's Name</label>
                 <div class="pdp-input-with-counter">
-                  <input id="child-name" name="childName" required maxlength="25" placeholder="e.g. gando" value="gando" class="pdp-input" autocomplete="off">
-                  <span class="pdp-char-count" id="name-counter">5/25</span>
+                  <input id="child-name" name="childName" required maxlength="${contract.childName.maxLength}" placeholder="e.g. Maya" value="" class="pdp-input" autocomplete="off" aria-describedby="name-counter">
+                  <span class="pdp-char-count" id="name-counter">0/${contract.childName.maxLength}</span>
                 </div>
               </div>
 
               <div class="pdp-field-group pdp-age-field">
                 <label for="child-age" class="pdp-field-label">Child's Age</label>
                 <div class="pdp-age-input-wrapper">
-                  <input id="child-age" name="childAge" type="number" min="1" max="18" required value="6" class="pdp-input pdp-age-input">
+                  <input id="child-age" name="childAge" type="number" min="${p.ageMin}" max="${p.ageMax}" required value="${ageValue}" class="pdp-input pdp-age-input">
                   <div class="pdp-age-spinners">
                     <button type="button" class="pdp-age-btn pdp-age-up" id="age-up" aria-label="Increase age"><i class="fas fa-chevron-up"></i></button>
                     <button type="button" class="pdp-age-btn pdp-age-down" id="age-down" aria-label="Decrease age"><i class="fas fa-chevron-down"></i></button>
@@ -300,6 +358,7 @@ export function productDetailPage(d: PdpData, pathPrefix: string) {
             </div>
 
           </form>
+          <script type="application/json" id="ww-personalization-contract">${JSON.stringify(contract)}</script>
         </div>
       </div>
     </div>
@@ -317,7 +376,7 @@ export function productDetailPage(d: PdpData, pathPrefix: string) {
         <div class="book-modal-title-wrap">
           <span class="book-modal-badge">Review your details</span>
           <h3 id="modal-book-title">${esc(p.title)}</h3>
-          <p class="book-modal-sub">For <strong id="modal-child-name">gando</strong> (Age <span id="modal-child-age">6</span>) · <span id="modal-book-lang">English</span></p>
+          <p class="book-modal-sub">For <strong id="modal-child-name"></strong> (Age <span id="modal-child-age"></span>) · <span id="modal-book-lang">English</span></p>
         </div>
         <button type="button" class="book-modal-close" id="modal-close-btn" aria-label="Close">&times;</button>
       </header>
@@ -330,7 +389,7 @@ export function productDetailPage(d: PdpData, pathPrefix: string) {
             </div>
             <dl class="review-fields">
               <div><dt>Dedication</dt><dd id="preview-dedication">—</dd></div>
-              <div><dt>Cover</dt><dd id="preview-cover">Hardcover</dd></div>
+              <div><dt>Cover</dt><dd id="preview-cover">${esc(coverLabels[defaultCover] || defaultCover)}</dd></div>
             </dl>
             <p class="review-note"><i class="fas fa-circle-info"></i> We securely save these details for review. Illustrated pages and a finished preview are prepared in a later step — you'll be notified once that's ready.</p>
           </div>

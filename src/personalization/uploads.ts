@@ -83,6 +83,7 @@ type PhotoUploadRow = {
   height: number | null
   expires_at: number
   consumed_at: string | null
+  revoked_at?: string | null
   completion_token_hash: string | null
   completion_expires_at: number | null
   completed_at: string | null
@@ -123,8 +124,52 @@ export async function completeUpload(db: D1Database, owner: Owner, uploadKey: st
   return validation.image
 }
 
-export async function getOwnedCompletedUpload(db: D1Database, owner: Owner, uploadKey: string): Promise<PhotoUploadRow | null> {
+/**
+ * Ownership-only view of an upload row (no completion/expiry/claim
+ * requirements). Used to re-affirm a book's OWN already-persisted photo —
+ * that photo was fully validated when it was first attached, and the book's
+ * immutable revision already references it, so editing the child's name
+ * after checkout must not fail just because the upload was since consumed
+ * or has aged out.
+ */
+export async function getOwnedUpload(db: D1Database, owner: Owner, uploadKey: string): Promise<PhotoUploadRow | null> {
   const row = await db.prepare('SELECT * FROM photo_uploads WHERE upload_key = ?').bind(uploadKey).first<PhotoUploadRow>()
   if (!row || row.owner_token !== ownerToken(owner)) return null
+  return row
+}
+
+export type CompletedUploadOptions = {
+  /**
+   * Allow an upload already consumed/claimed by a completed checkout. Set
+   * ONLY when re-affirming a book's own existing photo (never for attaching
+   * a photo to a different book/revision) — an already-claimed upload is
+   * incompatible with a fresh attach (C-04).
+   */
+  allowClaimed?: boolean
+  /** Unix seconds override for deterministic expiry-boundary tests. */
+  now?: number
+}
+
+/**
+ * The strict, attach-time guard (C-04): returns a row ONLY when it is
+ * owned by `owner` AND genuinely completed AND not revoked AND not expired
+ * AND (unless `allowClaimed`) not already consumed/claimed by an order.
+ *
+ * Returns null for every rejection — callers surface one generic message so
+ * the existence of someone else's upload is never confirmed.
+ */
+export async function getOwnedCompletedUpload(db: D1Database, owner: Owner, uploadKey: string, opts: CompletedUploadOptions = {}): Promise<PhotoUploadRow | null> {
+  const row = await db.prepare('SELECT * FROM photo_uploads WHERE upload_key = ?').bind(uploadKey).first<PhotoUploadRow>()
+  if (!row || row.owner_token !== ownerToken(owner)) return null // missing / wrong owner
+  if (!row.completed_at) return null // incomplete (initiate-only)
+  if (row.revoked_at) return null // revoked
+  const now = opts.now ?? Math.floor(Date.now() / 1000)
+  // Matches migration 0006's trigger boundary exactly (`expires_at >= unixepoch()`).
+  if (!Number.isFinite(row.expires_at) || row.expires_at < now) return null // expired
+  if (!opts.allowClaimed) {
+    if (row.consumed_at) return null // already consumed by an order
+    const claim = await db.prepare('SELECT upload_key FROM upload_claims WHERE upload_key = ?').bind(uploadKey).first<{ upload_key: string }>()
+    if (claim) return null // already claimed by an order — incompatible with a fresh attach
+  }
   return row
 }

@@ -93,10 +93,11 @@ export type AnalysisOutcome =
   | { faces: number; faceId?: undefined } // 2+
 
 /**
- * Applies the result of a (fake, in Phase 2) face-analysis pass:
+ * Applies the result of a face-analysis pass:
  *  - 0 faces: stays in awaiting_photo_analysis, blocked, with an honest
  *    error surfaced to the caller — this is NOT a state transition, just a
- *    recorded, non-blocking event so the history shows the attempt.
+ *    recorded, non-blocking event so the history shows the attempt. The user
+ *    must retry with a different photo; checkout still refuses.
  *  - 1 face: deterministically auto-selected, book moves straight to
  *    ready_to_generate.
  *  - 2+ faces: book moves to awaiting_face_selection; the caller MUST pick
@@ -121,6 +122,23 @@ export async function applyAnalysisOutcome(db: D1Database, book: UserBookRow, ct
   }
 
   return compareAndSwap(db, book, 'awaiting_face_selection', ctx, 'photo_analysis_multiple_faces', { faceCount: outcome.faces })
+}
+
+/**
+ * The ONE honest modelled outcome when automated face analysis cannot run
+ * (no production provider configured — C-01/C-02). Instead of silently
+ * telling the customer they "can continue" while checkout would then reject
+ * them (C-02/C-03), the book is explicitly moved to `manual_photo_review`,
+ * which checkout ACCEPTS: the order is recorded and stays pending for a
+ * human to review the photo. No automated claim is made anywhere.
+ */
+export async function markManualPhotoReview(db: D1Database, book: UserBookRow, ctx: TransitionContext, reason: string): Promise<UserBookRow> {
+  assertMutable(book)
+  if (book.state === 'manual_photo_review') return book // idempotent no-op
+  if (book.state !== 'awaiting_photo_analysis') {
+    throw new DomainError('invalid_transition', `Cannot flag manual review from state "${book.state}".`, 409)
+  }
+  return compareAndSwap(db, book, 'manual_photo_review', ctx, 'photo_analysis_manual_review', { reason })
 }
 
 /**

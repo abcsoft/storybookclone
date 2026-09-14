@@ -211,8 +211,9 @@ describe('personalization routes — languages and schema', () => {
     const res = await app.request('/api/v1/products/schema-http-book/personalization-schema', {}, env)
     expect(res.status).toBe(200)
     const schema = await res.json()
-    expect(schema.ageRange).toEqual({ min: 5, max: 10 })
+    expect(schema.ageRange).toMatchObject({ min: 5, max: 10, behaviour: 'exact_product_range' })
     expect(schema.photo.maxMB).toBeGreaterThan(0)
+    expect(schema.photo.accept).toBe('image/jpeg,image/png')
   })
 })
 

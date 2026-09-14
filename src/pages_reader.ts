@@ -1,5 +1,6 @@
-// Personalized Book Customization & Reader Page (matching WonderWraps /my/books/:slug UI)
+// Personalized Book Customization & Reader Page
 import { esc } from './layout'
+import { PERSONALIZATION_LIMITS } from './personalization/user-books'
 
 export type PersonalizedBookData = {
   slug: string
@@ -7,26 +8,41 @@ export type PersonalizedBookData = {
   childName: string
   childAge: string
   language: string
-  coverType: 'hardcover' | 'softcover'
+  coverType: string
+  coverOptions?: readonly string[]
+  languages?: readonly { code: string; name: string }[]
+  ageMin?: number
+  ageMax?: number
   hardcoverPrice: number
   softcoverPrice: number
   coverImage: string
   spreadImage: string
+  /** Public, stable product image used as the cart thumbnail — never a blob:/data: URL and never an internal R2 key (D-05). */
+  cartImage?: string
   photoUrl?: string
   /** Opaque server upload key (uploads/…) — required to (re)add to cart. Absent for a read-only post-order view. */
   photoKey?: string
   dedication?: string
+  /** Opaque owned user-book id — the ONLY authoritative personalization reference (D-06/D-07). */
+  userBookId?: string
+  userBookVersion?: number
   /** Post-order viewer: hide "continue to cart", show order context for the PDF request. */
   readOnly?: boolean
   orderItemId?: number
 }
 
 export function personalizedBookReaderPage(data: PersonalizedBookData) {
-  const childName = data.childName || 'gando'
-  const childAge = data.childAge || '5'
-  const title = data.title || `Princess ${childName}, the One We All Needed`
-  const hardcoverPrice = data.hardcoverPrice || 49.20
-  const softcoverPrice = data.softcoverPrice || 34.20
+  // An intentionally-empty required field stays empty and shows validation —
+  // there is NO private/test placeholder name (C-05).
+  const childName = data.childName || ''
+  const childAge = data.childAge || ''
+  const title = data.title || 'Your personalised storybook'
+  const hardcoverPrice = Number.isFinite(data.hardcoverPrice) ? data.hardcoverPrice : 0
+  const softcoverPrice = Number.isFinite(data.softcoverPrice) ? data.softcoverPrice : 0
+  const ageMin = Number.isFinite(data.ageMin as number) ? (data.ageMin as number) : 1
+  const ageMax = Number.isFinite(data.ageMax as number) ? (data.ageMax as number) : 18
+  const coverOptions = data.coverOptions && data.coverOptions.length ? data.coverOptions : ['hardcover', 'softcover']
+  const coverLabels: Record<string, string> = { hardcover: 'Hardcover', softcover: 'Softcover', standard: 'Standard' }
 
   return `
   <!-- The site-wide promo banner (layout.ts #promo-banner) already shows
@@ -52,62 +68,50 @@ export function personalizedBookReaderPage(data: PersonalizedBookData) {
       <form id="reader-quick-edit-form" class="reader-edit-grid">
         <div>
           <label for="edit-child-name">Child's Name</label>
-          <input type="text" id="edit-child-name" name="childName" value="${esc(childName)}" maxlength="25" class="pdp-input">
+          <input type="text" id="edit-child-name" name="childName" value="${esc(childName)}" maxlength="${PERSONALIZATION_LIMITS.childNameMaxLength}" class="pdp-input">
         </div>
         <div>
           <label for="edit-child-age">Age</label>
-          <input type="number" id="edit-child-age" name="childAge" value="${esc(childAge)}" min="1" max="18" class="pdp-input">
+          <input type="number" id="edit-child-age" name="childAge" value="${esc(childAge)}" min="${ageMin}" max="${ageMax}" class="pdp-input">
         </div>
         <div>
           <label for="edit-language">Language</label>
           <select id="edit-language" name="language" class="pdp-input pdp-select">
-            <option value="English" ${data.language === 'English' ? 'selected' : ''}>English</option>
-            <option value="Spanish" ${data.language === 'Spanish' ? 'selected' : ''}>Spanish</option>
-            <option value="Portuguese" ${data.language === 'Portuguese' ? 'selected' : ''}>Portuguese</option>
-            <option value="French" ${data.language === 'French' ? 'selected' : ''}>French</option>
-            <option value="German" ${data.language === 'German' ? 'selected' : ''}>German</option>
+            ${(data.languages && data.languages.length ? data.languages : [{ code: 'en', name: 'English' }])
+              .map((l) => `<option value="${esc(l.code)}" ${data.language === l.code ? 'selected' : ''}>${esc(l.name)}</option>`)
+              .join('')}
           </select>
         </div>
         <div class="edit-btn-col">
           <button type="submit" class="btn btn-purple btn-apply-edit">Update Story</button>
         </div>
       </form>
+      <p id="reader-edit-status" class="reader-edit-status" hidden></p>
     </div>
 
-    <!-- Choose Cover Options -->
+    <!-- Choose Cover Options — driven by the server-owned contract (D-08) -->
     <section class="reader-section cover-options-section">
       <h2 class="reader-section-heading">Choose cover options</h2>
       <div class="cover-options-grid">
-        <!-- Hardcover -->
-        <label class="cover-option-card active" id="card-hardcover" data-cover-type="hardcover" data-cover-price="${hardcoverPrice}">
-          <input type="radio" name="coverOption" value="hardcover" checked class="sr-only">
-          <span class="cover-badge-best">BEST CHOICE</span>
+        ${coverOptions
+          .map((code, i) => {
+            const price = code === 'softcover' ? softcoverPrice : hardcoverPrice
+            const thumb = code === 'softcover' ? '/static/img/thumb-softcover.webp' : '/static/img/thumb-hardcover.webp'
+            return `<label class="cover-option-card${i === 0 ? ' active' : ''}" id="card-${esc(code)}" data-cover-type="${esc(code)}" data-cover-price="${price}">
+          <input type="radio" name="coverOption" value="${esc(code)}" ${i === 0 ? 'checked' : ''} class="sr-only">
+          ${i === 0 ? '<span class="cover-badge-best">BEST CHOICE</span>' : ''}
           <div class="cover-thumb-wrap">
-            <img src="/static/img/thumb-hardcover.webp" alt="Hardcover book" class="cover-thumb-img">
+            <img src="${thumb}" alt="${esc(coverLabels[code] || code)} book" class="cover-thumb-img">
           </div>
           <div class="cover-details">
             <div class="cover-text">
-              <strong class="cover-name">Hardcover</strong>
-              <span class="cover-desc">Thick cover with sturdy pages</span>
+              <strong class="cover-name">${esc(coverLabels[code] || code)}</strong>
             </div>
-            <span class="cover-price">$${hardcoverPrice.toFixed(2)}</span>
+            <span class="cover-price">$${price.toFixed(2)}</span>
           </div>
-        </label>
-
-        <!-- Softcover -->
-        <label class="cover-option-card" id="card-softcover" data-cover-type="softcover" data-cover-price="${softcoverPrice}">
-          <input type="radio" name="coverOption" value="softcover" class="sr-only">
-          <div class="cover-thumb-wrap">
-            <img src="/static/img/thumb-softcover.webp" alt="Softcover book" class="cover-thumb-img">
-          </div>
-          <div class="cover-details">
-            <div class="cover-text">
-              <strong class="cover-name">Softcover</strong>
-              <span class="cover-desc">Flexible cover with smooth pages</span>
-            </div>
-            <span class="cover-price">$${softcoverPrice.toFixed(2)}</span>
-          </div>
-        </label>
+        </label>`
+          })
+          .join('')}
       </div>
     </section>
 
@@ -214,12 +218,20 @@ export function personalizedBookReaderPage(data: PersonalizedBookData) {
       title,
       childName,
       childAge,
-      language: data.language || 'English',
+      language: data.language || 'en',
       dedication: data.dedication || '',
+      coverType: data.coverType,
+      coverOptions,
+      ageMin,
+      ageMax,
+      childNameMaxLength: PERSONALIZATION_LIMITS.childNameMaxLength,
       hardcoverPrice,
       softcoverPrice,
+      cartImage: data.cartImage || data.coverImage,
       photoUrl: data.photoUrl || '/static/img/avatar-sample.png',
       photoKey: data.photoKey || null,
+      userBookId: data.userBookId || null,
+      userBookVersion: data.userBookVersion ?? null,
       readOnly: !!data.readOnly,
       orderItemId: data.orderItemId || null
     })};

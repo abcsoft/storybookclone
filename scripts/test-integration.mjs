@@ -32,7 +32,9 @@ const EXPECTED_TABLES = [
   'languages', 'product_localizations', 'book_templates', 'book_scenes', 'scene_placeholders',
   'prospects', 'user_books', 'personalization_inputs', 'detected_faces',
   'preview_versions', 'preview_assets', 'revision_requests', 'approvals', 'user_book_events',
-  'retention_failures'
+  'retention_failures',
+  // Phase 1 integrity/security recovery (migration 0015)
+  'order_state_events', 'admin_audit_events'
 ]
 
 const EXPECTED_NEW_COLUMNS = [
@@ -47,7 +49,9 @@ const EXPECTED_NEW_COLUMNS = [
   ['photo_uploads', 'completion_token_hash'],
   ['photo_uploads', 'completed_at'],
   ['order_items', 'user_book_id'],
-  ['order_items', 'personalization_input_revision']
+  ['order_items', 'personalization_input_revision'],
+  // Phase 1
+  ['photo_uploads', 'revoked_at']
 ]
 
 const EXPECTED_TRIGGERS = [
@@ -65,7 +69,12 @@ const EXPECTED_TRIGGERS = [
   'trg_preview_assets_no_update',
   'trg_revision_requests_no_update',
   'trg_approvals_no_update',
-  'trg_user_book_events_no_update'
+  'trg_user_book_events_no_update',
+  // Phase 1 integrity/security recovery (0015): append-only history
+  'trg_order_state_events_no_update',
+  'trg_order_state_events_no_delete',
+  'trg_admin_audit_events_no_update',
+  'trg_admin_audit_events_no_delete'
 ]
 
 function assertTriggers(db, label) {

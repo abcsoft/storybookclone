@@ -1,59 +1,61 @@
 // cart.js — the ONE canonical cart storage module (ES module).
 //
-// Fixes the confirmed Phase 0/1 baseline defect: the PDP wrote 'ww_cart'
-// while the cart/checkout pages read 'wonderwraps_cart', so nothing added
-// from a product page ever showed up in the cart. Every page now imports
-// this module instead of touching localStorage directly.
+// Every page imports this module instead of touching localStorage directly.
 //
-// Schema (v1, legacy): an array of
-//   { id, slug, title, kind, image?, price?, qty, childName, childAge?,
-//     language?, dedication?, photoKey }
-// `photoKey` MUST be a real server-issued upload key ("uploads/..."), never
-// a base64/data: URL.
+// Schema (v2 only): { id, slug, title, kind, coverType?, image?, qty,
+//   userBookId, childName?, childAge?, language?, languageLabel?, dedication? }
 //
-// Schema (v2, Phase 2): { id, slug, title, kind, image?, qty, userBookId,
-//   childName?, childAge?, language? } — `userBookId` is the ONLY
-// authoritative field; childName/childAge/language/image here are
-// non-authoritative display data only. The server always re-reads the real
-// personalization by userBookId at order time (src/orders.ts) — nothing
-// forged in a cart item can change what actually gets ordered.
+// `userBookId` is the ONLY authoritative personalization reference. The
+// server always re-reads the real personalization by userBookId at order
+// time (src/orders.ts), so nothing forged here can change what is ordered.
 //
-// Either way this module actively strips any data: URL fields it finds
-// (defense in depth against a base64-photo bug reintroducing that) and drops
-// any item that matches neither shape as malformed.
+// Privacy invariants (D-05), enforced on every write:
+//   * `blob:` and `data:` URLs are never persisted (a blob: URL dies on
+//     reload anyway, producing a broken thumbnail);
+//   * the internal R2 object key is never persisted — the legacy
+//     `photoKey`/"uploads/…" shape is no longer accepted at all, because it
+//     could only be carried forward by writing a private storage key into
+//     localStorage;
+//   * the cart thumbnail is therefore always a stable, public product asset.
 
 export const CART_KEY = 'ww_cart_v1'
 const LEGACY_KEYS = ['wonderwraps_cart', 'ww_cart']
 
+// Fields that must never survive into storage, whatever a caller passes.
+const VOLATILE_URL_FIELDS = ['image', 'photoPreview', 'photoDataUrl', 'cartImage', 'thumbnail']
+const DROPPED_FIELDS = ['photoKey']
+
 function isPlainObject(v) {
   return !!v && typeof v === 'object' && !Array.isArray(v)
+}
+
+function isVolatileUrl(v) {
+  return typeof v === 'string' && (v.indexOf('data:') === 0 || v.indexOf('blob:') === 0)
 }
 
 export function isValidItem(item) {
   if (!isPlainObject(item)) return false
   if (typeof item.slug !== 'string' || !item.slug) return false
   if (typeof item.title !== 'string' || !item.title) return false
-  // Phase 2 shape: an opaque userBookId is enough on its own — it's the
-  // authoritative reference, everything else on the item is display-only.
-  if (typeof item.userBookId === 'string' && item.userBookId) return true
-  // Legacy (pre-Phase-2) shape: requires a real server-issued photoKey.
-  if (typeof item.childName !== 'string' || !item.childName.trim()) return false
-  if (typeof item.photoKey !== 'string' || item.photoKey.indexOf('uploads/') !== 0) return false
+  // The authoritative reference is mandatory — a legacy photoKey-only item
+  // can no longer be ordered safely, so it is not a valid cart item.
+  if (typeof item.userBookId !== 'string' || !item.userBookId) return false
   return true
 }
 
-/** Strips any base64/data: URL fields — a cart item must never carry one. */
+/** Strips volatile URLs, internal storage keys and any "uploads/…" value — a cart item must never carry one. */
 function sanitize(item) {
   const clean = Object.assign({}, item)
-  for (const field of ['image', 'photoPreview', 'photoDataUrl']) {
-    if (typeof clean[field] === 'string' && clean[field].indexOf('data:') === 0) delete clean[field]
+  for (const field of DROPPED_FIELDS) delete clean[field]
+  for (const field of VOLATILE_URL_FIELDS) {
+    if (isVolatileUrl(clean[field])) delete clean[field]
   }
+  if (typeof clean.image === 'string' && clean.image.indexOf('uploads/') === 0) delete clean.image
   return clean
 }
 
 function itemIdentity(item) {
-  if (item.userBookId) return [item.slug, item.userBookId].join('|')
-  return [item.slug, item.childName, item.childAge, item.language, item.dedication, item.photoKey].join('|')
+  return [item.slug, item.userBookId, item.coverType || ''].join('|')
 }
 
 /** Drops malformed entries, merges exact duplicates by summing qty, clamps qty to [1,10]. */
@@ -109,23 +111,16 @@ function writeRaw(storage, list) {
   safeSet(storage, CART_KEY, JSON.stringify(list))
 }
 
-/** Migrates any items found under the legacy keys into the canonical key, once. */
+/**
+ * Removes any pre-Phase-1 cart found under the legacy keys. Those items can
+ * only exist in the old photoKey-bearing shape, which is no longer accepted
+ * (D-05) — carrying them forward would mean persisting a private R2 key.
+ */
 export function migrateLegacy(storage) {
-  let merged = null
   for (const legacyKey of LEGACY_KEYS) {
-    const raw = safeGet(storage, legacyKey)
-    if (raw == null) continue
-    try {
-      const parsed = JSON.parse(raw)
-      if (Array.isArray(parsed) && parsed.length) {
-        merged = (merged || readRaw(storage)).concat(parsed)
-      }
-    } catch {
-      /* malformed legacy JSON — nothing to migrate, just remove it below */
-    }
+    if (safeGet(storage, legacyKey) == null) continue
     safeRemove(storage, legacyKey)
   }
-  if (merged) writeRaw(storage, normalize(merged))
 }
 
 function defaultStorage() {

@@ -42,8 +42,10 @@ export function freshEnv(overrides: Partial<TestEnv> = {}): TestEnv {
     // Phase 2 face analysis: the deterministic fake, never the real
     // fail-closed default — see src/personalization/face-analysis.ts.
     // Tests exercising the disabled/fail-closed path override this back
-    // to undefined explicitly.
+    // to undefined explicitly. The fake is additionally gated on
+    // ENVIRONMENT=development below, so it can never activate in production.
     FACE_ANALYSIS_PROVIDER: 'deterministic-fake',
+    ENVIRONMENT: 'development',
     ...overrides
   }
 }

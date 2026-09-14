@@ -6,7 +6,7 @@
 import { PHOTO_POLICY, photoPolicySummary } from '../photo-policy'
 import { DomainError, type UserBookRow, type PersonalizationInputRow } from './types'
 import { type Owner, loadOwnedUserBook } from './ownership'
-import { getOwnedCompletedUpload } from './uploads'
+import { getOwnedCompletedUpload, getOwnedUpload } from './uploads'
 import { attachInitialPhoto, beginPhotoAnalysis, resetForNewPhoto, loadUserBook, type TransitionContext } from './state-machine'
 import { getActiveApproval, buildInvalidateActiveApprovalStmt } from './approvals'
 
@@ -21,6 +21,19 @@ export const PERSONALIZATION_LIMITS = {
   maxAgeCeiling: 18
 }
 export const COVER_OPTIONS = ['hardcover', 'softcover'] as const
+
+// Characters a child's name may contain (Unicode letters + combining marks,
+// whitespace, apostrophe, hyphen, period). Exported so the schema endpoint
+// and the browser can share ONE pattern (D-01/D-02/D-03).
+export const CHILD_NAME_ALLOWED_CHARS_PATTERN = "^[\\p{L}\\p{M}\\s'.-]+$"
+export const CHILD_NAME_ALLOWED_CHARS_HINT = "letters, spaces, apostrophes, hyphens and dots"
+const CHILD_NAME_ALLOWED_CHARS = new RegExp(CHILD_NAME_ALLOWED_CHARS_PATTERN, 'u')
+
+// Age behaviour (D-03): the accepted range is EXACTLY the product's own
+// declared range — no hidden ±2 tolerance. The error text, the HTML
+// min/max, the browser validation and the server check all state the same
+// thing, so the message can never contradict what is enforced.
+export const AGE_BEHAVIOUR = 'exact_product_range' as const
 
 function actorFrom(owner: Owner): TransitionContext {
   return owner.type === 'user' ? { actorType: 'user', actorId: String(owner.userId) } : { actorType: 'prospect', actorId: owner.prospectId }
@@ -43,9 +56,13 @@ export type UserBookView = {
   productSlug: string
   state: string
   currentRevision: number
+  /** Optimistic-concurrency version — pass back as expectedVersion/If-Match on an edit (D-07). */
+  version: number
   hasPhoto: boolean
   faceSelectionRequired: boolean
   selectedFaceId: string | null
+  /** True when no production face-analysis provider is configured and the book has been explicitly flagged for human review (C-01/C-02). */
+  manualReview: boolean
   createdAt: string
   updatedAt: string
 }
@@ -57,9 +74,11 @@ export async function toView(db: D1Database, book: UserBookRow): Promise<UserBoo
     productSlug: product?.slug || '',
     state: book.state,
     currentRevision: book.current_revision,
+    version: book.version,
     hasPhoto: !!book.selected_upload_key,
     faceSelectionRequired: book.state === 'awaiting_face_selection',
     selectedFaceId: book.selected_face_id,
+    manualReview: book.state === 'manual_photo_review',
     createdAt: book.created_at,
     updatedAt: book.updated_at
   }
@@ -160,11 +179,12 @@ export async function patchPersonalization(db: D1Database, owner: Owner, publicI
   const childName = input.childName !== undefined ? input.childName.trim() : (latest?.child_name ?? undefined)
   if (childName === undefined || !childName) fields.childName = 'required'
   else if (childName.length > PERSONALIZATION_LIMITS.childNameMaxLength) fields.childName = `must be ${PERSONALIZATION_LIMITS.childNameMaxLength} characters or fewer`
-  else if (!/^[\p{L}\p{M}\s'.-]+$/u.test(childName)) fields.childName = 'contains characters that are not allowed'
+  else if (!CHILD_NAME_ALLOWED_CHARS.test(childName)) fields.childName = `contains characters that are not allowed (use ${CHILD_NAME_ALLOWED_CHARS_HINT})`
 
   const childAge = input.childAge !== undefined ? Number(input.childAge) : (latest?.child_age ?? undefined)
   if (childAge !== undefined && childAge !== null) {
-    if (!Number.isFinite(childAge) || childAge < Math.max(PERSONALIZATION_LIMITS.minAgeFloor, product.age_min - 2) || childAge > Math.min(PERSONALIZATION_LIMITS.maxAgeCeiling, product.age_max + 2)) {
+    // Exact product range — the message below states precisely this rule.
+    if (!Number.isFinite(childAge) || !Number.isInteger(childAge) || childAge < product.age_min || childAge > product.age_max) {
       fields.childAge = `must be between ${product.age_min} and ${product.age_max}`
     }
   }
@@ -179,8 +199,16 @@ export async function patchPersonalization(db: D1Database, owner: Owner, publicI
   const photoUploadKey = input.photoUploadKey !== undefined ? input.photoUploadKey : (latest?.photo_upload_key ?? book.selected_upload_key ?? undefined)
   if (!photoUploadKey) fields.photoUploadKey = 'a photo is required'
   else {
-    const upload = await getOwnedCompletedUpload(db, owner, photoUploadKey)
-    if (!upload) fields.photoUploadKey = 'does not belong to you or is not yet uploaded'
+    // C-04: attaching a NEW/CHANGED photo requires a completed, unexpired,
+    // unrevoked, unclaimed upload. Re-affirming a photo already persisted on
+    // THIS book's own revision only needs the ownership check — that photo
+    // was fully validated when it was attached, and editing the name after
+    // checkout must not be blocked by its later consumption.
+    const alreadyOnBook = !!latest && latest.photo_upload_key === photoUploadKey
+    const upload = alreadyOnBook
+      ? await getOwnedUpload(db, owner, photoUploadKey)
+      : await getOwnedCompletedUpload(db, owner, photoUploadKey)
+    if (!upload) fields.photoUploadKey = 'does not belong to you, is no longer valid, or is not yet uploaded'
   }
 
   if (Object.keys(fields).length) {
@@ -255,6 +283,17 @@ export async function patchPersonalization(db: D1Database, owner: Owner, publicI
   return { book: fresh, revision: revisionRow, created: true }
 }
 
+/**
+ * THE server-owned personalization contract (D-01/D-02/D-03). HTML
+ * attributes, browser validation, this schema endpoint and API errors all
+ * read from here, so they cannot disagree:
+ *   * child-name max length + allowed characters (ONE pattern),
+ *   * the exact product age range (no hidden tolerance),
+ *   * language list, dedication limit, cover options,
+ *   * the exact JPEG/PNG photo policy (formats, mime types, extensions,
+ *     byte and dimension bounds) — WebP is NOT advertised anywhere because
+ *     the server cannot genuinely decode it.
+ */
 export async function getPersonalizationSchema(db: D1Database, productSlug: string) {
   const product = await db.prepare('SELECT age_min, age_max FROM products WHERE slug = ? AND active = 1').bind(productSlug).first<{ age_min: number; age_max: number }>()
   if (!product) throw new DomainError('unknown_product', 'Unknown or inactive product.', 404)
@@ -262,11 +301,23 @@ export async function getPersonalizationSchema(db: D1Database, productSlug: stri
 
   return {
     productSlug,
-    ageRange: { min: product.age_min, max: product.age_max },
+    ageRange: { min: product.age_min, max: product.age_max, behaviour: AGE_BEHAVIOUR },
     languages: languages.results || [],
-    childName: { required: true, maxLength: PERSONALIZATION_LIMITS.childNameMaxLength },
+    childName: {
+      required: true,
+      maxLength: PERSONALIZATION_LIMITS.childNameMaxLength,
+      allowedCharsPattern: CHILD_NAME_ALLOWED_CHARS_PATTERN,
+      allowedCharsHint: CHILD_NAME_ALLOWED_CHARS_HINT
+    },
     dedication: { required: false, maxLength: PERSONALIZATION_LIMITS.dedicationMaxLength },
     coverOptions: COVER_OPTIONS,
-    photo: photoPolicySummary()
+    photo: {
+      ...photoPolicySummary(),
+      allowedMimeTypes: [...PHOTO_POLICY.allowedMimeTypes],
+      allowedExtensions: [...PHOTO_POLICY.allowedExtensions],
+      minBytes: PHOTO_POLICY.minBytes,
+      maxBytes: PHOTO_POLICY.maxBytes,
+      accept: PHOTO_POLICY.allowedMimeTypes.join(',')
+    }
   }
 }

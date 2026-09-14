@@ -19,6 +19,9 @@ export type OrderItemInput = {
   language?: string
   dedication?: string
   photoKey?: string
+  // First-class cover/format selection (D-08). Validated against the
+  // product's own active variants server-side — never trusted as a price.
+  coverType?: string
   // Phase 2: when present, childName/childAge/language/dedication/photoKey
   // above are IGNORED and instead derived authoritatively from this
   // user_book's current personalization revision — see the "authoritative
@@ -159,8 +162,14 @@ export async function createOrder(
     const product = await db.prepare('SELECT id FROM products WHERE slug = ?').bind(String(item.slug)).first<{ id: number }>()
     if (!product || product.id !== book.product_id) return { ok: false, status: 400, error: 'That personalised book does not match the requested product.' }
 
-    if (book.state !== 'ready_to_generate' || book.current_revision === 0) {
-      return { ok: false, status: 400, error: 'Finish personalising this book (including face selection, if needed) before checkout.' }
+    // A book is checkout-able when automated analysis produced a usable
+    // result (ready_to_generate) OR when no production analyzer is
+    // configured and the book was explicitly flagged for human review
+    // (manual_photo_review — C-01/C-02/C-03). Anything else (still awaiting
+    // analysis, awaiting an explicit face choice, zero faces found) is
+    // genuinely not ready, and the client is told so before this point.
+    if ((book.state !== 'ready_to_generate' && book.state !== 'manual_photo_review') || book.current_revision === 0) {
+      return { ok: false, status: 400, error: 'Finish personalising this book (including photo analysis and face selection, if needed) before checkout.' }
     }
 
     const revisionRow = await db

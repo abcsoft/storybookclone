@@ -15,16 +15,19 @@ class FakeStorage {
   }
 }
 
+// The ONLY accepted cart shape (post-D-05): an opaque, owned userBookId is
+// the authoritative personalization reference. No photoKey, no blob.
 const validItem = (overrides: Record<string, unknown> = {}) => ({
   id: 'a1',
   slug: 'the-portugals-new-legend',
   title: "The Portugal's New Legend",
   kind: 'book',
-  childName: 'Gando',
+  coverType: 'hardcover',
+  image: '/static/img/cover-portugal.webp',
+  userBookId: 'ub_abc123',
+  childName: 'Maya',
   childAge: '6',
-  language: 'English',
-  dedication: '',
-  photoKey: 'uploads/real-upload-key.jpg',
+  language: 'en',
   qty: 1,
   ...overrides
 })
@@ -34,20 +37,23 @@ describe('cart isValidItem / normalize', () => {
     expect(isValidItem(validItem())).toBe(true)
   })
 
-  it('rejects an item with no photoKey (never checkout-able)', () => {
-    expect(isValidItem(validItem({ photoKey: undefined }))).toBe(false)
+  it('rejects an item with no authoritative userBookId (never checkout-able)', () => {
+    expect(isValidItem(validItem({ userBookId: undefined }))).toBe(false)
+    expect(isValidItem(validItem({ userBookId: '' }))).toBe(false)
   })
 
-  it('rejects an item whose photoKey is a base64 data URL instead of a real upload key', () => {
-    expect(isValidItem(validItem({ photoKey: 'data:image/png;base64,aaaa' }))).toBe(false)
+  it('rejects a legacy photoKey-only item (its private storage key cannot be persisted)', () => {
+    const legacy = { id: 'l1', slug: 'x', title: 'X', childName: 'Kid', photoKey: 'uploads/old.jpg', qty: 1 }
+    expect(isValidItem(legacy)).toBe(false)
   })
 
-  it('rejects an item with no childName', () => {
-    expect(isValidItem(validItem({ childName: '' }))).toBe(false)
+  it('rejects an item with no slug or title', () => {
+    expect(isValidItem(validItem({ slug: '' }))).toBe(false)
+    expect(isValidItem(validItem({ title: '' }))).toBe(false)
   })
 
   it('drops malformed entries during normalize()', () => {
-    const result = normalize([validItem(), { garbage: true }, null, 'not an object', validItem({ id: 'a2', photoKey: undefined })])
+    const result = normalize([validItem(), { garbage: true }, null, 'not an object', validItem({ id: 'a2', userBookId: undefined })])
     expect(result).toHaveLength(1)
   })
 
@@ -57,56 +63,50 @@ describe('cart isValidItem / normalize', () => {
     expect(result[0].qty).toBe(3)
   })
 
-  it('strips a base64 image/photoPreview field even on an otherwise-valid item (defense in depth)', () => {
-    const result = normalize([validItem({ image: 'data:image/png;base64,zzzz', photoPreview: 'data:image/png;base64,yyyy' })])
+  it('keeps the same book with DIFFERENT covers as separate lines', () => {
+    const result = normalize([validItem({ coverType: 'hardcover' }), validItem({ coverType: 'softcover' })])
+    expect(result).toHaveLength(2)
+  })
+
+  it('strips base64 data: and blob: URL fields even on an otherwise-valid item (D-05)', () => {
+    const result = normalize([
+      validItem({
+        image: 'data:image/png;base64,zzzz',
+        photoPreview: 'blob:http://localhost/1234',
+        photoDataUrl: 'data:image/png;base64,yyyy'
+      })
+    ])
     expect(result).toHaveLength(1)
     expect(result[0].image).toBeUndefined()
     expect(result[0].photoPreview).toBeUndefined()
+    expect(result[0].photoDataUrl).toBeUndefined()
+  })
+
+  it('drops a legacy photoKey and an internal uploads/ image path', () => {
+    const result = normalize([validItem({ photoKey: 'uploads/private.jpg', image: 'uploads/private.jpg' })])
+    expect(result).toHaveLength(1)
+    expect(result[0].photoKey).toBeUndefined()
+    expect(result[0].image).toBeUndefined()
   })
 })
 
-describe('legacy cart key migration', () => {
+describe('legacy cart keys (pre-D-05) are discarded, never carried forward', () => {
   let storage: FakeStorage
   beforeEach(() => {
     storage = new FakeStorage()
   })
 
-  it('migrates valid items from the PDP\'s legacy "ww_cart" key', () => {
-    storage.setItem('ww_cart', JSON.stringify([validItem({ id: 'from-ww-cart' })]))
+  it('removes the legacy "ww_cart" key without importing its photoKey-bearing items', () => {
+    storage.setItem('ww_cart', JSON.stringify([{ id: 'from-ww-cart', slug: 'x', title: 'X', childName: 'K', photoKey: 'uploads/old.jpg', qty: 1 }]))
     const cart = readCart(storage as unknown as Storage)
-    expect(cart).toHaveLength(1)
-    expect(cart[0].id).toBe('from-ww-cart')
-    expect(storage.getItem('ww_cart')).toBeNull() // legacy key cleaned up
-    expect(storage.getItem(CART_KEY)).not.toBeNull() // canonical key now holds it
+    expect(cart).toHaveLength(0)
+    expect(storage.getItem('ww_cart')).toBeNull()
   })
 
-  it('migrates valid items from the storefront\'s legacy "wonderwraps_cart" key', () => {
-    storage.setItem('wonderwraps_cart', JSON.stringify([validItem({ id: 'from-wonderwraps-cart' })]))
-    const cart = readCart(storage as unknown as Storage)
-    expect(cart).toHaveLength(1)
-    expect(cart[0].id).toBe('from-wonderwraps-cart')
+  it('removes the legacy "wonderwraps_cart" key too', () => {
+    storage.setItem('wonderwraps_cart', JSON.stringify([{ id: 'y', slug: 'x', title: 'X', photoKey: 'uploads/old.jpg', qty: 1 }]))
+    readCart(storage as unknown as Storage)
     expect(storage.getItem('wonderwraps_cart')).toBeNull()
-  })
-
-  it('migrates from BOTH legacy keys at once and merges into the canonical cart', () => {
-    storage.setItem('ww_cart', JSON.stringify([validItem({ id: 'x', slug: 'book-a' })]))
-    storage.setItem('wonderwraps_cart', JSON.stringify([validItem({ id: 'y', slug: 'book-b' })]))
-    const cart = readCart(storage as unknown as Storage)
-    expect(cart.map((i) => i.slug).sort()).toEqual(['book-a', 'book-b'])
-  })
-
-  it('drops malformed/legacy-base64-only entries during migration instead of carrying them forward', () => {
-    storage.setItem(
-      'ww_cart',
-      JSON.stringify([
-        validItem({ id: 'good' }),
-        { id: 'bad-no-photo', slug: 'x', title: 'X', childName: 'Kid' }, // no real upload key — the old base64-preview-only shape
-        { totally: 'malformed' }
-      ])
-    )
-    const cart = readCart(storage as unknown as Storage)
-    expect(cart).toHaveLength(1)
-    expect(cart[0].id).toBe('good')
   })
 
   it('handles corrupt JSON in a legacy key without throwing', () => {
@@ -121,6 +121,17 @@ describe('legacy cart key migration', () => {
     writeCart([], storage as unknown as Storage)
     const second = readCart(storage as unknown as Storage)
     expect(second).toHaveLength(0)
+  })
+})
+
+describe('persistence never writes a private key or a volatile URL', () => {
+  it('normalize + write keeps only the safe fields', () => {
+    const storage = new FakeStorage()
+    addItem(validItem({ photoPreview: 'blob:http://localhost/x', photoKey: 'uploads/p.jpg' }), storage as unknown as Storage)
+    const persisted = storage.getItem(CART_KEY)!
+    expect(persisted).not.toContain('blob:')
+    expect(persisted).not.toContain('uploads/')
+    expect(persisted).toContain('ub_abc123')
   })
 })
 

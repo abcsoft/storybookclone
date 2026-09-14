@@ -99,11 +99,16 @@ export type Bindings = {
   // status; it never reads or displays the value, and no D1 column ever
   // stores it (migration 0008). `wrangler secret put AI_PROVIDER_API_KEY`.
   AI_PROVIDER_API_KEY?: string
-  // Phase 2 face-analysis adapter selection — see
-  // src/personalization/face-analysis.ts. Set ONLY in test config
-  // (test/helpers/testApp.ts, scripts/test-e2e.mjs, CI); absent in any
-  // real deployment, where the adapter fails closed (disabled) by design.
+  // Face-analysis adapter configuration — see
+  // src/personalization/face-analysis.ts.
+  //   * FACE_ANALYSIS_API_URL + FACE_ANALYSIS_API_KEY configure the REAL
+  //     provider adapter (a deployed secret; never a committed value).
+  //   * FACE_ANALYSIS_PROVIDER=deterministic-fake selects the offline fake
+  //     ONLY when ENVIRONMENT=development — it is refused in production, so
+  //     a stray value can never fabricate face detections.
   FACE_ANALYSIS_PROVIDER?: string
+  FACE_ANALYSIS_API_URL?: string
+  FACE_ANALYSIS_API_KEY?: string
 }
 export type Vars = { user: AuthUser | null }
 
@@ -468,7 +473,11 @@ app.post('/reset-password', async (c) => {
   app.get('/my/books', (c) => c.redirect('/my-books'))
   app.get('/profile', (c) => c.redirect('/my-books'))
 
-  // WonderWraps Reader & Customization Page (/my/books/:slug) matching reference UI
+  // Reader & Customization Page (/my/books/:slug). When a `userBookId` is
+  // present and owned by the caller, EVERY personalization field is derived
+  // from that book's current immutable revision (the authoritative source —
+  // D-07); the legacy query-param path remains only for the read-only guest
+  // order viewer. There is NO placeholder child name (C-05).
   app.get('/my/books/:slug', async (c) => {
     // A guest order's capability token can arrive here via the URL
     // fragment (see public/static/reader.js) — fragments are never sent
@@ -478,50 +487,76 @@ app.post('/reset-password', async (c) => {
     const slug = c.req.param('slug')
     const q = c.req.query()
 
-    // Fetch AI & pricing settings from D1
-    const ai = await c.env.DB.prepare('SELECT * FROM ai_settings WHERE id = 1').first<any>()
-    const hardcoverPrice = ai?.hardcover_price ?? 49.20
-    const softcoverPrice = ai?.softcover_price ?? 34.20
-
-    // Extract child params from query if present, otherwise default to "gando" and age 5
-    let childName = q.name || q.childName || 'gando'
-    let childAge = q.age || q.childAge || '5'
-    let title = `Princess ${childName}, the One We All Needed`
-
-    // If matching a product in the catalog, customize title format
     const p = await getProductBySlug(c.env.DB, slug)
-    if (p) {
-      if (p.slug.includes('princess')) {
-        title = `Princess ${childName}, the One We All Needed`
-      } else if (p.slug.includes('legend')) {
-        title = `${childName}, The Portugal's New Legend`
-      } else {
-        title = `${p.title.replace(/the|a/i, '')} featuring ${childName}`
+
+    // Authoritative path: an owned user-book revision wins over every query param.
+    let book: any = null
+    let revision: any = null
+    if (q.userBookId) {
+      const owner = await resolvePersonalizationOwner(c)
+      if (owner) {
+        const owned = await c.env.DB.prepare(
+          'SELECT * FROM user_books WHERE public_id = ? AND ' + (owner.type === 'user' ? 'user_id = ?' : 'prospect_id = ?')
+        )
+          .bind(q.userBookId, owner.type === 'user' ? owner.userId : owner.prospectId)
+          .first<any>()
+        if (owned) {
+          book = owned
+          if (owned.current_revision > 0) {
+            revision = await c.env.DB.prepare('SELECT * FROM personalization_inputs WHERE user_book_id = ? AND revision = ?')
+              .bind(owned.id, owned.current_revision)
+              .first<any>()
+          }
+        }
       }
     }
 
+    const childName = String(revision?.child_name ?? q.name ?? q.childName ?? '')
+    const childAge = String(revision?.child_age ?? q.age ?? q.childAge ?? '')
+    const language = String(revision?.language_code ?? q.lang ?? 'en')
+    const dedication = String(revision?.dedication ?? q.dedication ?? '')
+    const title = p ? p.title : 'Your personalised storybook'
     const readOnly = q.readOnly === '1' || q.readonly === '1'
-    const photoKey = q.photoKey && q.photoKey.startsWith('uploads/') ? q.photoKey : undefined
+    const photoKey = String(revision?.photo_upload_key ?? (q.photoKey && q.photoKey.startsWith('uploads/') ? q.photoKey : '')) || undefined
+
+    // Cover/format options come from the SAME product realm the quote/order
+    // use (D-08). Books get hardcover/softcover; everything else is standard.
+    const isBook = p?.category === 'book'
+    const coverOptions = isBook ? (['hardcover', 'softcover'] as const) : (['standard'] as const)
+    const requestedCover = String(q.cover || '')
+    const coverType = (coverOptions as readonly string[]).includes(requestedCover) ? requestedCover : coverOptions[0]
+    // Prices are the product's own server-side price — never a second,
+    // hard-coded "reader price" (D-08). Slice B reads the authoritative
+    // variant price; until then both cover options cost the product price.
+    const bookPrice = Number(p?.price ?? 0)
+    const languages = (await c.env.DB.prepare('SELECT code, name FROM languages WHERE active = 1 ORDER BY name').all<{ code: string; name: string }>()).results || []
 
     const readerHtml = personalizedBookReaderPage({
       slug,
       title,
       childName,
       childAge,
-      language: q.lang || 'English',
-      dedication: q.dedication,
-      coverType: (q.cover as any) === 'softcover' ? 'softcover' : 'hardcover',
-      hardcoverPrice,
-      softcoverPrice,
-      coverImage: '/static/preview-book-cover-ref.webp',
-      spreadImage: '/static/preview-book-spread-ref.webp',
+      language,
+      dedication,
+      coverType,
+      coverOptions,
+      languages,
+      ageMin: p?.ageMin ?? 1,
+      ageMax: p?.ageMax ?? 18,
+      hardcoverPrice: bookPrice,
+      softcoverPrice: bookPrice,
+      coverImage: '/static/img/preview-book-cover-ref.webp',
+      spreadImage: '/static/img/preview-book-spread-ref.webp',
+      cartImage: p?.image,
       photoUrl: photoKey ? `/photos/${photoKey}` : undefined,
       photoKey,
+      userBookId: book?.public_id ?? undefined,
+      userBookVersion: book?.version,
       readOnly,
       orderItemId: q.orderItemId ? Number(q.orderItemId) : undefined
     })
 
-    return html(c, `${title} - Wonder Wraps Customizer`, readerHtml, 'my-books')
+    return html(c, `${title} - Customizer`, readerHtml, 'my-books')
   })
 
 // Guest order confirmation. The order id in the URL is not itself an

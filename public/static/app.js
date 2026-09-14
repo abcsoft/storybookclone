@@ -101,8 +101,6 @@ async function renderCart() {
 
   // Find primary child details from existing items
   const primaryItem = cart[0] || {}
-  const childName = primaryItem.childName || 'your child'
-  const childAge = primaryItem.childAge || 5
 
   // Fetch verified quote — server-authoritative, never trust local prices.
   const quoteResult = await fetchQuote(cart)
@@ -115,9 +113,11 @@ async function renderCart() {
   const itemsHtml = cart.map(i => {
     const itemQty = Number(i.qty) || 1
     const isSticker = i.kind === 'sticker' || i.slug.includes('sticker')
+    const coverLabel = i.coverType ? i.coverType.charAt(0).toUpperCase() + i.coverType.slice(1) : ''
+    const langLabel = i.languageLabel || i.language || ''
     const subtitle = isSticker
       ? 'Sticker Pack'
-      : `${i.coverType ? i.coverType.charAt(0).toUpperCase() + i.coverType.slice(1) : 'Softcover'} | ${i.language || 'English'}`
+      : [coverLabel, langLabel].filter(Boolean).join(' | ') || 'Personalised'
 
     return `
       <div class="cart-item-card" data-id="${escH(i.id)}">
@@ -126,8 +126,8 @@ async function renderCart() {
         </div>
         <div class="cart-item-info">
           <h3 class="cart-item-name">${escH(i.title)}</h3>
-          <p class="cart-item-meta">${subtitle}</p>
-          <button type="button" class="cart-item-edit-btn" onclick="window.location.href='/my/books/${encodeURIComponent(i.slug || 'the-portugals-new-legend')}'">Edit</button>
+          <p class="cart-item-meta">${escH(subtitle)}</p>
+          <a class="cart-item-edit-btn" href="/my/books/${encodeURIComponent(i.slug || 'the-portugals-new-legend')}?userBookId=${encodeURIComponent(i.userBookId || '')}">Edit</a>
         </div>
         <div class="cart-item-right">
           <button type="button" class="cart-item-remove-btn" data-remove-id="${escH(i.id)}" aria-label="Remove item">✕</button>
@@ -144,12 +144,12 @@ async function renderCart() {
 
   // -------------------------------------------------------------
   // DYNAMIC CROSS-SELL LOGIC:
-  // - If user has Book in cart -> Recommend Matching Stickers ($14.99)
-  // - If user has Sticker in cart -> Recommend Matching Book ($34.99)
-  // A cross-sell add reuses the primary item's own uploaded photo/child
-  // details — it's a real, checkout-able item, not a placeholder.
+  // - If user has Book in cart -> Recommend Matching Stickers
+  // - A cross-sell add reuses the primary item's OWNED userBookId — an
+  //   explicit, server-verified personalization reference — never a legacy
+  //   client-controlled photo key (D-06).
   // -------------------------------------------------------------
-  const canCrossSell = !!(primaryItem.photoKey && primaryItem.childName)
+  const canCrossSell = !!(primaryItem.userBookId && primaryItem.slug)
   let crossSellHtml = ''
   if (hasBook && !hasSticker && canCrossSell) {
     crossSellHtml = `
@@ -271,17 +271,20 @@ async function renderCart() {
   const addStickerBtn = document.getElementById('btn-add-cross-sell-sticker')
   if (addStickerBtn) {
     addStickerBtn.addEventListener('click', () => {
+      // A sticker product has no personalization of its own; checkout derives
+      // the child details from the OWNED userBookId if the product requires
+      // them. Cross-user/cross-prospect references are rejected server-side.
       addItem({
         id: `sticker-${Date.now()}`,
         slug: 'girls-sticker-pack',
-        title: `${childName} Sticker Pack`,
+        title: `${primaryItem.childName || 'Matching'} Sticker Pack`,
         kind: 'sticker',
         image: '/static/img/stickers-girl.webp',
-        childName,
-        childAge,
+        userBookId: primaryItem.userBookId,
+        childName: primaryItem.childName,
+        childAge: primaryItem.childAge,
         language: primaryItem.language,
-        dedication: primaryItem.dedication,
-        photoKey: primaryItem.photoKey,
+        languageLabel: primaryItem.languageLabel,
         qty: 1
       })
       renderCart()

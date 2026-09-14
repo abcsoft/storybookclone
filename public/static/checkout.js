@@ -88,17 +88,13 @@ document.addEventListener('DOMContentLoaded', () => {
       items: currentCart.map((i) => ({
         slug: i.slug,
         qty: i.qty,
-        // Phase 2: when userBookId is present the server derives
-        // childName/childAge/language/dedication/photo authoritatively from
-        // the user_book's current personalization revision and ignores
-        // whatever is sent alongside it — these legacy fields only matter
-        // for a cart item that has no userBookId (pre-Phase-2/legacy path).
+        // The only authoritative personalization reference. The server
+        // derives childName/childAge/language/dedication/photo from the
+        // owned user_book's current revision and ignores anything else.
         userBookId: i.userBookId,
-        childName: i.childName,
-        childAge: i.childAge,
-        language: i.language,
-        dedication: i.dedication,
-        photoKey: i.photoKey
+        // Selected cover/format — validated server-side against the
+        // product's own variant (D-08); never a price source.
+        coverType: i.coverType
       })),
       fullName: fd.get('fullName'),
       email: fd.get('email'),

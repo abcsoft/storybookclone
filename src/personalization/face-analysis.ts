@@ -1,9 +1,23 @@
-// Provider-neutral face-analysis boundary. Phase 2 makes NO external API
-// call of any kind — the production default is fail-closed/disabled, and
-// the only other adapter is a fully deterministic fake used by tests
-// (unit AND real-browser e2e). A real ML/vision provider is a Phase 3+
-// concern; wiring one in only means adding a new class here that
-// implements the same interface — nothing else in this domain changes.
+// Provider-neutral face-analysis boundary.
+//
+// Phase 1 makes the boundary production-configurable while keeping the safe
+// fail-closed default. Three adapters exist:
+//
+//   * HttpFaceAnalysisAdapter        — a real, environment-configured provider
+//                                      (endpoint + bearer key). Only ever
+//                                      constructed when BOTH are configured;
+//                                      it makes NO call in tests because the
+//                                      test/local environments never set them.
+//   * DeterministicFakeFaceAnalysisAdapter
+//                                    — deterministic, fully offline. Gated so
+//                                      it is IMPOSSIBLE to enable accidentally
+//                                      in production: it requires BOTH an
+//                                      explicit provider flag AND
+//                                      ENVIRONMENT=development, and is refused
+//                                      outright when ENVIRONMENT=production.
+//   * DisabledFaceAnalysisAdapter    — the fail-closed default. Never silently
+//                                      "detects" anything; callers must surface
+//                                      an honest manual-review/retry outcome.
 import { DomainError } from './types'
 
 export type FaceDetectionResult = {
@@ -25,6 +39,61 @@ export class DisabledFaceAnalysisAdapter implements FaceAnalysisAdapter {
   readonly name = 'disabled'
   async analyze(): Promise<FaceDetectionResult[]> {
     throw new DomainError('face_analysis_unavailable', 'Face analysis is not configured in this environment.', 503)
+  }
+}
+
+/**
+ * Real, provider-neutral HTTP adapter. The configured endpoint receives the
+ * raw image bytes and must return `{ faces: [{ bbox: {x,y,width,height},
+ * confidence, category }] }` with normalized 0..1 box coordinates. Any
+ * transport/HTTP/parse/validation failure is fail-closed: it surfaces as an
+ * honest `face_analysis_unavailable` / `face_analysis_bad_response`, never as
+ * a fabricated "no faces found" or a fabricated detection.
+ */
+export class HttpFaceAnalysisAdapter implements FaceAnalysisAdapter {
+  readonly name = 'http'
+  constructor(
+    private readonly endpoint: string,
+    private readonly apiKey: string,
+    private readonly fetchImpl: typeof fetch = fetch
+  ) {}
+
+  async analyze(bytes: Uint8Array): Promise<FaceDetectionResult[]> {
+    let res: Response
+    try {
+      res = await this.fetchImpl(this.endpoint, {
+        method: 'POST',
+        headers: { 'content-type': 'application/octet-stream', authorization: `Bearer ${this.apiKey}` },
+        body: bytes
+      })
+    } catch {
+      throw new DomainError('face_analysis_unavailable', 'The face-analysis provider could not be reached.', 503)
+    }
+    if (!res.ok) {
+      throw new DomainError('face_analysis_unavailable', `The face-analysis provider returned an error (${res.status}).`, 503)
+    }
+    let payload: unknown
+    try {
+      payload = await res.json()
+    } catch {
+      throw new DomainError('face_analysis_bad_response', 'The face-analysis provider returned an unreadable response.', 502)
+    }
+    const rawFaces = payload && typeof payload === 'object' && Array.isArray((payload as any).faces) ? (payload as any).faces : null
+    if (!rawFaces) throw new DomainError('face_analysis_bad_response', 'The face-analysis provider returned an unexpected response.', 502)
+
+    const results: FaceDetectionResult[] = []
+    for (const raw of rawFaces) {
+      const bbox = raw && typeof raw === 'object' ? raw.bbox : null
+      const nums = [bbox?.x, bbox?.y, bbox?.width, bbox?.height].map(Number)
+      if (nums.some((n) => !Number.isFinite(n))) {
+        throw new DomainError('face_analysis_bad_response', 'The face-analysis provider returned an invalid face box.', 502)
+      }
+      const [bboxX, bboxY, bboxW, bboxH] = nums
+      const confidence = Number.isFinite(Number(raw?.confidence)) ? Number(raw.confidence) : 0
+      const category = raw?.category === 'adult' || raw?.category === 'unknown' ? raw.category : 'child'
+      results.push({ bboxX, bboxY, bboxW, bboxH, confidence, category })
+    }
+    return results
   }
 }
 
@@ -59,17 +128,36 @@ export class DeterministicFakeFaceAnalysisAdapter implements FaceAnalysisAdapter
   }
 }
 
-export type FaceAnalysisEnv = { FACE_ANALYSIS_PROVIDER?: string }
+export type FaceAnalysisEnv = {
+  FACE_ANALYSIS_PROVIDER?: string
+  FACE_ANALYSIS_API_URL?: string
+  FACE_ANALYSIS_API_KEY?: string
+  ENVIRONMENT?: string
+}
+
+/** True when a real, credentialed production provider is configured. */
+export function isFaceAnalysisConfigured(env: FaceAnalysisEnv): boolean {
+  return !!(env.FACE_ANALYSIS_API_URL && env.FACE_ANALYSIS_API_KEY)
+}
 
 /**
- * Resolves the adapter from environment configuration only — the same
- * fail-closed-by-default pattern used elsewhere in this project (see
- * src/email.ts, src/secrets.ts). `FACE_ANALYSIS_PROVIDER=deterministic-fake`
- * is set ONLY in test config (test/helpers/testApp.ts, scripts/test-e2e.mjs's
- * server, and CI) — never in a real deployment's environment.
+ * Resolves the adapter from environment configuration only.
+ *
+ * Order:
+ *  1. a configured production provider (URL + key) always wins;
+ *  2. the deterministic fake ONLY when explicitly requested AND the
+ *     environment is `development` — so a stray
+ *     `FACE_ANALYSIS_PROVIDER=deterministic-fake` in a real deployment can
+ *     never silently fabricate face detections;
+ *  3. otherwise fail closed.
  */
 export function getFaceAnalysisAdapter(env: FaceAnalysisEnv): FaceAnalysisAdapter {
-  if (env.FACE_ANALYSIS_PROVIDER === 'deterministic-fake') return new DeterministicFakeFaceAnalysisAdapter()
+  if (isFaceAnalysisConfigured(env)) {
+    return new HttpFaceAnalysisAdapter(env.FACE_ANALYSIS_API_URL as string, env.FACE_ANALYSIS_API_KEY as string)
+  }
+  if (env.FACE_ANALYSIS_PROVIDER === 'deterministic-fake' && env.ENVIRONMENT === 'development') {
+    return new DeterministicFakeFaceAnalysisAdapter()
+  }
   return new DisabledFaceAnalysisAdapter()
 }
 

@@ -439,10 +439,17 @@ describe('personalization schema', () => {
     const db = migratedFakeD1()
     await seedProduct(db, 'schema-book', 3, 9)
     const schema = await getPersonalizationSchema(db, 'schema-book')
-    expect(schema.ageRange).toEqual({ min: 3, max: 9 })
+    // The contract carries the exact product range AND the documented behaviour.
+    expect(schema.ageRange).toMatchObject({ min: 3, max: 9, behaviour: 'exact_product_range' })
     expect(schema.languages.length).toBeGreaterThan(0)
     expect(schema.photo.minDimensionPx).toBeDefined()
     expect(schema.coverOptions).toContain('hardcover')
+    // The child-name limit/pattern and the photo accept list are server-owned too (D-01/D-02).
+    expect(schema.childName.maxLength).toBe(24)
+    expect(schema.childName.allowedCharsPattern).toContain("\\p{L}")
+    expect(schema.photo.allowedMimeTypes).toEqual(['image/jpeg', 'image/png'])
+    expect(schema.photo.accept).toBe('image/jpeg,image/png')
+    expect(schema.photo.allowedFormats).not.toContain('webp')
   })
 
   it('rejects an unknown/inactive product', async () => {
@@ -511,9 +518,10 @@ describe('upload initiate/complete — replay and cross-owner attacks', () => {
     const owner = USER_OWNER(1)
     const bytes = makeValidJpegBytes(900, 900)
     const initiated = await initiateUpload(db, owner, { contentType: 'image/jpeg', byteSize: bytes.byteLength })
-    expect(await getOwnedCompletedUpload(db, owner, initiated.uploadKey)).toBeTruthy() // row exists...
+    // C-04: an incomplete (initiate-only) upload is rejected by the strict guard.
+    expect(await getOwnedCompletedUpload(db, owner, initiated.uploadKey)).toBeNull()
     const row = await db.prepare('SELECT completed_at FROM photo_uploads WHERE upload_key = ?').bind(initiated.uploadKey).first<{ completed_at: string | null }>()
-    expect(row!.completed_at).toBeNull() // ...but is not yet "completed"
+    expect(row!.completed_at).toBeNull() // ...because it is not yet "completed"
   })
 
   it('rejects actual bytes that do not match the declared type/size (validated for real at complete time)', async () => {

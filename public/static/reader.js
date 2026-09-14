@@ -1,16 +1,34 @@
-// WonderWraps Storybook Reader & Customizer — ES module.
-// Rewritten to match the real markup in src/pages_reader.ts (the previous
-// version targeted element IDs/classes — #reader-continue-btn,
-// .reader-carousel, #change-details-btn, wonderwraps_customization — that do
-// not exist on this page, so every handler here silently no-op'd).
+// Storybook Reader & Customizer — ES module.
+// Matches the real markup in src/pages_reader.ts.
 import { addItem } from './cart.js'
-import { requestPdf } from './api.js'
+import { requestPdf, patchPersonalization, getUserBook } from './api.js'
 
 const state = Object.assign(
-  { slug: '', title: '', childName: 'gando', childAge: 5, language: 'English', dedication: '', photoUrl: '/static/img/avatar-sample.png', photoKey: null, readOnly: false, orderItemId: null, hardcoverPrice: 49.2, softcoverPrice: 34.2 },
+  {
+    slug: '',
+    title: '',
+    childName: '',
+    childAge: '',
+    language: 'en',
+    dedication: '',
+    coverType: 'hardcover',
+    coverOptions: ['hardcover', 'softcover'],
+    ageMin: 1,
+    ageMax: 18,
+    childNameMaxLength: 24,
+    hardcoverPrice: 0,
+    softcoverPrice: 0,
+    photoUrl: '',
+    photoKey: null,
+    cartImage: '',
+    userBookId: null,
+    userBookVersion: null,
+    readOnly: false,
+    orderItemId: null
+  },
   window.__BOOK_DATA__ || {}
 )
-let selectedCoverType = 'hardcover'
+let selectedCoverType = state.coverType || state.coverOptions[0] || 'hardcover'
 
 // ---- Guest order capability token (if this reader was opened from a
 // guest order confirmation link) ----
@@ -46,16 +64,24 @@ document.addEventListener('DOMContentLoaded', () => {
   initChangeDetailsDropdown()
 })
 
-// 1. Cover Option Selector (Hardcover / Softcover)
+// 1. Cover Option Selector (from the server-owned contract)
 function initCoverOptionSelector() {
   const cards = document.querySelectorAll('.cover-option-card')
   cards.forEach((card) => {
+    if (card.dataset.coverType === selectedCoverType) {
+      cards.forEach((c) => c.classList.remove('active'))
+      card.classList.add('active')
+      const radio = card.querySelector('input[type="radio"]')
+      if (radio) radio.checked = true
+    }
     card.addEventListener('click', () => {
       cards.forEach((c) => c.classList.remove('active'))
       card.classList.add('active')
       const radio = card.querySelector('input[type="radio"]')
       if (radio) radio.checked = true
-      selectedCoverType = card.dataset.coverType || 'hardcover'
+      selectedCoverType = card.dataset.coverType || selectedCoverType
+      const el = document.getElementById('preview-cover')
+      if (el) el.textContent = selectedCoverType.charAt(0).toUpperCase() + selectedCoverType.slice(1)
     })
   })
 }
@@ -107,16 +133,12 @@ function initPdfRequestForm() {
       childAge: state.childAge,
       coverType: selectedCoverType,
       orderItemId: state.orderItemId || undefined,
-      // Only meaningful when this order item belongs to a guest order (no
-      // account) — the server derives the real book/child data from the
-      // order item itself once this token verifies; it ignores this field
-      // entirely for a logged-in owner (session ownership takes priority).
       guestOrderToken: guestOrderToken || undefined
     })
     if (result.ok) {
-      // Honest status: a request was queued, not "sent" — no PDF is
-      // actually generated yet in this baseline (that's a later phase).
-      showStatus('Request received — we’ll email you once your digital copy is ready.', false)
+      // Honest status (T-03): PDF generation is NOT implemented yet. This
+      // records a request; it does not promise a digital copy.
+      showStatus('Request recorded. PDF generation is not available yet — we will contact you if and when it becomes available.', false)
       input.value = ''
     } else {
       showStatus(result.error || 'Something went wrong. Please try again.', true)
@@ -128,15 +150,15 @@ function initPdfRequestForm() {
   })
 }
 
-// 4. Continue Button Flow to Cart (adds a REAL, checkout-able item — the
-// same personalization + uploaded photoKey the customer already confirmed
-// on the product page; never a placeholder or duplicate).
+// 4. Continue Button Flow to Cart. The only authoritative reference is the
+// owned userBookId — the private photo key is never put in the cart (D-05)
+// and the thumbnail is a stable public product asset.
 function initContinueButton() {
   const continueBtn = document.getElementById('btn-continue-checkout')
   if (!continueBtn) return
 
   continueBtn.addEventListener('click', () => {
-    if (!state.photoKey) {
+    if (!state.userBookId) {
       window.location.href = `/books/${encodeURIComponent(state.slug)}`
       return
     }
@@ -149,12 +171,12 @@ function initContinueButton() {
       title: `${state.title} (${selectedCoverType})`,
       kind: 'book',
       coverType: selectedCoverType,
-      image: state.photoUrl,
+      image: state.cartImage || undefined,
+      userBookId: state.userBookId,
       childName: state.childName,
       childAge: state.childAge,
       language: state.language,
       dedication: state.dedication,
-      photoKey: state.photoKey,
       qty: 1
     })
 
@@ -162,7 +184,10 @@ function initContinueButton() {
   })
 }
 
-// 5. Change Details Dropdown
+// 5. Change Details — loads the OWNED user book and PATCHes a new immutable
+// revision with expectedVersion (D-07). A 409 conflict reloads the
+// authoritative version and asks the user to retry; we never edit display-only
+// data and pretend the server changed.
 function initChangeDetailsDropdown() {
   const toggleBtn = document.getElementById('btn-change-details')
   const card = document.getElementById('reader-change-card')
@@ -179,19 +204,52 @@ function initChangeDetailsDropdown() {
     }
   })
 
-  form?.addEventListener('submit', (e) => {
+  form?.addEventListener('submit', async (e) => {
     e.preventDefault()
     const name = document.getElementById('edit-child-name')?.value?.trim()
-    const age = document.getElementById('edit-child-age')?.value
+    const age = Number(document.getElementById('edit-child-age')?.value)
     const language = document.getElementById('edit-language')?.value
-    if (name) state.childName = name
-    if (age) state.childAge = age
-    if (language) state.language = language
+    const status = document.getElementById('reader-edit-status')
+    const setStatus = (text, isError) => {
+      if (!status) return
+      status.textContent = text || ''
+      status.hidden = !text
+      status.classList.toggle('is-error', !!isError)
+    }
+
+    if (!name) return setStatus('Please enter your child’s name.', true)
+    if (!state.userBookId) return setStatus('This book has no saved personalisation to edit.', true)
+
+    const result = await patchPersonalization(state.userBookId, {
+      childName: name,
+      childAge: age,
+      languageCode: language,
+      dedication: state.dedication,
+      expectedVersion: state.userBookVersion ?? undefined
+    })
+
+    if (!result.ok) {
+      if (result.status === 409) {
+        // Authoritative change elsewhere: reload real state, ask to retry.
+        const fresh = await getUserBook(state.userBookId)
+        if (fresh.ok && fresh.data) state.userBookVersion = fresh.data.currentRevision != null ? fresh.data.currentVersion ?? state.userBookVersion : state.userBookVersion
+        setStatus('This book was updated elsewhere. We reloaded the latest details — please review and press Update again.', true)
+        return
+      }
+      const firstField = result.fields ? Object.values(result.fields)[0] : null
+      return setStatus(firstField || result.error || 'Could not save your changes — please try again.', true)
+    }
+
+    state.childName = name
+    state.childAge = String(age)
+    state.language = language || state.language
+    if (result.data && result.data.version != null) state.userBookVersion = result.data.version
 
     document.querySelectorAll('.reader-meta-text strong').forEach((el, i) => {
       el.textContent = i === 0 ? state.childName : state.childAge
     })
     document.getElementById('cover-title-overlay')?.querySelector('.cover-title-name')?.replaceChildren(document.createTextNode(state.childName))
+    setStatus('Saved — a new personalization revision was created.', false)
     card.hidden = true
   })
 }

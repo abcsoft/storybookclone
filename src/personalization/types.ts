@@ -2,15 +2,20 @@
 // src/db.ts's existing storefront types (Product, ProductRow) — this is a
 // distinct bounded context.
 
-// Phase 2's currently-valid states. `user_books.state` itself has NO CHECK
-// enum in the database (see migration 0011's comment on why) — this is the
-// single source of truth for "what's valid right now"; Phase 3 will extend
-// this list, not rewrite it.
+// The currently-valid states. `user_books.state` itself has NO CHECK enum in
+// the database (see migration 0011's comment on why) — this is the single
+// source of truth for "what's valid right now". Later phases extend this
+// list, never rewrite it.
+//
+// `manual_photo_review` is the ONE honest modelled outcome when no
+// production face-analysis provider is configured: the book is explicitly
+// flagged for human review and checkout is allowed (see C-01/C-02/C-03).
 export type UserBookState =
   | 'draft'
   | 'awaiting_photo_analysis'
   | 'awaiting_face_selection'
   | 'ready_to_generate'
+  | 'manual_photo_review'
   | 'expired'
   | 'cancelled'
 
@@ -19,6 +24,7 @@ export const USER_BOOK_STATES: readonly UserBookState[] = [
   'awaiting_photo_analysis',
   'awaiting_face_selection',
   'ready_to_generate',
+  'manual_photo_review',
   'expired',
   'cancelled'
 ]

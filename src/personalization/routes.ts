@@ -8,7 +8,7 @@ import { resolveOwner, resolveOrCreateOwner, loadOwnedUserBook } from './ownersh
 import { initiateUpload, completeUpload, getOwnedCompletedUpload } from './uploads'
 import { getFaceAnalysisAdapter } from './face-analysis'
 import { createUserBook, getUserBook, patchPersonalization, getPersonalizationSchema, toView } from './user-books'
-import { applyAnalysisOutcome, selectFace as selectFaceTransition, loadUserBook } from './state-machine'
+import { applyAnalysisOutcome, selectFace as selectFaceTransition, loadUserBook, markManualPhotoReview } from './state-machine'
 import type { UserBookRow, DetectedFaceRow } from './types'
 
 type Ctx = Context<{ Bindings: Bindings; Variables: Vars }>
@@ -38,6 +38,18 @@ async function faceSummary(db: D1Database, uploadKey: string) {
     confidence: f.confidence,
     category: f.category
   }))
+}
+
+/** The caller-owned book currently waiting on analysis for this exact upload, if any. */
+async function findAwaitingBook(db: D1Database, owner: { type: 'user' | 'prospect'; userId?: number; prospectId?: string }, uploadKey: string) {
+  return db
+    .prepare(
+      `SELECT * FROM user_books WHERE selected_upload_key = ? AND state = 'awaiting_photo_analysis' AND ${
+        owner.type === 'user' ? 'user_id = ?' : 'prospect_id = ?'
+      }`
+    )
+    .bind(uploadKey, owner.type === 'user' ? owner.userId : owner.prospectId)
+    .first<UserBookRow>()
 }
 
 export function registerPersonalizationRoutes(app: Hono<{ Bindings: Bindings; Variables: Vars }>) {
@@ -106,8 +118,31 @@ export function registerPersonalizationRoutes(app: Hono<{ Bindings: Bindings; Va
         try {
           detections = await adapter.analyze(bytes)
         } catch (err) {
-          if (err instanceof DomainError) return c.json({ status: 'unavailable', message: err.message })
-          throw err
+          if (!(err instanceof DomainError)) throw err
+          if (adapter.name === 'disabled') {
+            // The ONE honest modelled outcome when no production provider is
+            // configured (C-01/C-02): flag the book for explicit MANUAL
+            // REVIEW, which checkout accepts (C-03). We never tell the user
+            // they can continue while checkout would reject them.
+            const book = await findAwaitingBook(c.env.DB, owner, uploadKey)
+            if (book) {
+              try {
+                await markManualPhotoReview(c.env.DB, book, actorFromOwner(owner), 'face_analysis_unconfigured')
+              } catch (transitionErr) {
+                // A concurrent analysis already advanced the book — harmless.
+                if (!(transitionErr instanceof DomainError && transitionErr.code === 'version_conflict')) throw transitionErr
+              }
+            }
+            return c.json({
+              status: 'manual_review',
+              manualReview: true,
+              message:
+                'Automatic photo checks are not enabled in this environment yet, so we have flagged this book for manual review. You can continue — a person will check the photo before your book is made.'
+            })
+          }
+          // A CONFIGURED provider failed: honest, retryable, and checkout
+          // still refuses (the book stays in awaiting_photo_analysis).
+          return c.json({ status: 'unavailable', retryable: true, message: err.message })
         }
         const stmts = detections.map((d, i) =>
           c.env.DB.prepare('INSERT INTO detected_faces (id, upload_key, sort_order, bbox_x, bbox_y, bbox_w, bbox_h, confidence, category) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').bind(
@@ -128,14 +163,7 @@ export function registerPersonalizationRoutes(app: Hono<{ Bindings: Bindings; Va
         // same caller) currently has this upload selected and is waiting
         // on analysis — a fresh upload not yet attached anywhere just gets
         // its detected_faces recorded without touching any book's state.
-        const book = await c.env.DB
-          .prepare(
-            `SELECT * FROM user_books WHERE selected_upload_key = ? AND state = 'awaiting_photo_analysis' AND ${
-              owner.type === 'user' ? 'user_id = ?' : 'prospect_id = ?'
-            }`
-          )
-          .bind(uploadKey, owner.type === 'user' ? owner.userId : owner.prospectId)
-          .first<UserBookRow>()
+        const book = await findAwaitingBook(c.env.DB, owner, uploadKey)
         if (book) {
           const ctx = actorFromOwner(owner)
           try {
@@ -157,7 +185,12 @@ export function registerPersonalizationRoutes(app: Hono<{ Bindings: Bindings; Va
       }
 
       const summary = await faceSummary(c.env.DB, uploadKey)
-      return c.json({ status: 'complete', faces: summary, faceSelectionRequired: summary.length > 1 })
+      return c.json({
+        status: 'complete',
+        faces: summary,
+        faceSelectionRequired: summary.length > 1,
+        zeroFaces: summary.length === 0
+      })
     })
   )
 

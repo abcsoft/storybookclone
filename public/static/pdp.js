@@ -1,10 +1,53 @@
 // PDP-only interactivity: gallery slider + personalised preview & form controls.
 // ES module — imports the canonical cart store and the centralized API client
-// instead of touching localStorage / fetch directly (Phase 1 defects #1/#3).
+// instead of touching localStorage / fetch directly.
 import { addItem } from './cart.js'
 import { getPhotoPolicy, createUserBook, initiatePhotoUpload, completePhotoUpload, getUploadAnalysis, selectFace, patchPersonalization } from './api.js'
 
+// The server-owned contract rendered into the page (see
+// src/pages_pdp.ts + src/personalization/user-books.ts). HTML attributes,
+// this client validation, the schema endpoint and the API all read from the
+// same values, so they can never disagree (D-01/D-02/D-03).
+function readContract() {
+  try {
+    const el = document.getElementById('ww-personalization-contract')
+    if (el && el.textContent) return JSON.parse(el.textContent)
+  } catch {
+    /* fall through */
+  }
+  return null
+}
+
+/**
+ * D-04: ONE stable draft idempotency key per (product, browser), persisted
+ * across reload / back-navigation / double-click, so those never create a
+ * duplicate or orphan user-book draft. Rotated only after a successful
+ * add-to-cart, so a second purchase of the same product starts a fresh draft.
+ */
+function stableDraftKey(slug) {
+  const key = `ww_draft_key:${slug}`
+  try {
+    const existing = localStorage.getItem(key)
+    if (existing) return existing
+    const fresh = `pdp-${slug}-${crypto.randomUUID()}`
+    localStorage.setItem(key, fresh)
+    return fresh
+  } catch {
+    return `pdp-${slug}-${crypto.randomUUID()}`
+  }
+}
+function rotateDraftKey(slug) {
+  try {
+    localStorage.removeItem(`ww_draft_key:${slug}`)
+  } catch {
+    /* storage unavailable — the key simply won't persist */
+  }
+}
+
 (function () {
+  const contract = readContract()
+  const photoPolicy = contract?.photo || null
+
   // ----- gallery slider -----
   const main = document.getElementById('pdp-main-image')
   const thumbs = Array.from(document.querySelectorAll('.pdp-thumb'))
@@ -52,32 +95,72 @@ import { getPhotoPolicy, createUserBook, initiatePhotoUpload, completePhotoUploa
     if (target) { e.preventDefault(); target.scrollIntoView({ behavior: 'smooth', block: 'start' }) }
   })
 
-  // ----- Live Character Counter for Child's Name -----
+  // ----- Live Character Counter for Child's Name (contract-driven limit) -----
   const nameInput = document.getElementById('child-name')
   const nameCounter = document.getElementById('name-counter')
+  const nameMax = Number(contract?.childName?.maxLength) || 24
   if (nameInput && nameCounter) {
     const updateCount = () => {
-      const len = nameInput.value.length
-      nameCounter.textContent = `${len}/25`
+      nameCounter.textContent = `${nameInput.value.length}/${nameMax}`
     }
     nameInput.addEventListener('input', updateCount)
     updateCount()
   }
 
-  // ----- Age Stepper Buttons -----
+  // ----- Child's name validation: the SAME allowed-character contract the
+  // server enforces (D-01), so a name that passes here passes there. -----
+  const namePattern = (() => {
+    try {
+      return contract?.childName?.allowedCharsPattern ? new RegExp(contract.childName.allowedCharsPattern, 'u') : null
+    } catch {
+      return null
+    }
+  })()
+  function validateChildName(value) {
+    const v = String(value || '').trim()
+    if (!v) return 'Please enter your child’s name.'
+    if (v.length > nameMax) return `Please use ${nameMax} characters or fewer.`
+    if (namePattern && !namePattern.test(v)) return `Please use only ${contract?.childName?.allowedCharsHint || 'letters, spaces, apostrophes, hyphens and dots'}.`
+    return ''
+  }
+  function validateChildAge(value) {
+    const age = Number(value)
+    const min = Number(contract?.ageRange?.min ?? 1)
+    const max = Number(contract?.ageRange?.max ?? 18)
+    if (!Number.isInteger(age) || age < min || age > max) return `Please enter an age between ${min} and ${max}.`
+    return ''
+  }
+
+  // ----- Age Stepper Buttons (clamped to the product's own range) -----
   const ageInput = document.getElementById('child-age')
   const ageUp = document.getElementById('age-up')
   const ageDown = document.getElementById('age-down')
   if (ageInput && ageUp && ageDown) {
+    const min = Number(contract?.ageRange?.min ?? 1)
+    const max = Number(contract?.ageRange?.max ?? 18)
     ageUp.addEventListener('click', () => {
-      let val = parseInt(ageInput.value, 10) || 6
-      if (val < 18) ageInput.value = val + 1
+      const val = parseInt(ageInput.value, 10) || min
+      if (val < max) ageInput.value = val + 1
     })
     ageDown.addEventListener('click', () => {
-      let val = parseInt(ageInput.value, 10) || 6
-      if (val > 1) ageInput.value = val - 1
+      const val = parseInt(ageInput.value, 10) || min
+      if (val > min) ageInput.value = val - 1
     })
   }
+
+  // ----- Cover/format selection (D-08) -----
+  let selectedCover = document.getElementById('personalise-form')?.dataset.defaultCover || 'hardcover'
+  document.querySelectorAll('#cover-options .pdp-cover-option').forEach((label) => {
+    label.addEventListener('click', () => {
+      document.querySelectorAll('#cover-options .pdp-cover-option').forEach((l) => l.classList.remove('active'))
+      label.classList.add('active')
+      const radio = label.querySelector('input[type="radio"]')
+      if (radio) radio.checked = true
+      selectedCover = label.dataset.coverType || selectedCover
+      const el = document.getElementById('preview-cover')
+      if (el) el.textContent = (label.textContent || selectedCover).trim()
+    })
+  })
 
   // ----- Avatar Upload: local preview (blob:, never stored) + REAL server upload -----
   const avatarContainer = document.getElementById('avatar-container')
@@ -87,20 +170,18 @@ import { getPhotoPolicy, createUserBook, initiatePhotoUpload, completePhotoUploa
   const avatarEmpty = document.getElementById('avatar-empty')
   const photoStatus = document.getElementById('upload-status')
 
-  // Phase 2 personalization state. `userBookId` is the ONLY identifier the
-  // cart/checkout ever sees for this personalization — never a raw photo,
-  // never a guest capability. Created once per page load (idempotency key
-  // below makes a page reload/duplicate click resolve to the SAME book,
-  // never a duplicate).
   const productSlug = document.getElementById('personalise-form')?.dataset.slug || ''
-  const userBookIdempotencyKey = `pdp-${productSlug}-${crypto.randomUUID()}`
+  const userBookIdempotencyKey = stableDraftKey(productSlug)
   let userBookId = null
   let uploadedPhotoKey = null
-  let uploadedPhotoUrl = null
   let uploadInFlight = false
   let faceSelectionRequired = false
   let selectedFaceId = null
   let availableFaces = []
+  // One of: 'none' | 'ready' | 'manual_review' | 'blocked'. Checkout accepts
+  // the first two states only (C-02/C-03) — the confirm button is disabled
+  // otherwise, so we never promise a continuation checkout would reject.
+  let analysisState = 'none'
 
   function setPhotoStatus(text, isError) {
     if (!photoStatus) return
@@ -112,9 +193,18 @@ import { getPhotoPolicy, createUserBook, initiatePhotoUpload, completePhotoUploa
   function updateConfirmAvailability() {
     const btn = document.getElementById('btn-confirm-order')
     if (!btn) return
-    const ready = !!uploadedPhotoKey && !uploadInFlight && !faceSelectionRequired
+    const analysisOk = analysisState === 'ready' || analysisState === 'manual_review'
+    const ready = !!uploadedPhotoKey && !uploadInFlight && !faceSelectionRequired && analysisOk
     btn.disabled = !ready
-    btn.title = ready ? '' : uploadInFlight ? 'Uploading photo…' : faceSelectionRequired ? 'Choose which face is your child' : 'Upload a photo to continue'
+    btn.title = ready
+      ? ''
+      : uploadInFlight
+        ? 'Uploading photo…'
+        : faceSelectionRequired
+          ? 'Choose which face is your child'
+          : !uploadedPhotoKey
+            ? 'Upload a photo to continue'
+            : 'We still need to check the photo before you can continue'
   }
 
   async function ensureUserBook() {
@@ -140,6 +230,7 @@ import { getPhotoPolicy, createUserBook, initiatePhotoUpload, completePhotoUploa
         if (res.ok) {
           selectedFaceId = face.id
           faceSelectionRequired = false
+          analysisState = 'ready'
           Array.from(grid.children).forEach((c) => c.classList.remove('selected'))
           btn.classList.add('selected')
           panel.hidden = true
@@ -156,36 +247,74 @@ import { getPhotoPolicy, createUserBook, initiatePhotoUpload, completePhotoUploa
   async function runAnalysis(uploadKey) {
     const statusEl = document.getElementById('analysis-status')
     const res = await getUploadAnalysis(uploadKey)
+    availableFaces = []
+    faceSelectionRequired = false
+    analysisState = 'blocked'
+
     if (!res.ok || !res.data) {
       if (statusEl) {
         statusEl.hidden = false
-        statusEl.textContent = 'Photo analysis is unavailable right now — you can still continue.'
+        // Honest: a network/server failure means we could NOT check the photo,
+        // and checkout will refuse until it succeeds — say exactly that.
+        statusEl.textContent = 'We could not check your photo just now. Please try again in a moment.'
       }
-      faceSelectionRequired = false
-      return
+      updateConfirmAvailability()
+      return { ok: false }
     }
+
+    if (res.data.status === 'manual_review') {
+      // No automated provider is configured: the server flagged this book for
+      // explicit manual review, and checkout ACCEPTS it. This is the ONE
+      // honest modelled outcome — we do not claim an automatic check happened.
+      analysisState = 'manual_review'
+      if (statusEl) {
+        statusEl.hidden = false
+        statusEl.textContent = res.data.message || 'We have flagged this book for manual review. You can continue.'
+      }
+      updateConfirmAvailability()
+      return { ok: true, manualReview: true }
+    }
+
     if (res.data.status === 'unavailable') {
       if (statusEl) {
         statusEl.hidden = false
-        statusEl.textContent = res.data.message || 'Photo analysis is unavailable right now — you can still continue.'
+        statusEl.textContent = res.data.message || 'Photo checks are temporarily unavailable. Please try again shortly.'
       }
-      faceSelectionRequired = false
-      return
+      updateConfirmAvailability()
+      return { ok: false }
     }
+
+    if (res.data.status !== 'complete') {
+      if (statusEl) {
+        statusEl.hidden = false
+        statusEl.textContent = 'Your photo is still being checked. Please wait a moment and try again.'
+      }
+      updateConfirmAvailability()
+      return { ok: false }
+    }
+
     availableFaces = res.data.faces || []
-    faceSelectionRequired = !!res.data.faceSelectionRequired
     if (availableFaces.length === 0) {
+      // Genuine zero-face result: the user must retry with a different photo.
       setPhotoStatus('We could not find a clear face in that photo. Please upload a different photo.', true)
       uploadedPhotoKey = null
-      uploadedPhotoUrl = null
-    } else if (faceSelectionRequired) {
-      renderFacePicker(availableFaces)
-    } else {
-      selectedFaceId = availableFaces[0]?.id || null
-      const panel = document.getElementById('face-select-panel')
-      if (panel) panel.hidden = true
+      analysisState = 'blocked'
+      updateConfirmAvailability()
+      return { ok: false }
     }
+    if (res.data.faceSelectionRequired) {
+      faceSelectionRequired = true
+      analysisState = 'blocked'
+      renderFacePicker(availableFaces)
+      updateConfirmAvailability()
+      return { ok: true }
+    }
+    selectedFaceId = availableFaces[0]?.id || null
+    analysisState = 'ready'
+    const panel = document.getElementById('face-select-panel')
+    if (panel) panel.hidden = true
     updateConfirmAvailability()
+    return { ok: true }
   }
 
   if (avatarContainer && photoInput) {
@@ -199,25 +328,26 @@ import { getPhotoPolicy, createUserBook, initiatePhotoUpload, completePhotoUploa
       if (!file) return
 
       uploadedPhotoKey = null
-      uploadedPhotoUrl = null
+      analysisState = 'none'
 
       // Fast browser-side pre-check, derived from the SAME server-owned
-      // policy the real upload endpoint enforces (GET
-      // /api/v1/uploads/photo-policy — see src/photo-policy.ts). This is a
-      // UX convenience only: file.size/file.type are client-reported and
-      // can be wrong or spoofed, so a pass here proves nothing by itself —
-      // the server always re-validates with a real image decode. It only
-      // saves an obviously-doomed upload a round trip.
-      const policy = await getPhotoPolicy()
+      // policy the real upload endpoint enforces (rendered into the page as
+      // the personalization contract, D-02). This is a UX convenience only:
+      // file.size/file.type are client-reported and can be wrong or spoofed,
+      // so a pass here proves nothing by itself — the server always
+      // re-validates with a real image decode.
+      const policy = photoPolicy || (await getPhotoPolicy())
       if (policy) {
-        if (file.size > policy.maxMB * 1024 * 1024) {
-          setPhotoStatus(`That photo is too large — please choose one under ${policy.maxMB}MB.`, true)
+        const maxMB = Number(policy.maxMB) || 10
+        if (file.size > maxMB * 1024 * 1024) {
+          setPhotoStatus(`That photo is too large — please choose one under ${maxMB}MB.`, true)
           photoInput.value = ''
           return
         }
-        const looksSupported = !file.type || policy.allowedFormats.some((f) => file.type === `image/${f}`)
+        const mimeTypes = policy.allowedMimeTypes || (policy.allowedFormats || []).map((f) => `image/${f}`)
+        const looksSupported = !file.type || mimeTypes.includes(file.type)
         if (!looksSupported) {
-          setPhotoStatus(`Please choose a ${policy.allowedFormats.join(' or ').toUpperCase()} photo.`, true)
+          setPhotoStatus(`Please choose a ${(policy.allowedFormats || []).join(' or ').toUpperCase()} photo.`, true)
           photoInput.value = ''
           return
         }
@@ -227,8 +357,8 @@ import { getPhotoPolicy, createUserBook, initiatePhotoUpload, completePhotoUploa
       updateConfirmAvailability()
       setPhotoStatus('Uploading photo…', false)
 
-      // Local, in-memory-only preview (blob: URL) — never persisted, never
-      // becomes the value we send anywhere.
+      // Local, in-memory-only preview (blob: URL) — used for the on-page
+      // preview only; it is NEVER written to the cart or localStorage (D-05).
       const objectUrl = URL.createObjectURL(file)
       if (photoPreview) {
         photoPreview.src = objectUrl
@@ -247,9 +377,11 @@ import { getPhotoPolicy, createUserBook, initiatePhotoUpload, completePhotoUploa
           probe.onerror = () => resolve(null)
           probe.src = objectUrl
         })
-        if (dims && (dims.w < policy.minDimensionPx || dims.h < policy.minDimensionPx || dims.w > policy.maxDimensionPx || dims.h > policy.maxDimensionPx)) {
+        const minD = Number(policy.minDimensionPx) || 800
+        const maxD = Number(policy.maxDimensionPx) || 4000
+        if (dims && (dims.w < minD || dims.h < minD || dims.w > maxD || dims.h > maxD)) {
           uploadInFlight = false
-          setPhotoStatus(`Photo must be ${policy.minDimensionPx}–${policy.maxDimensionPx}px on each side.`, true)
+          setPhotoStatus(`Photo must be ${minD}–${maxD}px on each side.`, true)
           if (photoPreview) photoPreview.style.display = 'none'
           if (avatarEmpty) avatarEmpty.style.display = ''
           updateConfirmAvailability()
@@ -257,8 +389,8 @@ import { getPhotoPolicy, createUserBook, initiatePhotoUpload, completePhotoUploa
         }
       }
 
-      // Two-phase upload (Phase 2): declare intent, then send real bytes
-      // against the one-time completion capability that step returns.
+      // Two-phase upload: declare intent, then send real bytes against the
+      // one-time completion capability that step returns.
       const initiated = await initiatePhotoUpload(file.type, file.size)
       if (!initiated.ok) {
         uploadInFlight = false
@@ -272,19 +404,11 @@ import { getPhotoPolicy, createUserBook, initiatePhotoUpload, completePhotoUploa
       uploadInFlight = false
       if (completed.ok) {
         uploadedPhotoKey = initiated.data.uploadId
-        // Display-only: no public URL for a private photo exists server-side
-        // (by design — see Phase 2 privacy rules). The local blob: preview
-        // is reused purely for cart/UI display and never sent to the server.
-        uploadedPhotoUrl = objectUrl
         setPhotoStatus('Photo uploaded ✓', false)
         selectedFaceId = null
         faceSelectionRequired = false
         // Create the user_book now so a page reload/duplicate click still
-        // resolves to the SAME book (idempotency key). Face analysis itself
-        // only runs after personalization is saved (see form submit below) —
-        // the book must first reach awaiting_photo_analysis via
-        // attachInitialPhoto/beginPhotoAnalysis before /analysis has
-        // anything to apply its outcome to.
+        // resolves to the SAME book (stable idempotency key).
         await ensureUserBook()
       } else {
         setPhotoStatus(completed.error || 'Upload failed — please try a different photo.', true)
@@ -298,7 +422,7 @@ import { getPhotoPolicy, createUserBook, initiatePhotoUpload, completePhotoUploa
       e.stopPropagation()
       photoInput.value = ''
       uploadedPhotoKey = null
-      uploadedPhotoUrl = null
+      analysisState = 'none'
       setPhotoStatus('', false)
       if (photoPreview) {
         photoPreview.src = '/static/img/avatar-sample.png'
@@ -310,7 +434,7 @@ import { getPhotoPolicy, createUserBook, initiatePhotoUpload, completePhotoUploa
   }
   updateConfirmAvailability()
 
-  // ----- Storybook Live Preview Modal Logic -----
+  // ----- Live Preview Modal Logic -----
   const modal = document.getElementById('book-preview-modal')
   const modalClose = document.getElementById('modal-close-btn')
   const btnEdit = document.getElementById('btn-edit-personalise')
@@ -332,15 +456,27 @@ import { getPhotoPolicy, createUserBook, initiatePhotoUpload, completePhotoUploa
     if (e.target === modal) closeModal()
   })
 
-  // Handle Form Submission -> save the REAL personalization revision on the
-  // server (Section 5/6), then show the honest review modal. No fabricated
-  // "finished pages" — see src/pages_pdp.ts's review-note copy.
+  // Submit -> save the REAL personalization revision on the server, then run
+  // the photo check and show the honest review modal. No fabricated "finished
+  // pages" — see src/pages_pdp.ts's review-note copy.
   if (form) {
     form.addEventListener('submit', async (e) => {
       e.preventDefault()
       if (!uploadedPhotoKey) {
         setPhotoStatus('Please upload a photo before continuing.', true)
         document.getElementById('personalise')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+        return
+      }
+      const nameError = validateChildName(nameInput?.value)
+      if (nameError) {
+        setPhotoStatus(nameError, true)
+        nameInput?.focus()
+        return
+      }
+      const ageError = validateChildAge(ageInput?.value)
+      if (ageError) {
+        setPhotoStatus(ageError, true)
+        ageInput?.focus()
         return
       }
       if (faceSelectionRequired) {
@@ -353,8 +489,8 @@ import { getPhotoPolicy, createUserBook, initiatePhotoUpload, completePhotoUploa
         return
       }
 
-      const childName = (nameInput?.value || 'gando').trim()
-      const childAge = Number(ageInput?.value || 6)
+      const childName = String(nameInput?.value || '').trim()
+      const childAge = Number(ageInput?.value)
       const language = document.getElementById('lang')?.value || 'en'
       const dedication = document.getElementById('dedication')?.value || ''
 
@@ -366,18 +502,16 @@ import { getPhotoPolicy, createUserBook, initiatePhotoUpload, completePhotoUploa
         photoUploadKey: uploadedPhotoKey
       })
       if (!saved.ok) {
-        setPhotoStatus(saved.error || 'Could not save personalisation — please try again.', true)
+        const firstField = saved.fields ? Object.values(saved.fields)[0] : null
+        setPhotoStatus(firstField || saved.error || 'Could not save personalisation — please try again.', true)
         return
       }
 
-      // Only now does the book sit in awaiting_photo_analysis (patch above
-      // just attached the photo) — this is the one call that actually
-      // records detected faces and advances the state machine.
+      // Only now does the book sit in awaiting_photo_analysis (the patch above
+      // attached the photo) — this is the one call that records detected
+      // faces and advances the state machine.
       await runAnalysis(uploadedPhotoKey)
-      if (availableFaces.length === 0) {
-        // runAnalysis already reset uploadedPhotoKey/Url and showed an error.
-        return
-      }
+      if (analysisState === 'blocked') return
 
       const elModalName = document.getElementById('modal-child-name')
       const elModalAge = document.getElementById('modal-child-age')
@@ -385,6 +519,8 @@ import { getPhotoPolicy, createUserBook, initiatePhotoUpload, completePhotoUploa
       if (elModalName) elModalName.textContent = childName
       if (elModalAge) elModalAge.textContent = String(childAge)
       if (elModalLang) elModalLang.textContent = document.getElementById('lang')?.selectedOptions?.[0]?.textContent || language
+      const elCover = document.getElementById('preview-cover')
+      if (elCover) elCover.textContent = selectedCover.charAt(0).toUpperCase() + selectedCover.slice(1)
 
       const previewImg = document.getElementById('preview-child-face')
       if (previewImg && photoPreview) previewImg.src = photoPreview.src
@@ -395,11 +531,10 @@ import { getPhotoPolicy, createUserBook, initiatePhotoUpload, completePhotoUploa
     })
   }
 
-  // Modal Confirm -> Add to Cart. Only an opaque userBookId is authoritative;
-  // the other fields here are non-authoritative display data for the cart/
-  // checkout UI — the server always re-reads the real personalization by
-  // userBookId at order time (src/orders.ts), so a forged value here changes
-  // nothing.
+  // Modal Confirm -> Add to Cart. Only the opaque userBookId is
+  // authoritative; the other fields are non-authoritative display data. The
+  // thumbnail is the product's public image — never a blob:/data: URL and
+  // never the private R2 key (D-05).
   btnConfirm?.addEventListener('click', async () => {
     if (!uploadedPhotoKey || !userBookId) {
       setPhotoStatus('Please upload a photo before adding to cart.', true)
@@ -408,25 +543,27 @@ import { getPhotoPolicy, createUserBook, initiatePhotoUpload, completePhotoUploa
     btnConfirm.disabled = true
     btnConfirm.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Adding to Cart…'
 
-    const childName = (nameInput?.value || 'gando').trim()
-    const childAge = ageInput?.value || '6'
-    const langSelect = document.getElementById('lang')
-    const languageLabel = langSelect?.selectedOptions?.[0]?.textContent || langSelect?.value || 'English'
-
+    const elModalName = document.getElementById('modal-child-name')
+    const elModalAge = document.getElementById('modal-child-age')
     const item = {
-      id: `${form?.dataset.slug || 'book'}-${Date.now()}`,
-      slug: form?.dataset.slug || 'the-portugals-new-legend',
-      title: form?.dataset.title || "The Portugal's New Legend",
-      image: uploadedPhotoUrl || form?.dataset.image || '/static/img/cover-portugal.webp',
+      id: `${productSlug || 'book'}-${Date.now()}`,
+      slug: productSlug,
+      title: form?.dataset.title || 'Personalised storybook',
+      image: form?.dataset.image || '/static/img/cover-princess.webp',
       kind: form?.dataset.kind || 'book',
+      coverType: selectedCover,
       userBookId,
-      childName,
-      childAge,
-      language: languageLabel,
+      childName: elModalName?.textContent || '',
+      childAge: elModalAge?.textContent || '',
+      language: document.getElementById('lang')?.value || 'en',
+      languageLabel: document.getElementById('lang')?.selectedOptions?.[0]?.textContent || '',
       qty: 1
     }
 
     addItem(item)
+    // A new draft key for the NEXT purchase of this product — the book just
+    // added is identified by its own userBookId.
+    rotateDraftKey(productSlug)
     window.location.href = '/cart'
   })
 })()
