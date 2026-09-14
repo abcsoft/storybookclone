@@ -1,7 +1,8 @@
 // Admin panel: layout + server-rendered views (dashboard, products, orders, users, discounts, inbox).
 import { esc } from './layout'
 import { money, type Product } from './data'
-import { ORDER_STATUSES, statusLabel, type DiscountRow } from './db'
+import { type DiscountRow } from './db'
+import { ORDER_STATUSES, PREVIEW_STATUSES, ORDER_STATUS_FLOW, PREVIEW_STATUS_FLOW, orderTransitionNeedsReason, statusLabel, type OrderStatus, type PreviewStatus } from './orders-status'
 
 function adminPage(opts: { title: string; active: string; body: string }) {
   const nav = [
@@ -71,7 +72,7 @@ export function adminLogin(msg?: string) {
 
 export function adminDashboard(s: {
   orders: number
-  revenue: number
+  orderValue: number
   users: number
   products: number
   pending: number
@@ -79,7 +80,9 @@ export function adminDashboard(s: {
   recentOrders: any[]
 }) {
   const cards = [
-    ['fa-sack-dollar', `$${s.revenue.toFixed(2)}`, 'Revenue (paid orders)'],
+    // S-10: this is NOT revenue — no payment/ledger exists before Phase 4.
+    // It is the total value of non-cancelled orders, labelled honestly.
+    ['fa-sack-dollar', `$${s.orderValue.toFixed(2)}`, 'Order value (non-cancelled, unpaid)'],
     ['fa-box-open', String(s.orders), 'Total orders'],
     ['fa-clock', String(s.pending), 'Awaiting preview/approval'],
     ['fa-users', String(s.users), 'Customers'],
@@ -145,13 +148,14 @@ export function adminOrders(orders: any[], currentStatus: string) {
   })
 }
 
-export function adminOrderDetail(o: any, items: any[], flash?: string) {
+export function adminOrderDetail(o: any, items: any[], flash?: string, error?: string) {
   return adminPage({
     title: `Order #${o.id}`,
     active: 'orders',
     body: `
     <p><a class="a-link" href="/admin/orders">← All orders</a></p>
     ${flash ? `<p class="a-notice ok">${esc(flash)}</p>` : ''}
+    ${error ? `<p class="a-notice error">${esc(error)}</p>` : ''}
     <div class="a-cols">
       <section class="a-card">
         <h2>Order #${o.id} ${statusBadge(o.status)}</h2>
@@ -167,8 +171,18 @@ export function adminOrderDetail(o: any, items: any[], flash?: string) {
         <form method="post" action="/admin/orders/${o.id}/status" class="a-inline-form">
           <label>Order status
             <select name="status">
-              ${ORDER_STATUSES.map((s) => `<option value="${s}" ${o.status === s ? 'selected' : ''}>${statusLabel(s)}</option>`).join('')}
+              ${(() => {
+                // Only the transitions that are actually legal from the
+                // current state (plus the current state itself) are offered —
+                // the server rejects anything else regardless of the UI.
+                const current = String(o.status) as OrderStatus
+                const options: readonly string[] = [current, ...(ORDER_STATUS_FLOW[current] || [])]
+                return options.map((s) => `<option value="${s}" ${o.status === s ? 'selected' : ''}>${statusLabel(s)}</option>`).join('')
+              })()}
             </select>
+          </label>
+          <label>Reason${orderTransitionNeedsReason(String(o.status) as OrderStatus) ? '' : ' (required to cancel)'}
+            <input name="reason" type="text" maxlength="200" placeholder="Why is this changing?">
           </label>
           <button class="a-btn" type="submit">Update status</button>
         </form>
@@ -194,10 +208,15 @@ export function adminOrderDetail(o: any, items: any[], flash?: string) {
             <form method="post" action="/admin/items/${it.id}/preview" class="a-inline-form row">
               <label>Preview
                 <select name="preview_status">
-                  ${['pending', 'preview_ready', 'changes_requested', 'approved']
-                    .map((s) => `<option value="${s}" ${it.preview_status === s ? 'selected' : ''}>${statusLabel(s)}</option>`)
-                    .join('')}
+                  ${(() => {
+                    const current = String(it.preview_status || 'pending') as PreviewStatus
+                    const options: readonly string[] = [current, ...(PREVIEW_STATUS_FLOW[current] || [])]
+                    return options.map((s) => `<option value="${s}" ${it.preview_status === s ? 'selected' : ''}>${statusLabel(s)}</option>`).join('')
+                  })()}
                 </select>
+              </label>
+              <label>Reason
+                <input name="reason" type="text" maxlength="200" placeholder="Required to request changes">
               </label>
               <button class="a-btn ghost" type="submit">Save</button>
             </form>
@@ -291,13 +310,14 @@ export function adminProductForm(p: Product | null, flash?: string) {
   })
 }
 
-export function adminDiscounts(rows: DiscountRow[], flash?: string) {
+export function adminDiscounts(rows: DiscountRow[], flash?: string, error?: string) {
   return adminPage({
     title: 'Discounts',
     active: 'discounts',
     body: `
     <h1>Discount codes</h1>
     ${flash ? `<p class="a-notice ok">${esc(flash)}</p>` : ''}
+    ${error ? `<p class="a-notice error">${esc(error)}</p>` : ''}
     <div class="a-table-scroll"><table class="a-table">
       <thead><tr><th>Code</th><th>Percent</th><th>Min books</th><th>Applies to</th><th>Auto-apply</th><th>Active</th><th></th></tr></thead>
       <tbody>

@@ -46,6 +46,7 @@ import {
   readSessionToken,
   requireAuth,
   requireAdmin,
+  adminActor,
   type AuthUser
 } from './auth'
 import {
@@ -70,6 +71,8 @@ import { PHOTO_POLICY, photoPolicySummary } from './photo-policy'
 import { requestPasswordReset, resetPassword } from './password-reset'
 import { consumeRateLimit } from './rate-limit'
 import { registerPersonalizationRoutes } from './personalization/routes'
+import { transitionOrderStatus, transitionPreviewStatus } from './orders-status'
+import { recordAdminAudit } from './admin-audit'
 import { resolveOwner as resolvePersonalizationOwner } from './personalization/ownership'
 import { ownerToken as personalizationOwnerToken } from './personalization/uploads'
 
@@ -112,7 +115,7 @@ export type Bindings = {
   FACE_ANALYSIS_API_URL?: string
   FACE_ANALYSIS_API_KEY?: string
 }
-export type Vars = { user: AuthUser | null }
+export type Vars = { user: AuthUser | null; requestId: string | null }
 
 const app = new Hono<{ Bindings: Bindings; Variables: Vars }>()
 
@@ -287,6 +290,15 @@ app.use('*', async (c, next) => {
   await next()
 })
 app.use('*', attachUser)
+
+// A per-request correlation id, available to every handler/audit event. It is
+// request-scoped (Hono Variables) — never module/global state.
+app.use('*', async (c, next) => {
+  const requestId = crypto.randomUUID()
+  c.set('requestId', requestId)
+  c.header('X-Request-Id', requestId)
+  await next()
+})
 
 // Phase 2 personalization domain (user-books, uploads lifecycle, face
 // analysis, personalization revisions) — see src/personalization/*.
@@ -988,17 +1000,39 @@ app.post('/admin/login', async (c) => {
   return c.redirect('/admin')
 })
 
-// Admin guard for everything below
+// Admin guard for everything below — the ONE central admin authorization
+// check (S-08 prerequisite). `adminActor` also supplies the actor for audit.
 app.use('/admin/*', async (c, next) => {
-  const u = c.get('user')
-  if (!u || u.role !== 'admin') return c.redirect('/admin/login')
+  const actor = adminActor(c, 'page')
+  if (actor instanceof Response) return actor
   await next()
 })
 app.use('/admin', async (c, next) => {
-  const u = c.get('user')
-  if (!u || u.role !== 'admin') return c.redirect('/admin/login')
+  const actor = adminActor(c, 'page')
+  if (actor instanceof Response) return actor
   await next()
 })
+
+/** Records one immutable audit event for an admin mutation (never blocks on failure of the action itself). */
+async function auditAdmin(
+  c: Context<{ Bindings: Bindings; Variables: Vars }>,
+  action: string,
+  entityType: string,
+  entityId: string | number | null,
+  reason: string | null,
+  metadata?: Record<string, unknown>
+) {
+  const actor = c.get('user')
+  await recordAdminAudit(c.env.DB, {
+    actorUserId: actor?.id ?? null,
+    actorEmail: actor?.email ?? null,
+    action,
+    entityType,
+    entityId,
+    reason,
+    metadata
+  })
+}
 
 app.get('/admin', async (c) => {
   const db = c.env.DB
@@ -1010,8 +1044,10 @@ app.get('/admin', async (c) => {
     one("SELECT COUNT(*) n FROM orders WHERE status IN ('pending_preview','preview_sent')"),
     one('SELECT COUNT(*) n FROM contacts WHERE resolved = 0')
   ])
-  const revenue =
-    (await db.prepare("SELECT COALESCE(SUM(total),0) n FROM orders WHERE status NOT IN ('cancelled')").first<{ n: number }>())?.n ?? 0
+  // INTEGER minor units are the authoritative total (D-09). This is order
+  // VALUE, not revenue — no payment ledger exists before Phase 4 (S-10).
+  const orderValueMinor =
+    (await db.prepare("SELECT COALESCE(SUM(total_minor),0) n FROM orders WHERE status <> 'cancelled'").first<{ n: number }>())?.n ?? 0
   const recent =
     (
       await db
@@ -1021,7 +1057,7 @@ app.get('/admin', async (c) => {
         )
         .all()
     ).results || []
-  return c.html(adminDashboard({ orders, revenue, users, products: productsN, pending, messages, recentOrders: recent }))
+  return c.html(adminDashboard({ orders, orderValue: minorToMajor(orderValueMinor), users, products: productsN, pending, messages, recentOrders: recent }))
 })
 
 app.get('/admin/orders', async (c) => {
@@ -1040,14 +1076,21 @@ app.get('/admin/orders/:id', async (c) => {
   const order = await c.env.DB.prepare('SELECT * FROM orders WHERE id = ?').bind(id).first()
   if (!order) return c.html(adminPage404())
   const items = (await c.env.DB.prepare('SELECT * FROM order_items WHERE order_id = ?').bind(id).all()).results || []
-  return c.html(adminOrderDetail(order, items, c.req.query('saved') ? 'Saved.' : undefined))
+  return c.html(adminOrderDetail(order, items, c.req.query('saved') ? 'Saved.' : undefined, c.req.query('error') || undefined))
 })
 
 app.post('/admin/orders/:id/status', async (c) => {
   const id = Number(c.req.param('id'))
   const body = await c.req.parseBody()
-  const status = String(body.status || '')
-  await c.env.DB.prepare("UPDATE orders SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(status, id).run()
+  // S-07: a validated, enum-checked transition — not an arbitrary string write.
+  const result = await transitionOrderStatus(c.env.DB, {
+    orderId: id,
+    to: String(body.status || ''),
+    reason: String(body.reason || ''),
+    actor: { userId: c.get('user')?.id ?? null, email: c.get('user')?.email ?? null, requestId: c.get('requestId') ?? undefined }
+  })
+  if (!result.ok) return c.redirect(`/admin/orders/${id}?error=${encodeURIComponent(result.error)}`)
+  if (!result.noop) await auditAdmin(c, 'order.status_change', 'order', id, String(body.reason || ''), { from: result.from, to: result.to })
   return c.redirect(`/admin/orders/${id}?saved=1`)
 })
 
@@ -1057,16 +1100,24 @@ app.post('/admin/orders/:id/notes', async (c) => {
   await c.env.DB.prepare('UPDATE orders SET admin_notes = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
     .bind(String(body.notes || ''), id)
     .run()
+  await auditAdmin(c, 'order.notes_update', 'order', id, null, { length: String(body.notes || '').length })
   return c.redirect(`/admin/orders/${id}?saved=1`)
 })
 
 app.post('/admin/items/:id/preview', async (c) => {
   const id = Number(c.req.param('id'))
   const body = await c.req.parseBody()
-  const status = String(body.preview_status || 'pending')
   const item = await c.env.DB.prepare('SELECT order_id FROM order_items WHERE id = ?').bind(id).first<{ order_id: number }>()
   if (!item) return c.redirect('/admin/orders')
-  await c.env.DB.prepare('UPDATE order_items SET preview_status = ? WHERE id = ?').bind(status, id).run()
+  // S-07: enum-checked, reason-guarded preview transition with history.
+  const result = await transitionPreviewStatus(c.env.DB, {
+    itemId: id,
+    to: String(body.preview_status || ''),
+    reason: String(body.reason || ''),
+    actor: { userId: c.get('user')?.id ?? null, email: c.get('user')?.email ?? null, requestId: c.get('requestId') ?? undefined }
+  })
+  if (!result.ok) return c.redirect(`/admin/orders/${item.order_id}?error=${encodeURIComponent(result.error)}`)
+  if (!result.noop) await auditAdmin(c, 'order_item.preview_status_change', 'order_item', id, String(body.reason || ''), { from: result.from, to: result.to })
   return c.redirect(`/admin/orders/${item.order_id}?saved=1`)
 })
 
@@ -1083,8 +1134,8 @@ app.post('/admin/products/new', async (c) => {
   const slug = slugify(String(b.slug || b.title || ''))
   try {
     await c.env.DB.prepare(
-      `INSERT INTO products (slug, title, tagline, description, story, price, compare_at, image, gender, category, ages, age_min, age_max, pages, reviews, rating, bestseller, new_release, career, traits_json, active)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO products (slug, title, tagline, description, story, price, price_minor, compare_at, compare_at_price_minor, currency, image, gender, category, ages, age_min, age_max, pages, reviews, rating, bestseller, new_release, career, traits_json, active)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'USD', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
       .bind(
         slug,
@@ -1129,7 +1180,7 @@ app.post('/admin/products/:id', async (c) => {
   const id = Number(c.req.param('id'))
   const b = await c.req.parseBody()
   await c.env.DB.prepare(
-    `UPDATE products SET title=?, tagline=?, description=?, story=?, price=?, compare_at=?, image=?, gender=?, category=?, ages=?, age_min=?, age_max=?, pages=?, reviews=?, rating=?, bestseller=?, new_release=?, career=?, traits_json=?, active=? WHERE id=?`
+    `UPDATE products SET title=?, tagline=?, description=?, story=?, price=?, price_minor=?, compare_at=?, compare_at_price_minor=?, image=?, gender=?, category=?, ages=?, age_min=?, age_max=?, pages=?, reviews=?, rating=?, bestseller=?, new_release=?, career=?, traits_json=?, active=? WHERE id=?`
   )
     .bind(
       String(b.title || ''),
@@ -1159,6 +1210,14 @@ app.post('/admin/products/:id', async (c) => {
 })
 
 // ================= PDP EDITOR =================
+// Every mutating PDP-editor request is audited centrally, so no individual
+// section handler can forget to. (Authorization is the shared /admin guard.)
+app.use('/admin/products/:id/pdp/*', async (c, next) => {
+  await next()
+  if (c.req.method === 'POST' && c.res.status < 400) {
+    await auditAdmin(c, 'pdp.mutation', 'product', c.req.param('id') ?? null, null, { path: new URL(c.req.url).pathname })
+  }
+})
 // Mounted under the same /admin guard used above. Admin goes to /admin/products/:id and clicks "Edit page".
 app.get('/admin/products/:id/pdp', async (c) => {
   const id = Number(c.req.param('id'))
@@ -1166,7 +1225,8 @@ app.get('/admin/products/:id/pdp', async (c) => {
   if (!row) return c.html(adminLogin('Product not found.'))
   const { toProduct } = await import('./db')
   const p = { ...toProduct(row), active: row.active } as any
-  ;(globalThis as any).__pdpAllProducts = (await queryProducts(c.env.DB, { includeInactive: true })).map((x) => ({ id: x.id, title: x.title, image: x.image, slug: x.slug }))
+  // No globalThis / module-level request state (C-07): adminPdpEditor loads
+  // the product list it needs itself, request-scoped.
   return adminPdpEditor(c, p)
 })
 
@@ -1325,30 +1385,34 @@ app.post('/admin/products/:id/pdp/faq/delete', async (c) => {
 // ---- discounts ----
 app.get('/admin/discounts', async (c) => {
   const rows = (await c.env.DB.prepare('SELECT * FROM discounts ORDER BY id').all<DiscountRow>()).results || []
-  return c.html(adminDiscounts(rows, c.req.query('saved') ? 'Saved.' : undefined))
+  return c.html(adminDiscounts(rows, c.req.query('saved') ? 'Saved.' : undefined, c.req.query('error') || undefined))
 })
 
 app.post('/admin/discounts', async (c) => {
   const b = await c.req.parseBody()
+  const code = String(b.code || '').toUpperCase().trim()
+  const percent = Number(b.percent || 0)
+  const minBooks = Number(b.min_books || 0)
+  const appliesTo = String(b.applies_to || 'books')
+  // Server-side validation (the browser's min/max are UX only).
+  if (!/^[A-Z0-9_-]{2,32}$/.test(code) || !Number.isFinite(percent) || percent <= 0 || percent > 100 || !Number.isInteger(minBooks) || minBooks < 0 || minBooks > 100 || !['books', 'all'].includes(appliesTo)) {
+    return c.redirect('/admin/discounts?error=' + encodeURIComponent('Invalid discount: check the code, percent (1-100), minimum books (0-100) and scope.'))
+  }
   try {
     await c.env.DB.prepare('INSERT INTO discounts (code, percent, min_books, applies_to, auto_apply, active) VALUES (?, ?, ?, ?, ?, 1)')
-      .bind(
-        String(b.code || '').toUpperCase().trim(),
-        Number(b.percent || 0),
-        Number(b.min_books || 0),
-        String(b.applies_to || 'books'),
-        b.auto_apply ? 1 : 0
-      )
+      .bind(code, percent, minBooks, appliesTo, b.auto_apply ? 1 : 0)
       .run()
   } catch {
-    return c.redirect('/admin/discounts')
+    return c.redirect('/admin/discounts?error=' + encodeURIComponent('That discount code already exists.'))
   }
+  await auditAdmin(c, 'discount.create', 'discount', code, null, { percent, minBooks, appliesTo, autoApply: b.auto_apply ? 1 : 0 })
   return c.redirect('/admin/discounts?saved=1')
 })
 
 app.post('/admin/discounts/:id/toggle', async (c) => {
   const id = Number(c.req.param('id'))
   await c.env.DB.prepare('UPDATE discounts SET active = 1 - active WHERE id = ?').bind(id).run()
+  await auditAdmin(c, 'discount.toggle', 'discount', id, null, {})
   return c.redirect('/admin/discounts?saved=1')
 })
 
@@ -1430,6 +1494,8 @@ app.post('/admin/ai-settings', async (c) => {
     enableAi
   ).run()
 
+  // Never audits the endpoint/key value itself — only that the settings changed.
+  await auditAdmin(c, 'ai_settings.update', 'ai_settings', 1, null, { provider, enableAiPreview: enableAi })
   return c.redirect('/admin/ai-settings?saved=1')
 })
 
@@ -1445,10 +1511,8 @@ app.post('/admin/ai-settings', async (c) => {
 // not-configured/not-tested response, never a real or simulated success,
 // regardless of provider.
 app.post('/api/admin/test-ai-connection', async (c) => {
-  const u = c.get('user')
-  if (!u || u.role !== 'admin') {
-    return c.json({ success: false, message: 'Unauthorized. Admin login required.' }, 401)
-  }
+  const actor = adminActor(c, 'json')
+  if (actor instanceof Response) return actor
 
   const { provider, endpoint } = await c.req.json<any>().catch(() => ({}) as any)
 
@@ -1683,6 +1747,7 @@ app.get('/admin/messages', async (c) => {
 app.post('/admin/messages/:id/toggle', async (c) => {
   const id = Number(c.req.param('id'))
   await c.env.DB.prepare('UPDATE contacts SET resolved = 1 - resolved WHERE id = ?').bind(id).run()
+  await auditAdmin(c, 'contact.toggle_resolved', 'contact', id, null, {})
   return c.redirect('/admin/messages?saved=1')
 })
 

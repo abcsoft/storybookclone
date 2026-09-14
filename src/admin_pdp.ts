@@ -3,7 +3,7 @@
 import { esc } from './layout'
 import { money } from './data'
 import { loadPdp, ensurePdpPageRow } from './pdp'
-import type { Product } from './db'
+import { queryProducts, type Product } from './db'
 
 function adminPage(opts: { title: string; active: string; body: string; previewHref?: string }) {
   return `<!DOCTYPE html>
@@ -35,6 +35,15 @@ export async function adminPdpEditor(c: any, product: Product, flash?: string) {
   // (src/data.ts) has no DB id.
   await ensurePdpPageRow(c.env.DB, product.id!)
   const data = await loadPdp(c.env.DB, product)
+  // Request-scoped: loaded here and threaded through explicitly. It is NEVER
+  // stored on globalThis/module scope (C-07), so two concurrent admin requests
+  // can never leak each other's product lists into a rendered page.
+  const allProducts = (await queryProducts(c.env.DB, { includeInactive: true })).map((x) => ({
+    id: x.id,
+    title: x.title,
+    image: x.image,
+    slug: x.slug
+  }))
   const previewHref = product.category === 'sticker' ? `/stickers/${product.slug}` : `/books/${product.slug}`
   const slugSafe = String(product.slug || '')
 
@@ -65,7 +74,7 @@ export async function adminPdpEditor(c: any, product: Product, flash?: string) {
   ${tabTrust(product, data)}
   ${tabReactions(product, data)}
   ${tabMedia(product, data)}
-  ${tabRelated(product, data)}
+  ${await tabRelated(product, data, allProducts)}
   ${tabFaqs(product, data)}
 
   <script>
@@ -351,20 +360,22 @@ function tabMedia(p: Product, d: any) {
 }
 
 // ---------- Related (also like) ----------
-async function tabRelated(p: Product, d: any) {
+type RelatedProductOption = { id?: number; title: string; image: string; slug: string }
+
+async function tabRelated(p: Product, d: any, allProducts: RelatedProductOption[]) {
   return `<section class="a-card pdp-tab" data-tab="related" hidden>
     <h2>"You may also like" — pick up to 8 products</h2>
     <p class="muted">Tick to include. Order is preserved from top to bottom.</p>
-    ${await renderRelatedPicker(p, d)}
+    ${await renderRelatedPicker(p, d, allProducts)}
   </section>`
 }
 
-async function renderRelatedPicker(p: Product, d: any) {
-  // choose via a separate request to keep this file pure — but we already routed through adminPdpEditor
-  // The caller passes the related list (d.related), so we render against that plus all active products.
-  // But to avoid extra roundtrips we accept a pre-loaded `allProducts` via global var.
+async function renderRelatedPicker(p: Product, d: any, allProducts: RelatedProductOption[]) {
+  // The option list is passed in explicitly by the caller (request-scoped) —
+  // it is never read from a global, so a concurrent admin request cannot leak
+  // its own product list into this page (C-06/C-07).
   const html = `<script>
-    window.__pdpRelated = ${JSON.stringify((globalThis as any).__pdpAllProducts || [])}
+    window.__pdpRelated = ${JSON.stringify(allProducts)}
     window.__relatedCurrent = ${JSON.stringify((d.related || []).map((r: any) => r.id))}
   </script>
   <div id="pdp-related-picker"></div>

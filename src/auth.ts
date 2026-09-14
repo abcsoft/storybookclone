@@ -116,3 +116,26 @@ export function requireAdmin(c: Context): AuthUser | Response {
   if (user.role !== 'admin') return c.json({ error: 'Admin access required' }, 403)
   return user
 }
+
+/**
+ * The ONE central admin authorization helper (S-08 prerequisite). Every admin
+ * page/mutation route resolves its actor through this, so there is exactly one
+ * definition of "is this caller an admin". A full role/permission matrix is
+ * Phase 6 — this deliberately does NOT fake one.
+ *
+ * `mode: 'page'` returns a redirect Response (HTML navigation); `mode: 'json'`
+ * returns a JSON 401/403 Response (API/form posts made by fetch).
+ */
+export function adminActor(c: Context, mode: 'page' | 'json' = 'page'): AuthUser | Response {
+  const user = c.get('user') as AuthUser | null
+  if (user && user.role === 'admin') return user
+  if (mode === 'json') {
+    return c.json({ error: { code: user ? 'forbidden' : 'unauthenticated', message: user ? 'Admin access required.' : 'Login required.' } }, user ? 403 : 401)
+  }
+  return c.redirect('/admin/login')
+}
+
+/** Convenience predicate for tests/UI: is this a privileged admin session? */
+export function isAdmin(user: AuthUser | null | undefined): boolean {
+  return !!user && user.role === 'admin'
+}
