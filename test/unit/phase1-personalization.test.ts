@@ -24,8 +24,8 @@ beforeEach(() => {
 
 async function seedProduct(slug = 'phase1-book', ageMin = 4, ageMax = 8, e: TestEnv = env) {
   await e.DB.prepare(
-    `INSERT INTO products (slug, title, tagline, description, story, price, image, gender, category, ages, age_min, age_max, pages, reviews, rating, active)
-     VALUES (?, 'Phase 1 Book', '', '', '', 34.99, '', 'unisex', 'book', '4-8', ?, ?, 32, 0, 4.8, 1)`
+    `INSERT INTO products (slug, title, tagline, description, story, price, price_minor, image, gender, category, ages, age_min, age_max, pages, reviews, rating, active)
+     VALUES (?, 'Phase 1 Book', '', '', '', 34.99, 3499, '', 'unisex', 'book', '4-8', ?, ?, 32, 0, 4.8, 1)`
   )
     .bind(slug, ageMin, ageMax)
     .run()
@@ -80,7 +80,7 @@ async function analyze(jar: CookieJar, uploadKey: string, e: TestEnv = env) {
 /** Minimal valid order row so an upload_claims FK target exists. */
 async function seedOrderRow(db: D1Database): Promise<number> {
   await db
-    .prepare(`INSERT INTO orders (full_name, email, address, city, country, shipping, subtotal, discount, total) VALUES ('A', 'a@b.c', 'x', 'y', 'z', 12, 34.99, 0, 46.99)`)
+    .prepare(`INSERT INTO orders (full_name, email, address, city, country, shipping, subtotal, discount, total, subtotal_minor, discount_minor, shipping_minor, total_minor, currency) VALUES ('A', 'a@b.c', 'x', 'y', 'z', 12, 34.99, 0, 46.99, 3499, 0, 1200, 4699, 'USD')`)
     .run()
   return (await db.prepare('SELECT id FROM orders ORDER BY id DESC LIMIT 1').first<{ id: number }>())!.id
 }

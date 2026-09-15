@@ -21,10 +21,10 @@ const ctx = (overrides: Partial<{ userId: number | null; uploadOwnerToken: strin
 async function seedProduct(db: D1Database, slug = 'the-portugals-new-legend', price = 34.99) {
   await db
     .prepare(
-      `INSERT INTO products (slug, title, tagline, description, story, price, image, gender, category, ages, age_min, age_max, pages, reviews, rating, active)
-       VALUES (?, ?, '', '', '', ?, '', 'unisex', 'book', '4-8', 4, 8, 32, 0, 4.8, 1)`
+      `INSERT INTO products (slug, title, tagline, description, story, price, price_minor, image, gender, category, ages, age_min, age_max, pages, reviews, rating, active)
+       VALUES (?, ?, '', '', '', ?, ?, '', 'unisex', 'book', '4-8', 4, 8, 32, 0, 4.8, 1)`
     )
-    .bind(slug, 'Test Book', price)
+    .bind(slug, 'Test Book', price, Math.round(price * 100))
     .run()
 }
 
@@ -272,7 +272,7 @@ describe('createOrder — atomic photo claiming under concurrency (TOCTOU regres
     await seedUpload(db, 'uploads/direct-race.jpg', OWNER)
 
     await db.batch([
-      db.prepare("INSERT INTO orders (full_name, email, address, city, country, subtotal, total, idempotency_key) VALUES ('A','a@example.com','x','y','z',1,1,'direct-a')"),
+      db.prepare("INSERT INTO orders (full_name, email, address, city, country, subtotal, discount, total, subtotal_minor, discount_minor, shipping_minor, total_minor, currency, idempotency_key) VALUES ('A','a@example.com','x','y','z',1,0,1,100,0,0,100,'USD','direct-a')"),
       db
         .prepare(`INSERT INTO upload_claims (upload_key, order_id, owner_token) VALUES (?, (SELECT id FROM orders WHERE idempotency_key = ?), ?)`)
         .bind('uploads/direct-race.jpg', 'direct-a', OWNER)
@@ -280,7 +280,7 @@ describe('createOrder — atomic photo claiming under concurrency (TOCTOU regres
 
     await expect(
       db.batch([
-        db.prepare("INSERT INTO orders (full_name, email, address, city, country, subtotal, total, idempotency_key) VALUES ('B','b@example.com','x','y','z',1,1,'direct-b')"),
+        db.prepare("INSERT INTO orders (full_name, email, address, city, country, subtotal, discount, total, subtotal_minor, discount_minor, shipping_minor, total_minor, currency, idempotency_key) VALUES ('B','b@example.com','x','y','z',1,0,1,100,0,0,100,'USD','direct-b')"),
         db
           .prepare(`INSERT INTO upload_claims (upload_key, order_id, owner_token) VALUES (?, (SELECT id FROM orders WHERE idempotency_key = ?), ?)`)
           .bind('uploads/direct-race.jpg', 'direct-b', OWNER)
@@ -300,7 +300,7 @@ describe('createOrder — atomic photo claiming under concurrency (TOCTOU regres
     await seedProduct(db, 'book-trigger-owner')
     await seedUpload(db, 'uploads/trigger-owner-mismatch.jpg', OWNER)
 
-    await db.prepare("INSERT INTO orders (full_name, email, address, city, country, subtotal, total, idempotency_key) VALUES ('C','c@example.com','x','y','z',1,1,'trigger-owner')").run()
+    await db.prepare("INSERT INTO orders (full_name, email, address, city, country, subtotal, discount, total, subtotal_minor, discount_minor, shipping_minor, total_minor, currency, idempotency_key) VALUES ('C','c@example.com','x','y','z',1,0,1,100,0,0,100,'USD','trigger-owner')").run()
     await expect(
       db
         .prepare(`INSERT INTO upload_claims (upload_key, order_id, owner_token) VALUES (?, (SELECT id FROM orders WHERE idempotency_key = ?), ?)`)
@@ -320,7 +320,7 @@ describe('createOrder — atomic photo claiming under concurrency (TOCTOU regres
       .bind('uploads/trigger-expired.jpg', OWNER, 'image/jpeg', 12345, 900, 900, pastExpiry)
       .run()
 
-    await db.prepare("INSERT INTO orders (full_name, email, address, city, country, subtotal, total, idempotency_key) VALUES ('D','d@example.com','x','y','z',1,1,'trigger-expired')").run()
+    await db.prepare("INSERT INTO orders (full_name, email, address, city, country, subtotal, discount, total, subtotal_minor, discount_minor, shipping_minor, total_minor, currency, idempotency_key) VALUES ('D','d@example.com','x','y','z',1,0,1,100,0,0,100,'USD','trigger-expired')").run()
     await expect(
       db
         .prepare(`INSERT INTO upload_claims (upload_key, order_id, owner_token) VALUES (?, (SELECT id FROM orders WHERE idempotency_key = ?), ?)`)
@@ -335,7 +335,7 @@ describe('createOrder — atomic photo claiming under concurrency (TOCTOU regres
     await seedUpload(db, 'uploads/trigger-consumed.jpg', OWNER)
     await db.prepare("UPDATE photo_uploads SET consumed_at = CURRENT_TIMESTAMP WHERE upload_key = 'uploads/trigger-consumed.jpg'").run()
 
-    await db.prepare("INSERT INTO orders (full_name, email, address, city, country, subtotal, total, idempotency_key) VALUES ('E','e@example.com','x','y','z',1,1,'trigger-consumed')").run()
+    await db.prepare("INSERT INTO orders (full_name, email, address, city, country, subtotal, discount, total, subtotal_minor, discount_minor, shipping_minor, total_minor, currency, idempotency_key) VALUES ('E','e@example.com','x','y','z',1,0,1,100,0,0,100,'USD','trigger-consumed')").run()
     await expect(
       db
         .prepare(`INSERT INTO upload_claims (upload_key, order_id, owner_token) VALUES (?, (SELECT id FROM orders WHERE idempotency_key = ?), ?)`)
@@ -357,7 +357,7 @@ describe('createOrder — atomic photo claiming under concurrency (TOCTOU regres
     // the batch actually running (simulated directly here).
     await db.prepare("UPDATE photo_uploads SET expires_at = ? WHERE upload_key = 'uploads/late-expiry.jpg'").bind(Math.floor(Date.now() / 1000) - 1).run()
 
-    await db.prepare("INSERT INTO orders (full_name, email, address, city, country, subtotal, total, idempotency_key) VALUES ('F','f@example.com','x','y','z',1,1,'late-expiry')").run()
+    await db.prepare("INSERT INTO orders (full_name, email, address, city, country, subtotal, discount, total, subtotal_minor, discount_minor, shipping_minor, total_minor, currency, idempotency_key) VALUES ('F','f@example.com','x','y','z',1,0,1,100,0,0,100,'USD','late-expiry')").run()
     await expect(
       db
         .prepare(`INSERT INTO upload_claims (upload_key, order_id, owner_token) VALUES (?, (SELECT id FROM orders WHERE idempotency_key = ?), ?)`)
@@ -386,12 +386,13 @@ describe('createOrder — atomicity', () => {
     const before = await db.prepare('SELECT COUNT(*) AS n FROM orders').first<{ n: number }>()
     await expect(
       db.batch([
-        db.prepare("INSERT INTO orders (full_name, email, address, city, country, subtotal, total, idempotency_key) VALUES ('x','x@example.com','a','b','c',1,1,'atomic-test')"),
-        db.prepare('INSERT INTO order_items (order_id, slug, title, unit_price) VALUES ((SELECT id FROM orders WHERE idempotency_key = ?), ?, ?, ?)').bind(
+        db.prepare("INSERT INTO orders (full_name, email, address, city, country, subtotal, discount, total, subtotal_minor, discount_minor, shipping_minor, total_minor, currency, idempotency_key) VALUES ('x','x@example.com','a','b','c',1,0,1,100,0,0,100,'USD','atomic-test')"),
+        db.prepare('INSERT INTO order_items (order_id, slug, title, unit_price, unit_price_minor) VALUES ((SELECT id FROM orders WHERE idempotency_key = ?), ?, ?, ?, ?)').bind(
           'atomic-test',
           'ok-item',
           'Title',
-          1
+          1,
+          100
         ),
         // This statement is deliberately broken (unknown column) to force the whole batch to fail.
         db.prepare("INSERT INTO order_items (order_id, slug, title, unit_price, this_column_does_not_exist) VALUES (1, 'x', 'x', 1, 'x')")

@@ -34,7 +34,9 @@ const EXPECTED_TABLES = [
   'preview_versions', 'preview_assets', 'revision_requests', 'approvals', 'user_book_events',
   'retention_failures',
   // Phase 1 integrity/security recovery (migration 0015)
-  'order_state_events', 'admin_audit_events'
+  'order_state_events', 'admin_audit_events',
+  // Phase 1 correction (migration 0018): ISO-4217 currency allowlist
+  'iso_currencies'
 ]
 
 const EXPECTED_NEW_COLUMNS = [
@@ -74,7 +76,16 @@ const EXPECTED_TRIGGERS = [
   'trg_order_state_events_no_update',
   'trg_order_state_events_no_delete',
   'trg_admin_audit_events_no_update',
-  'trg_admin_audit_events_no_delete'
+  'trg_admin_audit_events_no_delete',
+  // Phase 1 correction (0018): database-enforced money invariants
+  'trg_orders_money_insert',
+  'trg_orders_money_update',
+  'trg_order_items_money_insert',
+  'trg_order_items_money_update',
+  'trg_products_money_insert',
+  'trg_products_money_update',
+  'trg_product_variants_currency_insert',
+  'trg_product_variants_currency_update'
 ]
 
 function assertTriggers(db, label) {
@@ -324,7 +335,40 @@ const ACCEPTED_PHASE_1_0009_MIGRATIONS = [
   if (bookVariants.filter((v) => v.is_default === 1).length !== 1) fail('book must have exactly one default variant')
   if (bookVariants.some((v) => v.price_minor !== 3499)) fail('book variants must be priced from the product price')
   if (stickerVariants.map((v) => v.code).join(',') !== 'standard') fail(`sticker variants wrong: ${JSON.stringify(stickerVariants)}`)
-  console.log('OK [money/variant backfill]: legacy REAL rows backfilled to exact minor units + cover variants seeded.')
+
+  // L-B: reconciliation fills the minor twin from the row's OWN legacy value
+  // and touches nothing else. The legacy order is still UNPAID — its status
+  // is unchanged and no payment-ish column was invented.
+  const reconciled = db.prepare('SELECT status, discount_code, idempotency_key FROM orders WHERE id = 1').get()
+  if (reconciled.status !== 'pending_preview') fail(`money reconciliation changed the order status: ${reconciled.status}`)
+  if (reconciled.discount_code !== null) fail(`money reconciliation invented a discount code: ${reconciled.discount_code}`)
+
+  // L-B: the migration's own triggers now enforce the invariants in a fully
+  // migrated database — a NULL minor amount, a negative total and an invalid
+  // currency are all refused by the SCHEMA, not just by application code.
+  const expectRejected = (label, sql) => {
+    try {
+      db.exec(sql)
+    } catch (err) {
+      if (/money_invariant/.test(String(err.message))) return
+      fail(`${label}: rejected, but not by the money-invariant trigger (${err.message})`)
+    }
+    fail(`${label}: the money-invariant trigger did NOT reject it`)
+  }
+  expectRejected(
+    'negative total_minor',
+    `INSERT INTO orders (full_name, email, address, city, country, subtotal, discount, total, subtotal_minor, discount_minor, shipping_minor, total_minor, currency) VALUES ('X','x@b.c','x','y','z',1,0,1,100,0,0,-100,'USD')`
+  )
+  expectRejected(
+    'NULL minor amount',
+    `INSERT INTO orders (full_name, email, address, city, country, subtotal, discount, total, subtotal_minor, discount_minor, shipping_minor, total_minor, currency) VALUES ('X','x@b.c','x','y','z',1,0,1,NULL,0,0,100,'USD')`
+  )
+  expectRejected(
+    'invalid currency',
+    `INSERT INTO orders (full_name, email, address, city, country, subtotal, discount, total, subtotal_minor, discount_minor, shipping_minor, total_minor, currency) VALUES ('X','x@b.c','x','y','z',1,0,1,100,0,0,100,'XYZ')`
+  )
+
+  console.log('OK [money/variant backfill]: legacy REAL rows backfilled to exact minor units + cover variants seeded; reconciliation left the order unpaid; 0018 triggers reject NULL/negative/invalid-currency money.')
 }
 
 // 3) Repeated migration behavior — `wrangler d1 migrations apply` tracks

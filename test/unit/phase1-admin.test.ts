@@ -55,7 +55,7 @@ async function seedProduct(slug = 'admin-book') {
 async function seedOrder(): Promise<{ orderId: number; itemId: number }> {
   await env.DB.prepare(`INSERT INTO orders (full_name, email, address, city, country, shipping, subtotal, discount, total, subtotal_minor, discount_minor, shipping_minor, total_minor) VALUES ('A','a@b.c','x','y','z',12,34.99,0,46.99,3499,0,1200,4699)`).run()
   const order = (await env.DB.prepare('SELECT id FROM orders ORDER BY id DESC LIMIT 1').first<{ id: number }>())!
-  await env.DB.prepare(`INSERT INTO order_items (order_id, product_id, slug, title, kind, unit_price, qty) VALUES (?, NULL, 'admin-book', 'Admin Book', 'book', 34.99, 1)`).bind(order.id).run()
+  await env.DB.prepare(`INSERT INTO order_items (order_id, product_id, slug, title, kind, unit_price, unit_price_minor, qty) VALUES (?, NULL, 'admin-book', 'Admin Book', 'book', 34.99, 3499, 1)`).bind(order.id).run()
   const item = (await env.DB.prepare('SELECT id FROM order_items ORDER BY id DESC LIMIT 1').first<{ id: number }>())!
   return { orderId: order.id, itemId: item.id }
 }

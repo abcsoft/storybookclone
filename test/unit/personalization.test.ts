@@ -16,7 +16,7 @@ const SYSTEM_CTX = { actorType: 'system' as const, actorId: null }
 
 async function seedProduct(db: D1Database, slug = 'test-book', ageMin = 4, ageMax = 8) {
   await db
-    .prepare(`INSERT INTO products (slug, title, price, image, age_min, age_max, active) VALUES (?, 'Test Book', 19.99, 'x.webp', ?, ?, 1)`)
+    .prepare(`INSERT INTO products (slug, title, price, price_minor, image, age_min, age_max, active) VALUES (?, 'Test Book', 19.99, 1999, 'x.webp', ?, ?, 1)`)
     .bind(slug, ageMin, ageMax)
     .run()
 }
@@ -580,9 +580,9 @@ describe('retention service — fake clock, partial-failure safety, isolation', 
     await completeUpload(db, owner, initiated.uploadKey, initiated.completionToken, bytes)
     await attachInitialPhoto(db, book, SYSTEM_CTX, initiated.uploadKey)
 
-    await db.prepare(`INSERT INTO orders (full_name, email, address, city, country, subtotal, total) VALUES ('G','g@example.com','x','y','z',1,1)`).run()
+    await db.prepare(`INSERT INTO orders (full_name, email, address, city, country, subtotal, discount, total, subtotal_minor, discount_minor, shipping_minor, total_minor, currency) VALUES ('G','g@example.com','x','y','z',1,0,1,100,0,0,100,'USD')`).run()
     const order = await db.prepare('SELECT id FROM orders LIMIT 1').first<{ id: number }>()
-    await db.prepare('INSERT INTO order_items (order_id, slug, title, unit_price, user_book_id) VALUES (?, ?, ?, ?, ?)').bind(order!.id, 'test-book', 'Test Book', 19.99, book.id).run()
+    await db.prepare('INSERT INTO order_items (order_id, slug, title, unit_price, unit_price_minor, user_book_id) VALUES (?, ?, ?, ?, ?, ?)').bind(order!.id, 'test-book', 'Test Book', 19.99, 1999, book.id).run()
 
     const report = await runRetentionSweep(db, r2, () => now + 1)
     expect(report.userBooksKeptForOrder).toBe(1)

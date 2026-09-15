@@ -72,6 +72,8 @@ import { requestPasswordReset, resetPassword } from './password-reset'
 import { consumeRateLimit } from './rate-limit'
 import { registerPersonalizationRoutes } from './personalization/routes'
 import { transitionOrderStatus, transitionPreviewStatus } from './orders-status'
+import { brand, configureBrand } from './brand'
+import { createProduct, updateProduct } from './product-variants'
 import {
   csrfGuard,
   corsGuard,
@@ -128,10 +130,41 @@ export type Bindings = {
   FACE_ANALYSIS_PROVIDER?: string
   FACE_ANALYSIS_API_URL?: string
   FACE_ANALYSIS_API_KEY?: string
+  // M-2: the ONLY way to arm the trusted-proxy boundary that makes the
+  // `CF-Connecting-IP` header authoritative for rate-limit identity. Set it
+  // to exactly `cloudflare` in a deployed Cloudflare environment; leave it
+  // unset anywhere else (local dev, preview, direct deploys). Without it
+  // every caller shares one coarse limiter bucket, so a forged header cannot
+  // manufacture identities. See src/security.ts::clientIp.
+  TRUSTED_PROXY?: string
+  // L-D: the ONE brand/identity boundary (src/brand.ts). Every one of these is
+  // optional; the neutral default (`Storybook Studio`) applies until the owner
+  // configures the real brand. No template hard-codes any of them.
+  BRAND_NAME?: string
+  BRAND_TAGLINE?: string
+  BRAND_DESCRIPTION?: string
+  BRAND_LEGAL_NAME?: string
+  BRAND_CONTACT_EMAIL?: string
+  BRAND_INSTAGRAM?: string
+  BRAND_FACEBOOK?: string
+  BRAND_TIKTOK?: string
+  BRAND_YOUTUBE?: string
+  BRAND_X?: string
+  BRAND_LOGO_PATH?: string
+  BRAND_COPYRIGHT_YEAR?: string
 }
 export type Vars = { user: AuthUser | null; requestId: string | null; csrfToken?: string }
 
 const app = new Hono<{ Bindings: Bindings; Variables: Vars }>()
+
+// L-D: resolve the deployment's brand/identity config once per request so
+// every template (storefront, admin, emails) renders the SAME configured
+// name/logo/tagline/contact/legal identity. This is deployment-wide
+// configuration, not per-request data — see src/brand.ts.
+app.use('*', async (c, next) => {
+  configureBrand(c.env)
+  await next()
+})
 
 // S-04: no default CORS. The storefront is same-origin, so NO CORS headers
 // are emitted unless an origin is explicitly allowlisted via ALLOWED_ORIGINS;
@@ -229,11 +262,15 @@ export async function bootstrapLocalDefaults(db: D1Database, bootstrap?: { email
     const batch = products.map((p) =>
       db
         .prepare(
-          `INSERT OR IGNORE INTO products (slug, title, tagline, description, story, price, compare_at, image, gender, category, ages, age_min, age_max, pages, reviews, rating, bestseller, new_release, career, traits_json, active)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`
+          // L-B: the integer minor-unit price is authoritative and the schema
+          // (0018) rejects a money row without it, so it is written with the
+          // row rather than backfilled by a follow-up UPDATE afterwards.
+          `INSERT OR IGNORE INTO products (slug, title, tagline, description, story, price, price_minor, compare_at, compare_at_price_minor, currency, image, gender, category, ages, age_min, age_max, pages, reviews, rating, bestseller, new_release, career, traits_json, active)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'USD', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`
         )
         .bind(
-          p.slug, p.title, p.tagline, p.description, p.story, p.price, p.compareAt ?? null,
+          p.slug, p.title, p.tagline, p.description, p.story, p.price, Math.round(p.price * 100),
+          p.compareAt ?? null, p.compareAt != null ? Math.round(p.compareAt * 100) : null,
           p.image, p.gender, p.category, p.ages, p.ageMin, p.ageMax, p.pages, p.reviews, p.rating,
           p.bestseller ? 1 : 0, p.newRelease ? 1 : 0, p.career ? 1 : 0, JSON.stringify(p.traits)
         )
@@ -365,7 +402,7 @@ function html(c: any, title: string, body: string, active?: string, description?
 
 /** A missing product/sticker/article is a genuine 404 — never a 200 with a "not found" body (T-07). */
 function htmlNotFound(c: any) {
-  return html(c, 'Not found - Wonder Wraps', notFoundPage(), undefined, undefined, 404)
+  return html(c, 'Not found', notFoundPage(), undefined, undefined, 404)
 }
 
 // ================= STOREFRONT =================
@@ -381,7 +418,7 @@ app.get('/', async (c) => {
   ])
   return html(
     c,
-    'Personalized Books for Kids | Custom Storybooks - Wonder Wraps',
+    'Personalized Books for Kids | Custom Storybooks',
     homePage({ bestsellers: best, newReleases: fresh, girls, boys, careers: careersList }),
     'home'
   )
@@ -394,24 +431,24 @@ app.get('/books', async (c) => {
   if (q.career) filter.career = true
   if (q.q) filter.q = q.q
   const items = await queryProducts(c.env.DB, filter)
-  return html(c, 'Books - Wonder Wraps', booksCatalog(q, items), 'books')
+  return html(c, 'Books', booksCatalog(q, items), 'books')
 })
 
 app.get('/books/age/2-4', async (c) =>
-  html(c, 'Books ages 2–4 - Wonder Wraps', ageCatalog(2, 4, '2-4', await queryProducts(c.env.DB, { category: 'book', ageMin: 2, ageMax: 4 })), 'books')
+  html(c, 'Books ages 2–4', ageCatalog(2, 4, '2-4', await queryProducts(c.env.DB, { category: 'book', ageMin: 2, ageMax: 4 })), 'books')
 )
 app.get('/books/age/4-6', async (c) =>
-  html(c, 'Books ages 4–6 - Wonder Wraps', ageCatalog(4, 6, '4-6', await queryProducts(c.env.DB, { category: 'book', ageMin: 4, ageMax: 6 })), 'books')
+  html(c, 'Books ages 4–6', ageCatalog(4, 6, '4-6', await queryProducts(c.env.DB, { category: 'book', ageMin: 4, ageMax: 6 })), 'books')
 )
 app.get('/books/age/6-8', async (c) =>
-  html(c, 'Books ages 6–8 - Wonder Wraps', ageCatalog(6, 8, '6-8', await queryProducts(c.env.DB, { category: 'book', ageMin: 6, ageMax: 8 })), 'books')
+  html(c, 'Books ages 6–8', ageCatalog(6, 8, '6-8', await queryProducts(c.env.DB, { category: 'book', ageMin: 6, ageMax: 8 })), 'books')
 )
 app.get('/books/age/8-100', async (c) =>
-  html(c, 'Books ages 8+ - Wonder Wraps', ageCatalog(8, 100, '6-8', await queryProducts(c.env.DB, { category: 'book', ageMin: 8, ageMax: 100 })), 'books')
+  html(c, 'Books ages 8+', ageCatalog(8, 100, '6-8', await queryProducts(c.env.DB, { category: 'book', ageMin: 8, ageMax: 100 })), 'books')
 )
 
 app.get('/stickers', async (c) =>
-  html(c, 'Personalised Sticker Packs - Wonder Wraps', stickersCatalog(await queryProducts(c.env.DB, { category: 'sticker' })), 'stickers')
+  html(c, 'Personalised Sticker Packs', stickersCatalog(await queryProducts(c.env.DB, { category: 'sticker' })), 'stickers')
 )
 
 app.get('/books/:slug', async (c) => {
@@ -421,7 +458,7 @@ app.get('/books/:slug', async (c) => {
   const variants = (await getProductVariants(c.env.DB, p.slug))?.variants
   const active = p.category === 'sticker' ? 'stickers' : 'books'
   const prefix = p.category === 'sticker' ? '/stickers' : '/books'
-  return html(c, `${p.title} - Wonder Wraps`, productDetailPage({ product: p, variants, ...pdp }, prefix), active, p.description)
+  return html(c, `${p.title}`, productDetailPage({ product: p, variants, ...pdp }, prefix), active, p.description)
 })
 
 app.get('/stickers/:slug', async (c) => {
@@ -429,13 +466,13 @@ app.get('/stickers/:slug', async (c) => {
   if (!p || p.category !== 'sticker') return htmlNotFound(c)
   const pdp = await loadPdp(c.env.DB, p)
   const variants = (await getProductVariants(c.env.DB, p.slug))?.variants
-  return html(c, `${p.title} - Wonder Wraps`, productDetailPage({ product: p, variants, ...pdp }, '/stickers'), 'stickers', p.description)
+  return html(c, `${p.title}`, productDetailPage({ product: p, variants, ...pdp }, '/stickers'), 'stickers', p.description)
 })
 
-app.get('/faqs', (c) => html(c, 'FAQ - Wonder Wraps', faqsPage(), 'support'))
-app.get('/support', (c) => html(c, 'Support - Wonder Wraps', supportPage(), 'support'))
+app.get('/faqs', (c) => html(c, `FAQ - ${brand().name}`, faqsPage(), 'support'))
+app.get('/support', (c) => html(c, 'Support', supportPage(), 'support'))
 
-app.get('/contact', (c) => html(c, 'Contact Us - Wonder Wraps', contactPage(), 'support'))
+app.get('/contact', (c) => html(c, 'Contact Us', contactPage(), 'support'))
 app.post('/contact', async (c) => {
   const body = await c.req.parseBody()
   // S-06 + T-08: durable atomic limit, and an HONEST failure (never a fake
@@ -454,21 +491,21 @@ app.post('/contact', async (c) => {
   // T-08: only claim success when the row actually persisted; otherwise say so
   // and let the visitor retry (the form is re-rendered with their error).
   if (!saved) {
-    return html(c, 'Contact Us - Wonder Wraps', contactPage(false, 'We could not save your message just now — please try again in a moment.'), 'support')
+    return html(c, 'Contact Us', contactPage(false, 'We could not save your message just now — please try again in a moment.'), 'support')
   }
-  return html(c, 'Contact Us - Wonder Wraps', contactPage(true), 'support')
+  return html(c, 'Contact Us', contactPage(true), 'support')
 })
 
 // ---------- auth pages ----------
 app.get('/login', (c) => {
   if (c.get('user')) return c.redirect('/my-books')
-  return html(c, 'Login - Wonder Wraps', authPage('login'), 'my-books')
+  return html(c, 'Login', authPage('login'), 'my-books')
 })
 app.get('/register', (c) => {
   if (c.get('user')) return c.redirect('/my-books')
-  return html(c, 'Create Account - Wonder Wraps', authPage('register'), 'my-books')
+  return html(c, 'Create Account', authPage('register'), 'my-books')
 })
-app.get('/forgot-password', (c) => html(c, 'Forgot Password - Wonder Wraps', authPage('forgot'), 'my-books'))
+app.get('/forgot-password', (c) => html(c, 'Forgot Password', authPage('forgot'), 'my-books'))
 
 const AUTH_RATE_LIMIT = { max: 10, windowSeconds: 15 * 60 }
 
@@ -479,13 +516,13 @@ app.post('/login', async (c) => {
   // S-06: durable atomic limit, keyed by action + client identity + IP.
   const limit = await durableRateLimit(c.env.DB, rateLimitKey('login', c, email), AUTH_RATE_LIMIT)
   if (limit.limited) {
-    return html(c, 'Login - Wonder Wraps', authPage('login', 'Too many attempts. Please wait a few minutes and try again.'), 'my-books')
+    return html(c, 'Login', authPage('login', 'Too many attempts. Please wait a few minutes and try again.'), 'my-books')
   }
   const user = await c.env.DB.prepare('SELECT id, name, email, role, password_hash FROM users WHERE email = ?')
     .bind(email)
     .first<AuthUser & { password_hash: string }>()
   if (!user || !(await verifyPassword(password, user.password_hash))) {
-    return html(c, 'Login - Wonder Wraps', authPage('login', 'Invalid email or password.'), 'my-books')
+    return html(c, 'Login', authPage('login', 'Invalid email or password.'), 'my-books')
   }
   // S-02: authentication always rotates the session id.
   await rotateSessionOnLogin(c, c.env.DB, user.id)
@@ -498,11 +535,11 @@ app.post('/register', async (c) => {
   const email = String(body.email || '').toLowerCase().trim()
   const password = String(body.password || '')
   if (!name || !email || password.length < 6) {
-    return html(c, 'Create Account - Wonder Wraps', authPage('register', 'Please fill all fields (password 6+ characters).'), 'my-books')
+    return html(c, 'Create Account', authPage('register', 'Please fill all fields (password 6+ characters).'), 'my-books')
   }
   const registerLimit = await durableRateLimit(c.env.DB, rateLimitKey('register', c), AUTH_RATE_LIMIT)
   if (registerLimit.limited) {
-    return html(c, 'Create Account - Wonder Wraps', authPage('register', 'Too many sign-up attempts right now. Please try again shortly.'), 'my-books')
+    return html(c, 'Create Account', authPage('register', 'Too many sign-up attempts right now. Please try again shortly.'), 'my-books')
   }
   try {
     const r = await c.env.DB.prepare('INSERT INTO users (name, email, password_hash) VALUES (?, ?, ?)')
@@ -512,7 +549,7 @@ app.post('/register', async (c) => {
     await rotateSessionOnLogin(c, c.env.DB, Number(r.meta.last_row_id))
     return c.redirect('/my-books')
   } catch {
-    return html(c, 'Create Account - Wonder Wraps', authPage('register', 'That email is already registered.'), 'my-books')
+    return html(c, 'Create Account', authPage('register', 'That email is already registered.'), 'my-books')
   }
 })
 
@@ -535,12 +572,12 @@ app.post('/forgot-password', async (c) => {
   const email = String(body.email || '')
   const baseUrl = new URL(c.req.url).origin + '/reset-password'
   await requestPasswordReset(c.env.DB, email, baseUrl, c.env.ENVIRONMENT)
-  return html(c, 'Forgot Password - Wonder Wraps', authPage('forgot', FORGOT_PASSWORD_GENERIC_MESSAGE), 'my-books')
+  return html(c, 'Forgot Password', authPage('forgot', FORGOT_PASSWORD_GENERIC_MESSAGE), 'my-books')
 })
 
 app.get('/reset-password', (c) => {
   const token = c.req.query('token') || ''
-  return html(c, 'Reset Password - Wonder Wraps', resetPasswordPage(token), 'my-books')
+  return html(c, 'Reset Password', resetPasswordPage(token), 'my-books')
 })
 app.post('/reset-password', async (c) => {
   const body = await c.req.parseBody()
@@ -548,28 +585,28 @@ app.post('/reset-password', async (c) => {
   const password = String(body.password || '')
   const confirm = String(body.confirmPassword || '')
   if (password !== confirm) {
-    return html(c, 'Reset Password - Wonder Wraps', resetPasswordPage(token, 'Passwords do not match.'), 'my-books')
+    return html(c, 'Reset Password', resetPasswordPage(token, 'Passwords do not match.'), 'my-books')
   }
   const result = await resetPassword(c.env.DB, token, password)
   if (!result.ok) {
     const message = result.error === 'weak_password' ? 'Password must be at least 8 characters.' : 'This reset link is invalid or has expired. Please request a new one.'
-    return html(c, 'Reset Password - Wonder Wraps', resetPasswordPage(token, message), 'my-books')
+    return html(c, 'Reset Password', resetPasswordPage(token, message), 'my-books')
   }
   return html(
     c,
-    'Password reset - Wonder Wraps',
+    'Password reset',
     `<section class="auth"><div class="auth-form"><h1>Password updated</h1><p>Your password has been reset. Please log in with your new password.</p><a class="btn btn-purple" href="/login">Go to login</a></div></section>`,
     'my-books'
   )
 })
 
-  app.get('/cart', (c) => html(c, 'Cart - Wonder Wraps', cartPage()))
-  app.get('/checkout', (c) => html(c, 'Checkout - Wonder Wraps', checkoutPage(c.get('user'))))
-  app.get('/my-books', (c) => html(c, 'My Books - Wonder Wraps', myBooksPage(!!c.get('user')), 'my-books'))
+  app.get('/cart', (c) => html(c, 'Cart', cartPage()))
+  app.get('/checkout', (c) => html(c, 'Checkout', checkoutPage(c.get('user'))))
+  app.get('/my-books', (c) => html(c, 'My Books', myBooksPage(!!c.get('user')), 'my-books'))
   app.get('/my-books/:id', (c) => {
     const user = c.get('user')
     if (!user) return c.redirect('/login')
-    return html(c, `Order #${c.req.param('id')} - Wonder Wraps`, myBookOrderDetailPage(c.req.param('id')), 'my-books')
+    return html(c, `Order #${c.req.param('id')}`, myBookOrderDetailPage(c.req.param('id')), 'my-books')
   })
   app.get('/my/books', (c) => c.redirect('/my-books'))
   app.get('/profile', (c) => c.redirect('/my-books'))
@@ -707,7 +744,7 @@ app.get('/order-success', async (c) => {
   if (!order) {
     return html(
       c,
-      'Order confirmed - Wonder Wraps',
+      'Order confirmed',
       `<section class="page-hero">
         <h1>Thank you!</h1>
         <p>${id ? `Order #${id} could not be shown here — check your confirmation link, or ` : 'Please check My Books, or '}<a href="/my-books">view My Books</a> if you have an account.</p>
@@ -745,7 +782,7 @@ app.get('/order-success', async (c) => {
 
   return html(
     c,
-    'Order confirmed - Wonder Wraps',
+    'Order confirmed',
     `<section class="page-hero">
       <h1>Thank you!</h1>
       ${/* T-01: no preview-email promise — no email/outbox worker exists, so
@@ -778,15 +815,15 @@ app.get('/order-success', async (c) => {
   )
 })
 
-app.get('/blog', (c) => html(c, 'Blog - Wonder Wraps', blogIndex()))
+app.get('/blog', (c) => html(c, 'Blog', blogIndex()))
 app.get('/blog/:slug', (c) => {
   const body = blogPost(c.req.param('slug'))
   if (!body) return htmlNotFound(c)
-  return html(c, 'Blog - Wonder Wraps', body)
+  return html(c, 'Blog', body)
 })
 
-app.get('/support/privacy-policy', (c) => html(c, 'Privacy Policy - Wonder Wraps', legalPage('privacy')))
-app.get('/support/terms-and-conditions', (c) => html(c, 'Terms and Conditions - Wonder Wraps', legalPage('terms')))
+app.get('/support/privacy-policy', (c) => html(c, 'Privacy Policy', legalPage('privacy')))
+app.get('/support/terms-and-conditions', (c) => html(c, 'Terms and Conditions', legalPage('terms')))
 app.get('/privacy', (c) => c.redirect('/support/privacy-policy'))
 app.get('/terms', (c) => c.redirect('/support/terms-and-conditions'))
 
@@ -1216,38 +1253,34 @@ app.get('/admin/products/new', (c) => c.html(adminProductForm(null)))
 app.post('/admin/products/new', async (c) => {
   const b = await c.req.parseBody()
   const slug = slugify(String(b.slug || b.title || ''))
-  try {
-    await c.env.DB.prepare(
-      `INSERT INTO products (slug, title, tagline, description, story, price, price_minor, compare_at, compare_at_price_minor, currency, image, gender, category, ages, age_min, age_max, pages, reviews, rating, bestseller, new_release, career, traits_json, active)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'USD', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    )
-      .bind(
-        slug,
-        String(b.title || ''),
-        String(b.tagline || ''),
-        String(b.description || ''),
-        String(b.story || ''),
-        Number(b.price || 0),
-        b.compare_at ? Number(b.compare_at) : null,
-        String(b.image || ''),
-        String(b.gender || 'unisex'),
-        String(b.category || 'book'),
-        String(b.ages || ''),
-        Number(b.age_min || 2),
-        Number(b.age_max || 10),
-        Number(b.pages || 32),
-        Number(b.reviews || 0),
-        Number(b.rating || 4.8),
-        b.bestseller ? 1 : 0,
-        b.new_release ? 1 : 0,
-        b.career ? 1 : 0,
-        JSON.stringify(String(b.traits || '').split('\n').map((s) => s.trim()).filter(Boolean)),
-        b.active ? 1 : 0
-      )
-      .run()
-  } catch {
-    return c.html(adminProductForm(null, 'Could not create: slug already exists or invalid data.'))
-  }
+  // L-C: the product AND its default variant are created in one atomic batch,
+  // so a new product can never exist as an active product with no default
+  // variant. Invalid/non-numeric prices are rejected with a friendly message
+  // instead of hitting the 0018 database trigger.
+  const result = await createProduct(c.env.DB, {
+    slug,
+    title: String(b.title || ''),
+    tagline: String(b.tagline || ''),
+    description: String(b.description || ''),
+    story: String(b.story || ''),
+    priceMinor: Math.round(Number(b.price || 0) * 100),
+    compareAtPriceMinor: b.compare_at ? Math.round(Number(b.compare_at) * 100) : null,
+    image: String(b.image || ''),
+    gender: String(b.gender || 'unisex'),
+    category: String(b.category || 'book'),
+    ages: String(b.ages || ''),
+    ageMin: Number(b.age_min || 2),
+    ageMax: Number(b.age_max || 10),
+    pages: Number(b.pages || 32),
+    reviews: Number(b.reviews || 0),
+    rating: Number(b.rating || 4.8),
+    bestseller: !!b.bestseller,
+    newRelease: !!b.new_release,
+    career: !!b.career,
+    traits: String(b.traits || '').split('\n').map((s) => s.trim()).filter(Boolean),
+    active: !!b.active
+  })
+  if (!result.ok) return c.html(adminProductForm(null, `Could not create: ${result.error}`))
   return c.redirect('/admin/products?saved=1')
 })
 
@@ -1263,33 +1296,38 @@ app.get('/admin/products/:id', async (c) => {
 app.post('/admin/products/:id', async (c) => {
   const id = Number(c.req.param('id'))
   const b = await c.req.parseBody()
-  await c.env.DB.prepare(
-    `UPDATE products SET title=?, tagline=?, description=?, story=?, price=?, price_minor=?, compare_at=?, compare_at_price_minor=?, image=?, gender=?, category=?, ages=?, age_min=?, age_max=?, pages=?, reviews=?, rating=?, bestseller=?, new_release=?, career=?, traits_json=?, active=? WHERE id=?`
-  )
-    .bind(
-      String(b.title || ''),
-      String(b.tagline || ''),
-      String(b.description || ''),
-      String(b.story || ''),
-      Number(b.price || 0),
-      b.compare_at ? Number(b.compare_at) : null,
-      String(b.image || ''),
-      String(b.gender || 'unisex'),
-      String(b.category || 'book'),
-      String(b.ages || ''),
-      Number(b.age_min || 2),
-      Number(b.age_max || 10),
-      Number(b.pages || 32),
-      Number(b.reviews || 0),
-      Number(b.rating || 4.8),
-      b.bestseller ? 1 : 0,
-      b.new_release ? 1 : 0,
-      b.career ? 1 : 0,
-      JSON.stringify(String(b.traits || '').split('\n').map((s) => s.trim()).filter(Boolean)),
-      b.active ? 1 : 0,
-      id
-    )
-    .run()
+  // L-C: activating a product whose "exactly one active default variant"
+  // invariant is unmet is refused, with the reason shown on the form.
+  const result = await updateProduct(c.env.DB, {
+    id,
+    slug: '',
+    title: String(b.title || ''),
+    tagline: String(b.tagline || ''),
+    description: String(b.description || ''),
+    story: String(b.story || ''),
+    priceMinor: Math.round(Number(b.price || 0) * 100),
+    compareAtPriceMinor: b.compare_at ? Math.round(Number(b.compare_at) * 100) : null,
+    image: String(b.image || ''),
+    gender: String(b.gender || 'unisex'),
+    category: String(b.category || 'book'),
+    ages: String(b.ages || ''),
+    ageMin: Number(b.age_min || 2),
+    ageMax: Number(b.age_max || 10),
+    pages: Number(b.pages || 32),
+    reviews: Number(b.reviews || 0),
+    rating: Number(b.rating || 4.8),
+    bestseller: !!b.bestseller,
+    newRelease: !!b.new_release,
+    career: !!b.career,
+    traits: String(b.traits || '').split('\n').map((s) => s.trim()).filter(Boolean),
+    active: !!b.active
+  })
+  if (!result.ok) {
+    const row = await c.env.DB.prepare('SELECT * FROM products WHERE id = ?').bind(id).first<any>()
+    const { toProduct } = await import('./db')
+    const p = row ? ({ ...toProduct(row), active: row.active } as any) : null
+    return c.html(adminProductForm(p, `Could not save: ${result.error}`))
+  }
   return c.redirect(`/admin/products/${id}?saved=1`)
 })
 
@@ -1586,7 +1624,7 @@ app.post('/admin/ai-settings', async (c) => {
 // Test Connection API for Admin Panel.
 //
 // Confirmed review finding (two rounds): this previously returned a
-// hard-coded "success" for any endpoint containing "api."/"wonderwraps.com"
+// hard-coded "success" for any endpoint containing "api." or a known provider host
 // with no real request at all, and later (after the first fix) still made
 // one genuine outbound call for the OpenAI branch. Per the explicit
 // corrective instruction this must make NO network request of any kind —
@@ -1855,6 +1893,6 @@ function slugify(s: string) {
 // with c.html() and no status, defaulting to 200 OK — every truly missing
 // route (and, worse, every access-denied /photos/:key response relying on
 // c.notFound()) was reporting success.
-app.notFound((c) => c.html(page({ title: 'Not found - Wonder Wraps', body: notFoundPage(), loggedIn: !!c.get('user') }), 404))
+app.notFound((c) => c.html(page({ title: `Not found - ${brand().name}`, body: notFoundPage(), loggedIn: !!c.get('user') }), 404))
 
 export default app

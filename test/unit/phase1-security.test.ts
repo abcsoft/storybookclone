@@ -118,7 +118,7 @@ describe('S-01 central CSRF / same-origin enforcement', () => {
   it('a foreign origin is blocked for GUEST (prospect-cookie) mutations too', async () => {
     const jar = new CookieJar()
     // Create a draft to obtain a prospect cookie (no session => no token needed).
-    await env.DB.prepare(`INSERT INTO products (slug, title, price, image, category, age_min, age_max, active) VALUES ('sec-book','B',34.99,'','book',4,8,1)`).run()
+    await env.DB.prepare(`INSERT INTO products (slug, title, price, price_minor, image, category, age_min, age_max, active) VALUES ('sec-book','B',34.99,3499,'','book',4,8,1)`).run()
     const create = await app.request('/api/v1/user-books', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ productSlug: 'sec-book' }) }, env)
     jar.observe(create)
     expect(jar.get('ww_prospect')).toBeTruthy()

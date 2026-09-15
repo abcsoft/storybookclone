@@ -10,7 +10,7 @@ beforeEach(() => {
 })
 
 async function seedProduct(slug = 'http-book', ageMin = 4, ageMax = 8) {
-  await env.DB.prepare(`INSERT INTO products (slug, title, price, image, age_min, age_max, active) VALUES (?, 'HTTP Book', 19.99, 'x.webp', ?, ?, 1)`).bind(slug, ageMin, ageMax).run()
+  await env.DB.prepare(`INSERT INTO products (slug, title, price, price_minor, image, age_min, age_max, active) VALUES (?, 'HTTP Book', 19.99, 1999, 'x.webp', ?, ?, 1)`).bind(slug, ageMin, ageMax).run()
 }
 
 async function registerAndLogin(email: string): Promise<CookieJar> {
