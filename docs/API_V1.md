@@ -559,3 +559,135 @@ The Phase-1 shape, with the Phase-4 codes:
 ```json
 { "error": { "code": "quote_expired", "message": "This quote has expired. Please review your cart again." } }
 ```
+
+---
+
+## V2 Phase 5 — customer account, claims, books, downloads, support (CUS-01…CUS-14, PLT-05)
+
+All Phase-5 endpoints use the Phase-3/4 error envelope
+(`{ error: { code, message, fields?, requestId } }`) and the same central
+CSRF/origin gate: a **cookie-authenticated mutation** needs the same-origin proof
+AND the double-submit token (the server-rendered forms get the token injected
+automatically). Ownership always comes from the SESSION, never from the request,
+and a resource that belongs to somebody else is a `404` — identical to a
+non-existent one — so an id cannot be probed.
+
+Cache/TTL notes: the account pages are `Cache-Control: private, no-store`, and so
+are the token-bearing routes (`/verify-email`, `/api/v1/downloads/:token`,
+`/api/v1/support`, `/api/v1/privacy`, `/my/orders`).
+
+### Profile, verification and email change
+
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/api/v1/me` | The caller's profile (`emailVerified`, `status`), notification preferences and the deployment's email capability report. |
+| `PATCH` | `/api/v1/me` | `{ name }`. Only the caller's own name. |
+| `POST` | `/api/v1/me/verify-email` | Queues (and attempts) the confirmation link for the caller's own address. Returns `deliveryStatus` — `suppressed` means this deployment cannot deliver email, and `limitation` says so in words. Never returns the token. |
+| `POST` | `/api/v1/me/email` | `{ newEmail, currentPassword }`. Re-authenticates with the password, then mails a confirmation link to the **new** address. The account keeps its current address until that link is confirmed. |
+| `POST` | `/api/v1/me/email/confirm` | `{ token }`. Consumes the link, changes the address, verifies it, notifies the OLD address and records two security events. |
+| `GET` | `/verify-email?token=…` | The HTML landing page that consumes a verification token. |
+
+### Sessions and account activity
+
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/api/v1/me/sessions` | The caller's sessions, each with an opaque `id` (`se_…`), a device description, `sameNetworkAsCurrent` and `current`. Never a token. |
+| `DELETE` | `/api/v1/me/sessions/:id` | Revokes one session by its public id. Another account's id is a `404`. |
+| `POST` | `/api/v1/me/sessions/revoke-others` | Signs out every other session, keeping the caller's. |
+| `GET` | `/api/v1/me/security-events` | The append-only account-safety log, with human labels. A network DIGEST is included, never an address. |
+
+### Notification preferences (CUS-13)
+
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/api/v1/me/notifications` | Preferences plus the deployment's delivery report. |
+| `PATCH` | `/api/v1/me/notifications` | `{ orderUpdates?, generationUpdates?, supportUpdates?, productNews? }`. `securityAlerts` is accepted and IGNORED (reported back as `true`): the database CHECKs it on, because those are account-safety messages. |
+
+### Verified guest claiming (CUS-04)
+
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/api/v1/me/claims` | Claims already recorded, plus the guest orders claimable for the caller's own confirmed address, plus whether the address is confirmed. |
+| `POST` | `/api/v1/me/claims` | `{ email }`. Requests a single-use claim link MAILED to that address. The response is IDENTICAL whether or not the address has an order (no enumeration), typing an address claims nothing, and the caller's own address must be confirmed first (`403 email_not_verified`). |
+| `POST` | `/api/v1/me/claims/confirm` | `{ token }`. Consumes the mailed link and moves every eligible order (and the personalised books they were built from) to the caller's account. Records `verified_via = 'email_token'`; entitlements are provisioned in the same operation. |
+| `POST` | `/api/v1/me/claims/order` | `{ orderId, guestToken }`. The CAPABILITY path — the order's own HMAC confirmation token is the proof and no email is involved. Records `verified_via = 'guest_capability'`. |
+
+The rule the schema enforces: `guest_claims.verified_via` is CHECK-constrained to
+exactly `('email_token','guest_capability')`, and
+`UNIQUE(resource_type, resource_ref)` makes a second claim of the same order
+impossible.
+
+### My books, previews, revisions and approval (CUS-05…CUS-09, GEN-09/11)
+
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/api/v1/my/books` | The caller's books: state, current revision, optimistic-concurrency `version`, preview count, active approval, change-request count, retention deadline, and `canGenerate`/`canApprove`/`canRequestRevision` with a `blockedReason`. Plus the revision policy in force. |
+| `GET` | `/api/v1/my/books/:id` | Full detail: `versions` (each with its watermarked page URLs, `isCurrentRevision`, `approved`, `approvalInvalidated`, `canApprove`), `revisionRequests`, `events`, `approvalHistory`, the current personalization and the consent/retention block. |
+| `POST` | `/api/v1/my/books/:id/revisions` | `{ reasonCode, notes, previewVersion?, replacementPhotoKey? }`. Structured reason + notes validated against the deployment's policy; optional replacement photo (an EXISTING owned upload) which creates a NEW immutable input revision and invalidates any applicable approval. Limits are enforced from the append-only request log. |
+| `POST` | `/api/v1/my/books/:id/approvals` | `{ previewVersionId }`. Atomic exact-version approval (version + input revision). Idempotent while the approval is still applicable; a superseded version is `409 stale_preview`; a version from another book is `404`; an order that is cancelled or unpaid is `409 order_not_eligible`. |
+| `POST` | `/api/v1/my/books/:id/generations` | The real generation request (state transition + durable job + queue wake-up through the Phase-3 service). Idempotent for a revision that already has a job. |
+
+Policy constants (also returned by the API so UI copy cannot drift): reason codes
+are a closed set; notes 3–1000 characters; at most 3 requests per revision and 8
+per book (configurable with `REVISION_MAX_PER_REVISION` /
+`REVISION_MAX_PER_BOOK`).
+
+### Downloads (CUS-11)
+
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/api/v1/my/downloads` | The caller's entitlements: kind, `stateLabel`, `downloadCount`/`maxDownloads`, `expiresAt`, and `downloadable` with the reason when it is not. **Contains no token, URL or signature.** |
+| `POST` | `/api/v1/my/downloads/:id/token` | Mints ONE short-lived (120s), single-use token and returns a RELATIVE `url`. Minting again retires the previous token. Another customer's entitlement is a `404`. |
+| `GET` | `/api/v1/downloads/:token` | Delivers the archive. The token IS the capability (hashed at rest, single-use, bound to the entitlement's owner), so no session is required; the response is `Content-Disposition: attachment`, `X-Content-Type-Options: nosniff`, `Cache-Control: private, no-store, max-age=0` and `Referrer-Policy: no-referrer`. Refusals are `410` (used/expired) or `409` (revoked/limit) and every one is recorded in `download_events`. |
+
+There is no permanent URL anywhere: not in HTML, not in a list response, not in
+localStorage, not in a log, not in an email.
+
+### Order receipt (CUS-10)
+
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/api/v1/my/orders/:id/receipt` | The receipt as JSON, derived from the order's ledger columns and satisfying the total identity. |
+| `GET` | `/my/orders/:id/receipt` | The same as a printable server-rendered page. It states that it is NOT a tax invoice. |
+
+### Support (CUS-12)
+
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/api/v1/support/tickets` | The caller's tickets with status, category, an honest `expectation` and `responseDueAt`. |
+| `POST` | `/api/v1/support/tickets` | JSON or multipart. `{ subject, category, body, orderId?, attachment? }`. The optional order must be the caller's OWN. An attachment must be `image/jpeg`, `image/png`, `application/pdf` or `text/plain`, at most 5MB, and its BYTES must match its declared type (markup is refused outright). |
+| `GET` | `/api/v1/support/tickets/:id` | The thread. Internal operator notes (`is_internal = 1`) are filtered out here, not by the caller. |
+| `POST` | `/api/v1/support/tickets/:id/messages` | `{ body, attachment? }`. Moves the ticket to `waiting_staff` (or reopens a resolved one). A closed ticket is `409 ticket_closed`. |
+| `POST` | `/api/v1/support/tickets/:id/status` | `{ to }`. Customer-permitted transitions only (`waiting_staff`, `closed`, `open`); assignment and resolution are operator-only and the database trigger is the final authority. |
+| `GET` | `/api/v1/support/attachments/:id` | The bytes, ownership checked against the ticket. Always `attachment` disposition, `nosniff`, `private, no-store` and a `sandbox` CSP. A foreign attachment is a `404`. |
+
+### Privacy intake and platform capability (CUS-14, PLT-05)
+
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/api/v1/privacy/requests` | The caller's requests with status, deadline and an honest `expectation`. |
+| `POST` | `/api/v1/privacy/export` · `/api/v1/privacy/delete` | Intake. Records the request (once per kind — a partial unique index makes a second press return the SAME open request), sets the 30-day deadline the customer is told, acknowledges it through the outbox and records an event. **No bundle is produced and nothing is deleted automatically**; the wording says so. |
+| `POST` | `/api/v1/privacy/requests/:id/cancel` | Cancels an open request. Another customer's request is a `404`. |
+| `GET` | `/api/v1/platform/capabilities` | The truthful capability report: the resolved email provider and delivery mode, the outbox counts, and the explicit limitations of this build (no provider configured, no print-ready PDF, privacy requests are not automatic). Never a credential. |
+
+### Server-rendered account routes
+
+`/account`, `/account/profile`, `/account/addresses`, `/account/security`,
+`/account/notifications`, `/account/claims`, `/account/support`,
+`/account/support/:id`, `/account/privacy`, `/my/books` (the BOOKS library),
+`/my/previews/:userBookId` (preview + version history + revision/approval),
+`/my/downloads`, `/my/orders/:id/receipt`, `/verify-email`,
+`/account/confirm-email`, `/account/confirm-claim`, `/account/claim-order`.
+Every mutation is an ordinary form POST with the CSRF token injected by the
+middleware, so each flow works from an email link and with JavaScript disabled.
+
+### New error codes
+
+`unauthenticated`, `email_not_verified`, `reauth_failed`, `invalid_token`,
+`template_missing`, `template_variables_missing`, `invalid_recipient`,
+`dedupe_key_required`, `book_expired`, `book_cancelled`, `retention_expired`,
+`stale_preview`, `order_not_eligible`, `revision_limit_reached`,
+`invalid_transition`, `ticket_closed`, `download_unavailable`,
+`entitlement_expired`, `entitlement_revoked`, `limit_reached`, `token_used`,
+`token_expired`, `artifact_unavailable`, `capability_required`,
+`capability_invalid`, `storage_unavailable`, `not_found`, `rate_limited`.

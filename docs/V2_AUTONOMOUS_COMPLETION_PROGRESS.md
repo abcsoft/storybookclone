@@ -8,140 +8,141 @@ action would be. Every claim here was executed; nothing is aspirational.
 
 | Item | Value |
 |---|---|
-| Branch | `feat/commerce-payments-v2` |
-| Baseline HEAD (accepted Phase-3 tip) | `2d6ccb0504c3cc45ea6105a4783f72e216d9c86b` |
-| Phase | **V2 Phase 4 — Server Cart, Money, Quotes, Payments and Refunds** |
+| Branch | `feat/customer-lifecycle-v2` |
+| Baseline HEAD (accepted Phase-4 tip) | `3ee3bcd69d0dbbbf655ca4b6b6561c9990c43807` |
+| Phase | **V2 Phase 5 — Customer Account, My Books, Approval and Support** |
 | `main` | `4d76779` — **untouched** (never merged, never checked out, never pushed) |
 | Pushed? | **No.** AutoCoder reviews and pushes. |
-| History rewritten? | **No.** Every change is a new commit on top of `2d6ccb0`. |
-| Migrations added | `0026`, `0027` (forward-only; `0001`–`0025` byte-identical) |
-| Phase-4 code/test tip | `fd2ab74` — the last commit that changes code, tests, scripts or seed |
+| History rewritten? | **No.** Every change is a new commit on top of `3ee3bcd`. |
+| Migrations added | `0028`–`0032` (forward-only; `0001`–`0027` byte-identical) |
 
-The branch tip on `feat/commerce-payments-v2` is the docs commit that carries
-this file. Ten commits make up Phase 4 (`889d8bc`, `9482f3c`, `2096faf`,
-`5bf7fdc`, `564faf8`, `f570607`, `97f03d4`, `962abce`, `fd2ab74`, then the docs
-commit); the full list is in `docs/V2_PHASE4_COMPLETION_REPORT.md` §13.
+The full commit list and the final SHAs are in the completion report; the per-ID traceability is in
+`docs/V2_PHASE5_TRACEABILITY.md` and the phase report in
+`docs/V2_PHASE5_COMPLETION_REPORT.md`.
 
 ## 2. Migration ledger
 
 | Migration | Contents |
 |---|---|
-| `0026_commerce_cart_quotes.sql` | `price_versions` (immutable dated price history, backfilled from `variant_prices` and each variant's own base price); the coupon RULE columns on `discounts` (`percent_bps` as the authoritative integer rate + `scope`/date window/minimum/usage limits/stacking/priority/cap) with a rule trigger; `coupon_redemptions` (UNIQUE(discount_id, order_id), immutable); `carts` (exactly-one-owner CHECK, three partial unique indexes on the ACTIVE cart per owner), `cart_items` (canonical `line_key`, UNIQUE(cart_id, line_key)), append-only `cart_events`; `addresses` (one default per kind); `checkout_quotes` (total-identity + tax-boundary CHECK) and `checkout_quote_lines` (per-line arithmetic trigger, immutable); the configured `tax_settings` boundary (seeded `none` / rate 0); `checkout_sessions` (unique idempotency key). |
-| `0027_commerce_payments_ledger.sql` | Order financial columns (+ a payment-state invariant trigger), immutable `order_addresses` snapshots, `payment_attempts` (identity immutability, the V2 §7 status machine, refund cap, provider intent/charge uniqueness, one open attempt per order), `payment_events` (UNIQUE(provider, provider_event_id), outcome-only immutability), `refunds` (cap on INSERT and UPDATE, settled immutability), `disputes`, `order_financial_entries` (signed direction, three uniqueness authorities, ONE CAPTURE PER ORDER, append-only), `UNIQUE(orders.cart_id)` for exactly one order per cart, and an index for every FK/filter/idempotency/event lookup. |
+| `0028_customer_account_security.sql` | `users.email_verified`/`email_verified_at`/`status`/`updated_at`; `sessions.public_id`/`user_agent`/`last_seen_at`/`ip_hash`/`created_ip_hash` + a BACKFILL that gives every pre-existing session an addressable opaque id; `email_tokens` (three purposes, SHA-256 at rest, single-use enforced by a trigger); append-only `account_security_events`; `notification_preferences` with `CHECK (security_alerts = 1)`. |
+| `0029_customer_claims_revisions.sql` | `guest_claims` (`verified_via` CHECK-constrained to exactly `('email_token','guest_capability')`, `UNIQUE(resource_type, resource_ref)`, immutable by trigger); the structured `revision_requests` columns (`reason_code`, `replacement_upload_key`, `policy_json`, `structured_reason`); append-only `revision_request_resolutions`. |
+| `0030_email_outbox_templates.sql` | Versioned `email_templates` (immutable identity, one published row per key/locale, **12 templates seeded**); `email_outbox` (UNIQUE `dedupe_key`, content immutable by trigger, `sent` terminal by trigger); `email_attempts` (`UNIQUE(outbox_id, attempt_no)`, append-only). |
+| `0031_support_tickets.sql` | `support_tickets` with the V2 §7 status machine enforced by a trigger and assignment-ready columns/indexes; append-only `support_ticket_events` and `support_messages`; `support_attachments` with a content-type allowlist CHECK and a byte-size CHECK. |
+| `0032_customer_downloads_privacy.sql` | `download_entitlements` (one per (order item, kind), immutable identity, monotonic counter with a cap); `download_tokens` (hashed at rest, single-use by trigger); append-only `download_events`; `privacy_requests` with ONE open request per (user, kind) via a partial unique index; append-only `privacy_request_events`. |
 
-Both migrations are ALTER-based (applied at most once, the established rule in
-this repository); their CREATE-TABLE/INDEX portions are `IF NOT EXISTS` and
-re-applying the repeatable part is asserted to be a no-op by the integration test.
+All five are ALTER-safe at most once (the established rule), their CREATE/seed
+portions are `IF NOT EXISTS`/`INSERT OR IGNORE`, every new FK/filter/lookup has
+an index, and unique constraints are the idempotency authority. The
+`[phase5 upgrade]` scenario applies them over an existing Phase-4-shaped database
+and asserts that every pre-existing row is untouched, that no account is marked
+verified and that no data is invented; re-applying the repeatable part is asserted
+to be a no-op. The Phase-2/3/4 upgrade scenarios were scoped to their own accepted
+schema so each still describes exactly what it was reviewed against.
 
 ## 3. Requirement IDs
 
-### 3.1 Closed by this phase (detail: `docs/V2_PHASE4_TRACEABILITY.md`)
+### 3.1 Closed by this phase
 
-**COM-01…COM-14, ADM-03, ADM-04, ADM-12 and ADM-16 are complete.** Every row in
-the traceability file carries a code path, a test (or browser) proof and an
-explicit limitation.
+**CUS-01 … CUS-14, GEN-09, GEN-11, PER-08, PER-09 and PLT-05 are complete**
+(19 IDs). Every row in `docs/V2_PHASE5_TRACEABILITY.md` carries a code path, a
+test (or browser) proof and an explicit limitation.
 
-The Phase-4 RULE **"production/print state controls cancellation eligibility"**
-is closed explicitly as well, not left implied: `PRODUCTION_STATES` +
-`cancellationEligibility()` in `src/orders-status.ts` (derived from
-`ORDER_STATUS_FLOW`, so the eligibility answer and the `transitionOrderStatus`
-guard can never disagree), the refusal reason rendered on the admin order page,
-and PW tests that assert the agreement for EVERY status plus the end-to-end
-refusal of `shipped -> cancelled`. No existing edge was added, removed or
-narrowed.
+Five honest limits repeat there:
 
-Three honest limits repeat there:
-
-* **COM-07** — the Stripe adapter is production-shaped (real endpoints, real
-  raw-body HMAC verification, idempotency keys, intent read-back) but **no
-  credential exists in this repository or CI**, so no live provider call is made.
-  `PAYMENT_PROVIDER` is UNSET by default, which means payments are DISABLED and
-  checkout records an order without collecting anything.
-* **COM-08 / COM-12** — disputes are recorded, tracked and reversible on a win,
-  but evidence submission and automatic provider event re-fetch are not
-  implemented.
-* **ADM-12** — the reconciliation view is READ-ONLY by design; per-role narrowing
-  beyond the single `admin` role arrives with the Phase-6 matrix (the finance
-  gate is already permission-shaped so no route will change then).
+* **PLT-05** — the email pipeline is complete and production-shaped, but NO
+  provider is configured and **no real email has ever been sent**; delivery is
+  DISABLED and every queued message is recorded `suppressed` with the reason. A
+  real send is `EXTERNAL CREDENTIAL REQUIRED`.
+* **CUS-11** — the delivered artifact is an archive of the WATERMARKED PREVIEW
+  PAGES, the only thing this phase can honestly produce. A print-ready PDF has no
+  producer until Phase 7, so a `print_pdf` entitlement is refused with that reason
+  rather than faked.
+* **CUS-14** — intake only, as the phase description allows: no automatic export
+  bundle and no automatic deletion (PLT-10/S-11, Phase 8).
+* **CUS-12** — the customer side is complete; assignment, SLAs and the operator
+  inbox are Phase 6 (the columns/indexes exist and no Phase-5 path can set them).
+* **PER-09** — the retention deadline is displayed AND enforced on every customer
+  action, but no scheduled sweep exists yet (S-11, Phase 8); the consent wording
+  is still the Phase-3 draft pending owner/counsel review (S-14).
 
 ### 3.2 Still open, each with an owning phase
 
 | ID | Status | Owner |
 |---|---|---|
-| CUS-01…CUS-14 (account depth, order detail/receipt UI, guest claim, support) | open — the cart capability and the guest-order token are the verified capabilities Phase 5 builds on | Phase 5 |
-| S-08 (RBAC matrix), S-09 (re-auth), ADM-20 (audit UI) | open — the audit trail exists and every Phase-4 admin mutation writes to it; the finance permission gate is a first consumer of the future matrix | Phase 6 |
-| ADM-05/06/07/09/10/11/13/14/15/17/18/19/21 | open | Phase 6 (`ADM-19`'s redacted provider-event view already exists as a Phase-4 foundation) |
-| FUL-01…FUL-10 (PDF/print/fulfilment) | open — cancellation eligibility is already tied to production state where that state exists | Phase 7 |
-| PLT-10 (retention cron), PLT-12 (metrics/alerts) | open — a payment-event replay/recovery cron belongs here too | Phase 8 |
-| S-11 (retention not scheduled) | open | Phase 8 |
+| S-08 (RBAC matrix), S-09 (re-auth), ADM-01…ADM-21 | open — the Phase-5 support/outbox/privacy surfaces are permission-shaped and left their operator half unbuilt on purpose | Phase 6 |
+| FUL-01…FUL-10 (PDF/print/fulfilment) | open — Phase 5 refuses a print-ready download honestly and names the phase that will produce it | Phase 7 |
+| PLT-10 (retention cron), PLT-12 (metrics/alerts), S-11 (retention not scheduled) | open — `drainEmailOutbox` is the retry sweep a cron will call, and it already works | Phase 8 |
 | S-14 (legal text is a draft) | open — kept explicitly marked | owner + counsel |
 
-## 4. Exact verification (final code state)
+## 4. Exact verification (frozen tree)
 
 | Command | Exit | Result |
 |---|---|---|
 | `npm run typecheck` | `0` | 0 errors |
-| `npm run test` | `0` | **638 passed / 638** across 35 files (baseline 547/32; **+91 tests in 3 new files**) |
-| `npm run test:integration` | `0` | **11 scenarios, 15 OK assertion blocks**, including the new `[phase4 upgrade]` (99 expected tables / 40 new columns; `0026`–`0027` over existing Phase-3 rows; price versions derived; the legacy discount given its basis-point twin; the tax boundary at ZERO rate; every pre-existing row unchanged and NOTHING marked paid; the cart/quote/order/payment/refund/ledger guarantees asserted at the schema level) |
-| `npm run secrets:scan` | `0` | no matches across 324 files |
-| `npm run secrets:scan -- --mode=archive` | `0` | no matches across 325 files |
-| `npm run build` | `0` | `dist/_worker.js` 715.40 kB (gzip 189.28 kB) — up from 577.88 kB in Phase 3 |
-| `npm run test:e2e` | `0` | **13 journey groups** including the new `phase4-commerce-payments` group (12 steps); re-run **three consecutive times** after the journey race fix, green each time |
-| `npm run audit:frontend -- phase4-commerce` | `0` | **0 findings**: 29 public routes at 360/390/768/1024/1440/1920, the admin surfaces (including all six `/admin/finance/*` pages) at desktop + mobile, and the accessibility pass |
+| `npm run test` | `0` | **735 passed / 735** across **42 files** (baseline 638/35; **+97 tests in 7 new files**) |
+| `npm run test:integration` | `0` | **12 scenarios, 18 OK assertion blocks**, including the new `[phase5 upgrade]` (116 expected tables / 53 new columns; `0028`–`0032` over existing Phase-4 rows; every pre-existing row unchanged; every existing account still UNVERIFIED; every pre-existing session given an addressable `public_id`; 12 published email templates seeded once; the single-use-token, claim-once, outbox-dedupe/sent-terminal, support-status, attachment-allowlist/size, download-cap and one-open-privacy-request guarantees asserted at the schema level) |
+| `npm run secrets:scan` | `0` | no matches across 358 files |
+| `npm run secrets:scan -- --mode=archive` | `0` | no matches across 392 files |
+| `npm run build` | `0` | `dist/_worker.js` 873.22 kB (gzip 229.39 kB) — up from 715.40 kB in Phase 4 |
+| `npm run test:e2e` | `0` | **14 journey groups** including the new `phase5-customer-lifecycle` group |
+| `npm run audit:frontend -- phase5-customer` | `0` | **0 findings**: 32 public routes at 360/390/768/1024/1440/1920, the 11 new customer account routes at desktop + mobile with a full accessibility pass at each (281 evidence files) |
 | `npm audit --omit=dev` | `0` | 0 vulnerabilities |
 | `npm audit` | `1` | 3 high, dev-only `sharp <0.35.4` ← `miniflare` ← `wrangler`; **pre-existing, not in the worker bundle, unchanged** |
 
-New test files: `phase4-cart-quote.test.ts` (33 tests),
-`phase4-payments-webhooks.test.ts` (34), `phase4-refunds-admin.test.ts` (24),
-plus the shared `test/helpers/commerceFixtures.ts`.
+New test files: `phase5-account-auth.test.ts` (16), `phase5-guest-claim.test.ts`
+(10), `phase5-revision-approval.test.ts` (15), `phase5-downloads.test.ts` (13),
+`phase5-support.test.ts` (12), `phase5-order-account-views.test.ts` (14),
+`phase5-email-outbox.test.ts` (17), plus the shared
+`test/helpers/accountFixtures.ts`.
 
-## 5. The commerce journey (real rows, real ledger, real refunds)
+## 5. The customer lifecycle journey (real rows, real payment, real download)
 
-`phase4-commerce-payments` — real Chromium against a real local
-`wrangler pages dev` with real local D1, using the deterministic offline payment
-provider and therefore making **zero external calls**. It runs against its OWN
-server instance started with `PAYMENT_PROVIDER=deterministic-fake`, because with
-a provider configured the paid path is the only checkout path — the other twelve
-journey groups keep testing the shipped default (payments disabled).
+`phase5-customer-lifecycle` — real Chromium against a real local
+`wrangler pages dev` with real local D1/R2, using the deterministic offline
+payment provider and therefore making **zero external calls**. It runs against its
+OWN server instance started with `PAYMENT_PROVIDER=deterministic-fake`, **after
+the phase-3 group** (whose journey asserts global preview-asset counts, so a group
+that generates previews must not run before it).
 
-1. the server reports the offline provider as active and PayPal as unavailable,
-   with no credential-shaped value in the response;
-2. registering and personalizing a book through the real PDP mirrors the offline
-   cart into a **durable server cart**, which survives a full page reload with the
-   same server cart id; a cross-sell sticker joins it without exposing any
-   internal identifier;
-3. the SERVER issues an expiring quote; a body that tries to supply
-   `totalMinor: 1` changes nothing, and the quote's subtotal equals the catalogue
-   subtotal recomputed independently;
-4. a checkout session is created, the customer is handed to the offline provider
-   page, and the order is `awaiting_payment` / `unpaid` with **zero** captured —
-   and the charged snapshot is verified against the quote line in the database;
-5. a **redirect-only return** is recorded and reports `paid: false`; visiting the
-   confirmation page before paying says no payment has been recorded; the DB is
-   still unpaid;
-6. clicking the provider's button delivers a **real signed webhook** through the
-   real verification path — only then is the order `paid`/`captured`, with
-   EXACTLY ONE capture entry totalling the charged amount and a signature-verified
-   event linked to the order;
-7. a full reload of the return page RECOVERS the paid state from the ledger,
-   including the captured amount;
-8. an admin signs in and refunds $10.00 through the real finance UI: the order
-   becomes `partially_refunded`, the cached refunded total matches the ledger, the
-   finance page shows the reduced net, the refunds view lists it, and
-   **reconciliation reports no mismatch**;
-9. a SECOND checkout is deliberately abandoned: the order stays unpaid with no
-   capture, the capture ledger still holds exactly one entry totalling the one
-   real payment, and the finance page reports the abandoned order as **backlog,
-   not revenue**.
+1. the deployment reports its own email capability truthfully (no real mail, no
+   credential-shaped value) and the offline payment provider as active;
+2. a GUEST personalizes a book through the real PDP, checks out, and pays through
+   the provider's signed webhook — with no account at any point. The confirmation
+   page states what this deployment actually does about email and says plainly
+   that knowing an email address alone never moves an order;
+3. registering leaves the address UNVERIFIED (asserted in the database), and it is
+   confirmed only by opening the link the development console adapter wrote to the
+   server log — the same place a developer reads it, with no dev-only HTTP surface;
+4. typing the guest's email into the claim form moves NOTHING (asserted in the
+   database and by an empty My Books list); opening the link delivered to that
+   mailbox moves the order AND the personalised book, recorded as
+   `verified_via = 'email_token'`;
+5. the claimed order renders with its real timeline, payments, addresses and
+   receipt, and the book appears in My Books with its child name;
+6. the account surfaces work end to end: profile rename, address book, notification
+   preferences (with security alerts locked on), the session list, a support ticket
+   with a REAL photo attachment (reply → close → reopen, with the status machine
+   asserted in the database), and a data-export request that says honestly that it
+   is not automatic yet;
+7. generation runs, version 1 is approved EXACTLY, then a change request with a
+   replacement photo creates a NEW immutable revision and invalidates that
+   approval — the database shows `approved,invalidated`, the revision advanced by
+   one, and the previously approved version still holds its pages;
+8. an entitled download delivers a REAL ZIP archive (`PK` signature, named
+   `order-<n>-preview-r<n>.zip`) through a short-lived single-use link; the link
+   cannot be replayed, minting again retires the previous one, and the page never
+   carries a token;
+9. a SECOND customer sees no orders, no downloads and no tickets, and gets a 404
+   on the first customer's receipt, ticket and download entitlement.
 
 ## 6. Audit verdict
 
-`npm run audit:frontend -- phase4-commerce` reports **0 findings**: 29 public
-routes at 360/390/768/1024/1440/1920, the admin surfaces at desktop + mobile
-(including `/admin/finance`, `/payments`, `/refunds`, `/disputes`, `/events`,
-`/reconciliation`), and the accessibility pass at all six widths. No horizontal
-overflow, no console error, no failed or 4xx/5xx request, no overclaim copy
-(the overclaim guard list was **not** relaxed), and a clean a11y pass.
+`npm run audit:frontend -- phase5-customer` reports **0 findings**: 32 public
+routes at all six required widths, the 11 new customer account routes at desktop
+and mobile, and the accessibility pass at each. No horizontal overflow, no console
+error, no failed or 4xx/5xx request, no overclaim copy (the overclaim guard list
+was **not** relaxed), and a clean a11y pass. The new `/verify-email?token=…`
+invalid state and the logged-out account redirects are audited too.
 
 The one remaining red gate is `npm audit` (3 high in the dev-only
 `wrangler`/`miniflare`/`sharp` chain) — pre-existing and unchanged from Phase 1.
@@ -150,101 +151,117 @@ The one remaining red gate is `npm audit` (3 high in the dev-only
 
 Nothing below blocks the work completed here.
 
-1. **A real payment provider (COM-07).** Set `PAYMENT_PROVIDER=stripe`,
-   `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, and register
-   `POST /api/v1/webhooks/stripe` with Stripe. Until then payments are DISABLED:
-   checkout records an unpaid order and never charges. A real staging call is
-   **`EXTERNAL CREDENTIAL REQUIRED`** — none was made.
-2. **Owner decision: PayPal.** Not offered, and it will not be until its own
-   adapter and webhook processing exist.
-3. **Owner decision: the tax model.** Only an INCLUSIVE (VAT-style) rate is
-   expressible under the published `orders.total_minor` identity; an exclusive
-   (US-style) model needs a future migration that extends that identity, and is
-   refused today with an actionable message. No rate is fabricated.
-4. **Real D1 `database_id`.** `wrangler.jsonc` still carries
+1. **A real email provider (PLT-05).** Set `EMAIL_PROVIDER=http`,
+   `EMAIL_API_URL`, `EMAIL_API_KEY`, `EMAIL_FROM`. Until then email delivery is
+   DISABLED and truthful: verification, email change, claim links and order
+   confirmations are recorded but not delivered, and the UI says so on every
+   surface that mentions email. A real send is **`EXTERNAL CREDENTIAL
+   REQUIRED`** — none was made, and no credential-shaped value is in this
+   repository or CI. `EMAIL_API_KEY` is never logged, returned or stored in D1.
+2. **A real payment provider (COM-07, unchanged).** `PAYMENT_PROVIDER` is unset by
+   default, so checkout records an unpaid order and never charges.
+3. **Owner decision: the outbox retry schedule (PLT-12).** `drainEmailOutbox`
+   exists with bounded exponential backoff (60s → 1h, 5 attempts) and a lease that
+   reclaims a crashed worker's row, but nothing calls it on a schedule yet. A
+   `suppressed` row is deliberately NOT retried when a provider is later
+   configured — changing that is a one-line change plus a decision.
+4. **Owner decision: the support SLA target.** `sla_due_at` records 24 hours as a
+   first-response target; Phase 6 owns the real policy.
+5. **Owner decision: the tax model and the legal/consent wording** — unchanged
+   from Phases 3 and 4 (S-14).
+6. **Real D1 `database_id`.** `wrangler.jsonc` still carries
    `local-dev-placeholder` (pre-existing Phase-0 item; a release blocker for any
    real deploy).
-5. **Legal review of the consent wording (S-14 + PER-09).** Unchanged from
-   Phase 3: replacing it means publishing a new `consent_versions` row.
-6. **Retention cron (S-11) and payment-event recovery cron.** Decide when to
-   schedule them; the companion Worker can already run the retention sweep.
 7. **`npm audit` dev chain.** Fixing the 3 high advisories needs a deliberate
    `wrangler`/`miniflare`/`sharp` bump.
 
 ## 8. Next automatic action
 
-**V2 Phase 5 — Customer Account, My Books, Approval and Support**
-(`feat/customer-lifecycle-v2`) on a new branch from this tip. Phase 4
-deliberately left these to it and nothing else in the commerce flow is open:
+**V2 Phase 6 — Full Operational Admin Panel (ADM-01…ADM-21, S-08/S-09)** on a new
+branch from this tip. Phase 5 built only the CUSTOMER half of every surface it
+introduced, and deliberately left the operator half in place:
 
-* the customer-facing order/receipt/refund detail view (the ADMIN order page
-  already renders the full ledger; the customer page still shows the legacy
-  totals block);
-* the durable email outbox and templates (PLT-05) — Phase 4 sends no email, so
-  the confirmation page is the record of truth;
-* guest order claiming (CUS-04), which builds on the two verified capabilities
-  that already exist: the cart capability and the guest-order HMAC token.
+* `support_tickets.assignee_id`/`priority`/`sla_due_at` exist and are indexed, but
+  no Phase-5 path can assign or resolve — the Phase-6 inbox, assignment and SLA
+  triage are their consumers;
+* `email_outbox`/`email_attempts` have no admin view (ADM-17 provider health);
+* `privacy_requests` intake exists with no operator workflow (ADM-18);
+* `revision_request_resolutions` is an append-only operator-side log with no queue
+  UI (ADM-11);
+* the RBAC matrix (S-08) is still the single `admin` role, and every Phase-5
+  admin-shaped action is permission-shaped but not yet narrowly gated.
 
-## 9. Deviations and disclosures
+## 9. Commit list
 
-* **Two pre-existing test files were UPDATED and neither was weakened.**
-  `phase1-admin.test.ts`'s S-10 assertion (`not.toContain('revenue')`) was a
-  proxy that held only while no real revenue existed; it is replaced by the
-  PRECISE invariant — the order-value tile must say "NOT revenue", the revenue
-  tile must say nothing was captured when nothing was, and the tile carrying the
-  revenue figure must never contain the unpaid order value (stronger, not
-  weaker). `phase1-variants-money.test.ts` now supplies the `percent_bps` value
-  that migration `0026`'s rule trigger (correctly) requires.
-* **`ww_cart` was ADDED to `AUTH_COOKIES`** so cart mutations are CSRF-guarded
-  like the existing guest capabilities. Nothing was removed and no existing
-  cookie's behaviour changed.
-* **The client mirror is de-duplicated and two limiter limits were raised**
-  (cart-mutate/cart-reconcile 120 → 400 per hour). The dedupe is the real fix;
-  the raise is headroom, because the development rate-limit bucket is
-  deliberately shared across callers — the first e2e attempt hit 429s from that
-  shared bucket, which is what surfaced it.
-* **The Phase-4 browser journey runs against a SECOND local server** (started
-  with the offline payment provider, stopped afterwards), so the other twelve
-  journey groups keep testing the shipped default unchanged.
-  `scripts/test-e2e.mjs` now starts two servers sequentially.
-* **`personalizeAndAddToCart` gained an optional `base` parameter** so the
-  phase-4 group can reuse the real PDP flow against its own server.
-* **The checkout payment notice kept its original CSS class and still contains
-  the word "test" when no provider is configured**, so the pre-existing honesty
-  assertion passes unchanged while the text now describes exactly what the
-  deployment does.
-* **The offline test-provider page exists only for development/E2E**, is
-  double-gated (`ENVIRONMENT=development` AND `PAYMENT_PROVIDER=deterministic-fake`),
-  is labelled in-page as moving no money, and returns 404 in a deployed
-  environment.
-* **Two synthetic test fixtures were rewritten** after the secret scanner
-  flagged their credential-LIKE shape. No real credential ever existed; the
-  scanner now reports no matches.
-* **`stripeProviderConfigForTests`** was added so a test can assert the config
-  report without reaching into adapter internals; it returns exactly what
-  `stripeConfig()` returns.
-* **The provider event row is written after the attempt is resolved** so the
-  event is linked to its order/attempt at insert time (the trigger keeps the
-  linkage immutable). The browser journey found this; the unit suite was extended
-  to assert the linkage.
-* **Cancellation eligibility was made explicit without changing any edge.** The
-  state machine already refused cancellation from `shipped`/`delivered`, but the
-  rule had no name and an operator only saw a missing option.
-  `PRODUCTION_STATES` + `cancellationEligibility()` now state it, DERIVED from
-  `ORDER_STATUS_FLOW` so the two can never drift, and the admin order page
-  renders the refusal reason. `printing -> cancelled` is a pre-existing Phase-1
-  edge and is preserved verbatim rather than narrowed (narrowing it would change
-  a Phase-0…3 contract); a shipped order can still be REFUNDED, which is a ledger
-  operation on the payment axis. This ADDED 3 tests; nothing was weakened.
-* **A read RACE in the Phase-4 browser journey was found and fixed by re-running
-  the gate.** `phase4.6b` waited only for the `#order-payment-status` selector —
-  present in the SERVER-rendered HTML — and then read the element immediately,
-  racing `payment-return.js`'s async reconciliation. Two runs were green and a
-  third failed with the server's honest "Nothing has been charged for this order
-  yet." instead of the reconciled "No payment has been recorded yet.". The step
-  now waits (bounded, 20s) for the reconciliation, exactly as `phase4.8` already
-  did, and still fails if the page claims payment was received — so it is
-  STRONGER, requiring the recovery path to actually run. `npm run test:e2e` was
-  then re-run three consecutive times, green each time. This is why the full gate
-  set is re-run on the frozen tree rather than trusted from an earlier pass.
-* **`.openclaw_test_out.txt`** (untracked diagnostic) was never staged.
+See the commit list in `docs/V2_PHASE5_COMPLETION_REPORT.md`. Nothing was pushed, merged,
+rebased, amended or force-pushed; `main` was never checked out.
+
+## 10. Deviations and disclosures
+
+* **One pre-existing product behaviour was FIXED after the browser journey found
+  it.** A GUEST returning from payment could not see their own order:
+  `/order-success?cs=…` resolved the caller's own checkout session (an
+  authorization, by capability) but then failed the ownership check. The page now
+  treats an authorized session resolution as authorization. No rule was weakened —
+  the resolution is still gated on the caller's own cart/prospect/session
+  capability, never on the id alone.
+* **ONE ineffective pre-existing security-header hint was REMOVED, with the
+  reasoning recorded.** Since Phase 1/2 the reader and order-success pages had
+  asked for `Referrer-Policy: no-referrer`, but the central header middleware
+  always overwrote it, so the intent had never taken effect. An attempt to honour
+  it (making the middleware respect a route-set policy) was found by the full e2e
+  run to BREAK those pages' own forms: Chrome then sends `Origin: null` on a page
+  whose referrer policy is `no-referrer`, and the central CSRF guard correctly
+  refuses an opaque origin — the reader page's logout button returned
+  `csrf_origin`. The per-route hints are therefore removed, there is exactly ONE
+  application-wide policy, and the property the token-bearing pages need
+  (`strict-origin-when-cross-origin` sends only the ORIGIN cross-origin, never the
+  URL) already holds. This is a reduction in misleading code, not a relaxation: no
+  protection that was in force before was removed, and the reasoning sits in
+  `src/security.ts` next to the header.
+* **One pre-existing test file was UPDATED and neither weakened nor skipped.**
+  `phase1-truthful-claims.test.ts`'s T-01 assertion (the page says "does not send
+  emails") was a copy-string proxy that held only while no email pipeline existed.
+  It is replaced by an assertion tied to the deployment's OWN resolved capability
+  report — which still fails if the page ever claims a send that did not happen —
+  and T-02's `cannot be linked to an account` sentence (now FALSE, because claiming
+  genuinely exists) is replaced by the exact security property as text: the page
+  must say the claim needs proof and that an email address alone never moves an
+  order. Both are stronger, and the property they stood for is asserted directly.
+* **`AUTH_COOKIES` was NOT changed.** Phase 5 adds no new cookie: the account
+  surfaces use the existing session cookie, and the download capability travels in
+  a short-lived token rather than a cookie — which is why the delivery route needs
+  no session and cannot be CSRF'd.
+* **`securityHeaders` now lets a route set its own CSP** (not Referrer-Policy). The
+  private attachment route uses that to sandbox its response. A CSP does not affect
+  the request headers a browser sends, so this cannot break the CSRF guard — which
+  is exactly why it is safe here and the referrer policy was not.
+* **The customer generation action was fixed to call the REAL generation service.**
+  Its first version moved the book's state without creating or dispatching a job —
+  a button that silently did nothing. The browser journey found it; the unit suite
+  now asserts that a repeat request creates no second job and no second preview.
+* **A claim token is no longer burned by a wrong account.** `confirmGuestClaim`
+  consumed the single-use token before checking ownership, so merely *trying* a
+  leaked link destroyed the rightful owner's capability. Ownership is now checked
+  inside the consumption, and refusing does not consume. The email-based claim path
+  additionally requires a CONFIRMED address on the claimant's own account, which
+  keeps the API in step with the UI and stops a throwaway account from harvesting
+  orders by guessing addresses.
+* **Registering now queues the confirmation link** (best-effort; the account exists
+  either way) and records a `registered` security event. The Phase-5 browser
+  journey reads that link from the development console adapter's own stdout — the
+  same place a developer reads it locally. No dev-only HTTP surface was added and
+  no production rule was relaxed: the console adapter is refused outside an
+  explicit development environment.
+* **The phase-5 e2e group runs after the phase-3 group** (and after the phase-4
+  group). The phase-3 journey asserts GLOBAL preview-asset counts, so a group that
+  generates previews must not run before it; the ordering is documented in
+  `scripts/test-e2e.mjs`.
+* **`WW_E2E_ONLY` gained `legacy`, `phase4` and `phase5` values** so a local
+  iteration can narrow to one group. Unset — which is what the gate uses — runs
+  everything, and when it is set the run says so loudly.
+* **`logoutViaUi` gained a diagnostic** that reports which half of the
+  double-submit pair was wrong. It is what turned an opaque "did not log out" into
+  the `csrf_origin` finding above.
+* **`.openclaw_test_out.txt`** (untracked diagnostic) was never staged. `logs/`
+  and `audit-evidence/` are gitignored and were not staged.
