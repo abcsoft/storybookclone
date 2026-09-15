@@ -2,13 +2,20 @@
 // CSRF/Origin check, CORS decision, security header and rate-limit key
 // derivation lives HERE so the individual routes cannot drift apart.
 //
-// Trust boundary note (S-06): `clientIp()` reads `CF-Connecting-IP`, which is
-// authoritative ONLY when the request reaches this worker through Cloudflare
-// (the documented production boundary). Locally, and for any direct
-// non-Cloudflare deployment, it is attacker-controllable — so in that case the
-// limiter keys on a coarse, non-spoofable local constant instead of a
-// client-supplied header. Raw IPs are never stored: the durable limiter
-// hashes the whole bucket key (see src/rate-limit.ts).
+// Trust boundary note (S-06, corrected in the Phase-1 V2 audit as M-2):
+// `CF-Connecting-IP` is only trustworthy when the request actually reached
+// this worker through Cloudflare's edge. The header is attacker-controllable
+// everywhere else (the local `wrangler pages dev` server, a preview URL, any
+// direct/non-Cloudflare deployment), so returning it whenever it is present
+// lets ANY caller manufacture unlimited rate-limit identities and sidestep
+// every limiter. `clientIp()` therefore honours it ONLY at a verified
+// Cloudflare production boundary — an explicit `TRUSTED_PROXY=cloudflare`
+// opt-in in a production environment (never in `development`) — and
+// otherwise keys every caller on ONE shared, non-spoofable fallback bucket.
+// `X-Forwarded-For`/`X-Real-IP` are never trusted at all: there is no
+// configured trusted-proxy chain, so honouring them would be the same bug.
+// Raw IPs are never stored: the durable limiter hashes the whole bucket key
+// (see src/rate-limit.ts).
 import { getCookie, setCookie, deleteCookie } from 'hono/cookie'
 import type { Context, MiddlewareHandler } from 'hono'
 import { sha256Hex, timingSafeEqual } from './secrets'
@@ -126,15 +133,26 @@ async function makeCsrfCookieValue(env: { CSRF_SECRET?: string; GUEST_ORDER_TOKE
 }
 
 /**
- * The central CSRF/Origin gate (S-01). Applied to EVERY mutation:
- *   * a foreign Origin/Referer is always rejected when the request carries
- *     any auth cookie;
+ * The central CSRF/Origin gate (S-01, corrected in the Phase-1 V2 audit as
+ * L-A). Applied to EVERY mutation:
+ *   * a foreign Origin/Referer is ALWAYS rejected when the request carries
+ *     any auth cookie (session OR guest capability);
+ *   * ANY credentialed mutation (session, `ww_upload` or `ww_prospect`
+ *     cookie) must present a valid same-origin proof. Guest capability
+ *     cookies carry authority with no second factor, so — unlike a session —
+ *     they may NOT substitute a token for the origin proof: without an
+ *     Origin/Referer these requests are rejected.
  *   * a session-cookie mutation must ALSO present the double-submit CSRF
- *     token (form field or header) matching its own cookie;
- *   * a session-cookie mutation with NO origin proof AND no token is rejected.
- * Guest prospect/upload mutations are authorized by their own capability
- * cookie, so they need the origin proof but not the session token.
- * Safe methods (GET/HEAD/OPTIONS) are never blocked here.
+ *     token (form field or header) matching its own cookie. Its origin proof
+ *     and token must agree; a wrong token is a distinct `csrf_token` error.
+ *
+ * DOCUMENTED EXCEPTIONS (unchanged): safe methods (GET/HEAD/OPTIONS) are
+ * never blocked here, and requests that carry NO cookie at all are exempt
+ * because they have no ambient authority to abuse — that covers webhooks,
+ * API-key/bearer callers and one-off token-in-URL flows (e.g. password
+ * reset), which are authenticated by the request's own explicit credential
+ * rather than by a browser-attached cookie. Such a caller cannot be
+ * CSRF'd, because there is no cookie for a foreign page to ride.
  */
 export function csrfGuard(): MiddlewareHandler<{ Bindings: { ENVIRONMENT?: string; CSRF_SECRET?: string; GUEST_ORDER_TOKEN_SECRET?: string }; Variables: Record<string, unknown> }> {
   return async (c, next) => {
@@ -153,19 +171,31 @@ export function csrfGuard(): MiddlewareHandler<{ Bindings: { ENVIRONMENT?: strin
 
     const proof = originProof(c)
     const credentialed = hasAuthCookie(c)
-    if (credentialed && proof && !isSameOrigin(c, proof)) {
-      return c.json({ error: { code: 'csrf_origin', message: 'This request came from another site and was blocked.' } }, 403)
-    }
+    const sessionBound = hasSessionCookie(c)
 
-    if (hasSessionCookie(c)) {
-      const submitted = c.req.header(CSRF_HEADER) || (await formFieldValue(c, CSRF_FORM_FIELD))
-      const cookieValue = getCookie(c, CSRF_COOKIE)
-      // No origin proof and no token => reject. A same-origin browser always
-      // sends Origin on a POST and can always read its own cookie.
-      if (!proof && !(await csrfTokenValid(c, submitted, cookieValue, c.env))) {
+    if (credentialed) {
+      // A proof that is present but not same-origin is a cross-site request.
+      if (proof && !isSameOrigin(c, proof)) {
+        return c.json({ error: { code: 'csrf_origin', message: 'This request came from another site and was blocked.' } }, 403)
+      }
+      // L-A: a guest capability cookie (prospect/upload) is authority with no
+      // second factor, so it REQUIRES the same-origin proof. A session may
+      // instead present its bound double-submit token (checked below).
+      if (!proof && !sessionBound) {
         return c.json({ error: { code: 'csrf_origin', message: 'Missing request origin proof — blocked.' } }, 403)
       }
-      if (!(await csrfTokenValid(c, submitted, cookieValue, c.env))) {
+    }
+
+    if (sessionBound) {
+      const submitted = c.req.header(CSRF_HEADER) || (await formFieldValue(c, CSRF_FORM_FIELD))
+      const cookieValue = getCookie(c, CSRF_COOKIE)
+      const tokenValid = await csrfTokenValid(c, submitted, cookieValue, c.env)
+      // No origin proof and no token => reject. A same-origin browser always
+      // sends Origin on a POST and can always read its own cookie.
+      if (!proof && !tokenValid) {
+        return c.json({ error: { code: 'csrf_origin', message: 'Missing request origin proof — blocked.' } }, 403)
+      }
+      if (!tokenValid) {
         return c.json({ error: { code: 'csrf_token', message: 'Your session expired or the page was opened from another tab. Reload and try again.' } }, 403)
       }
     }
@@ -273,19 +303,72 @@ export function securityHeaders(): MiddlewareHandler {
 // S-06: rate-limit key derivation.
 // ---------------------------------------------------------------------------
 
-const LOCAL_REQUEST_KEY = 'local-request'
+/**
+ * ONE shared fallback bucket used whenever a trustworthy client identity is
+ * unavailable (local dev, preview, unrecognised proxy, malformed header).
+ * It is deliberately coarse: a shared bucket can over-limit, but it can
+ * never be manufactured by a caller, which is the property that matters.
+ */
+export const SHARED_RATE_LIMIT_BUCKET = 'shared-bucket'
+
+export type TrustedProxyEnv = { ENVIRONMENT?: string; TRUSTED_PROXY?: string }
+
+/** The only value that arms the Cloudflare edge boundary. */
+export const CLOUDFLARE_PROXY = 'cloudflare'
 
 /**
- * Coarse, non-spoofable client identity for the durable limiter. Within the
- * documented Cloudflare production boundary `CF-Connecting-IP` is set by the
- * edge and is trustworthy; outside it we deliberately do NOT trust a
- * client-supplied IP header and key every caller on one shared bucket.
- * The limiter hashes this value, so no raw IP is ever persisted.
+ * True only at a VERIFIED Cloudflare production boundary: the operator has
+ * explicitly declared `TRUSTED_PROXY=cloudflare` and the environment is not
+ * an explicitly-configured local development one. Both are required, so a
+ * stray flag can never arm the trust path in dev, and a non-Cloudflare
+ * deployment that never sets the flag can never be tricked into trusting the
+ * header.
+ */
+export function cloudflareBoundaryVerified(env: TrustedProxyEnv | undefined): boolean {
+  return String(env?.TRUSTED_PROXY || '').trim().toLowerCase() === CLOUDFLARE_PROXY && isProduction(env)
+}
+
+function isIPv4(value: string): boolean {
+  const parts = value.split('.')
+  if (parts.length !== 4) return false
+  return parts.every((p) => /^\d{1,3}$/.test(p) && Number(p) <= 255 && (p === '0' || !p.startsWith('0')))
+}
+
+function isIPv6(value: string): boolean {
+  if (!value.includes(':') || !/^[0-9a-fA-F:]+$/.test(value)) return false
+  const halves = value.split('::')
+  if (halves.length > 2 || value.includes(':::')) return false
+  const validGroup = (group: string) => /^[0-9a-fA-F]{1,4}$/.test(group)
+  if (halves.length === 2) {
+    // The zero-compression `::` may stand in for one or more groups, but no
+    // OTHER empty group is legal (`:::` and `a:::b` must be rejected).
+    return halves.every((half) => half === '' || half.split(':').every(validGroup))
+  }
+  return value.split(':').every(validGroup)
+}
+
+/** An IPv4/IPv6 literal — never an arbitrary attacker-supplied string. */
+export function isIpLiteral(value: string): boolean {
+  return isIPv4(value) || isIPv6(value)
+}
+
+/**
+ * Coarse, non-spoofable client identity for the durable limiter.
+ *
+ * M-2: `CF-Connecting-IP` is honoured ONLY at the verified Cloudflare
+ * production boundary (see `cloudflareBoundaryVerified`) AND only when it
+ * parses as a real IP literal. Everywhere else — including local dev, a
+ * preview deployment, or a production deployment that has not opted in — the
+ * caller gets ONE shared bucket, so rotating forged headers cannot create
+ * distinct identities. The limiter hashes this value, so no raw IP is ever
+ * persisted.
  */
 export function clientIp(c: Context): string {
-  const cf = c.req.header('CF-Connecting-IP')
-  if (cf) return cf.trim()
-  return LOCAL_REQUEST_KEY
+  if (cloudflareBoundaryVerified(c.env as TrustedProxyEnv | undefined)) {
+    const cf = String(c.req.header('CF-Connecting-IP') || '').trim()
+    if (cf && isIpLiteral(cf)) return cf
+  }
+  return SHARED_RATE_LIMIT_BUCKET
 }
 
 /** `action`-scoped bucket key. `identity` (e.g. a lowercased email) may be added when available. */

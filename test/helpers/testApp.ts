@@ -28,6 +28,16 @@ export type TestEnv = {
   GUEST_ORDER_TOKEN_SECRET?: string
   GUEST_ORDER_TOKEN_SECRET_PREV?: string
   FACE_ANALYSIS_PROVIDER?: string
+  /** M-2: only `cloudflare` (in a production environment) arms the trusted-proxy boundary. */
+  TRUSTED_PROXY?: string
+  /** L-D: overrides for the single brand/identity boundary (src/brand.ts). */
+  BRAND_NAME?: string
+  BRAND_TAGLINE?: string
+  BRAND_DESCRIPTION?: string
+  BRAND_LEGAL_NAME?: string
+  BRAND_CONTACT_EMAIL?: string
+  BRAND_LOGO_PATH?: string
+  BRAND_COPYRIGHT_YEAR?: string
 }
 
 export function freshEnv(overrides: Partial<TestEnv> = {}): TestEnv {
