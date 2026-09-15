@@ -1,0 +1,58 @@
+{
+  // The companion Worker that consumes generation work — see src/worker.ts for
+  // the full deployment rationale. The application itself continues to deploy
+  // to Cloudflare Pages via `wrangler.jsonc`; this file adds ONLY the queue
+  // consumer and the recovery cron that Pages cannot host.
+  //
+  // Both deployments MUST point at the SAME D1 database and the SAME private R2
+  // bucket: the durable generation job rows in D1 are the source of truth, and a
+  // consumer bound to a different database would simply find no work.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "webapp-generation-consumer",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-08-25",
+  "compatibility_flags": ["nodejs_compat"],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "webapp-production",
+      "database_id": "local-dev-placeholder"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "PHOTOS",
+      "bucket_name": "webapp-photos"
+    }
+  ],
+  "queues": {
+    "producers": [
+      {
+        // The same binding name the web app looks for (src/generation/queue.ts).
+        // Without it the app still records the durable job and this worker's
+        // cron picks it up — see the deployment section of
+        // docs/V2_ARCHITECTURE_BASELINE.md.
+        "binding": "GENERATION_QUEUE",
+        "queue": "webapp-generation"
+      }
+    ],
+    "consumers": [
+      {
+        "queue": "webapp-generation",
+        "max_batch_size": 5,
+        "max_batch_timeout": 10,
+        "max_retries": 5,
+        "dead_letter_queue": "webapp-generation-dlq"
+      }
+    ]
+  },
+  "triggers": {
+    // Every minute: reclaim dead leases and dispatch anything due. This is what
+    // makes the pipeline progress even if no Queue producer binding exists.
+    "crons": ["* * * * *"]
+  },
+  "vars": {
+    // Bounds one sweep. Raise deliberately, not accidentally.
+    "GENERATION_DISPATCH_MAX_JOBS": "10"
+  }
+}

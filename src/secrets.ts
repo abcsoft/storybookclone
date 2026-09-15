@@ -118,6 +118,19 @@ export async function sha256Hex(message: string): Promise<string> {
   return toHex(digest)
 }
 
+/**
+ * The content checksum for a BINARY artifact (a generated illustration). Kept
+ * separate from sha256Hex(string): hex-encoding megabytes of image bytes into a
+ * string just to hash it would be wasteful and could silently hash a truncated
+ * or re-encoded copy.
+ */
+export async function sha256BytesHex(bytes: Uint8Array): Promise<string> {
+  // `bytes.slice()` passes an exact-length copy, so a subarray view over a
+  // larger buffer cannot be hashed together with its neighbours.
+  const digest = await crypto.subtle.digest('SHA-256', bytes.slice())
+  return toHex(digest)
+}
+
 /** Constant-time string compare (equal-length hex/opaque tokens). */
 export function timingSafeEqual(a: string, b: string): boolean {
   if (a.length !== b.length) return false
