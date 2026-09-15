@@ -9,16 +9,57 @@
 //     (migration 0015) carrying actor, previous state, next state, reason and
 //     the request id.
 //
-// The full V2 order machine (draft -> awaiting_payment -> paid -> production ->
-// shipped -> delivered) arrives with real payment in Phase 4. This service
-// covers the states that exist today and is the ONLY writer of those columns.
+// V2 Phase 4 extends this machine with the PAYMENT states from the V2 §7 order
+// contract (draft -> awaiting_payment -> paid -> ...), which the checkout
+// session creates and which only a verified provider event may enter. The
+// pre-Phase-4 preview/production states are UNCHANGED — every edge that existed
+// before still exists, verbatim, so nothing that used to be legal became illegal.
+//
+// The ONE bridge between the two halves is `paid -> pending_preview`: a paid
+// order continues into the existing preview pipeline, so the very same
+// fulfilment workflow serves both a manually-recorded and a provider-paid order.
+//
+// `payment_status` (unpaid/captured/refunded/...) is a SEPARATE, ledger-derived
+// axis (see src/commerce/ledger.ts) — this file governs `orders.status`, and the
+// two are written together only by the payment domain.
 
-export const ORDER_STATUSES = ['pending_preview', 'preview_sent', 'approved', 'printing', 'shipped', 'delivered', 'cancelled'] as const
+export const ORDER_STATUSES = [
+  'draft',
+  'awaiting_payment',
+  'payment_failed',
+  'paid',
+  'awaiting_preview',
+  'preview_ready',
+  'partially_refunded',
+  'refunded',
+  'disputed',
+  'pending_preview',
+  'preview_sent',
+  'approved',
+  'printing',
+  'shipped',
+  'delivered',
+  'cancelled'
+] as const
 export type OrderStatus = (typeof ORDER_STATUSES)[number]
 
 /** Allowed forward transitions. A terminal state has no outgoing edges. */
 export const ORDER_STATUS_FLOW: Record<OrderStatus, readonly OrderStatus[]> = {
-  pending_preview: ['preview_sent', 'approved', 'cancelled'],
+  // ---- V2 §7 payment half (Phase 4) ----
+  draft: ['awaiting_payment', 'cancelled'],
+  awaiting_payment: ['paid', 'payment_failed', 'cancelled'],
+  payment_failed: ['awaiting_payment', 'cancelled'],
+  paid: ['pending_preview', 'awaiting_preview', 'partially_refunded', 'refunded', 'disputed', 'cancelled'],
+  awaiting_preview: ['preview_ready', 'pending_preview', 'cancelled'],
+  preview_ready: ['approved', 'pending_preview', 'cancelled'],
+  // Refund/dispute states are written by the payment domain alongside the
+  // ledger; they are listed here so the vocabulary is closed and the admin UI
+  // can offer them, but the domain is what guarantees the money agrees.
+  partially_refunded: ['refunded', 'disputed'],
+  refunded: [],
+  disputed: ['refunded', 'partially_refunded'],
+  // ---- pre-Phase-4 preview/production half (unchanged, verbatim) ----
+  pending_preview: ['preview_sent', 'approved', 'cancelled', 'awaiting_payment'],
   preview_sent: ['approved', 'pending_preview', 'cancelled'],
   approved: ['printing', 'cancelled'],
   printing: ['shipped', 'cancelled'],
@@ -40,9 +81,9 @@ export const PREVIEW_STATUS_FLOW: Record<PreviewStatus, readonly PreviewStatus[]
 const ORDER_STATUS_SET = new Set<string>(ORDER_STATUSES)
 const PREVIEW_STATUS_SET = new Set<string>(PREVIEW_STATUSES)
 
-/** A transition into `cancelled` (or a preview being rejected) is high-risk and must carry a reason (S-09 prerequisite). */
+/** A transition into `cancelled` (or a money-moving refund/dispute state) is high-risk and must carry a reason (S-09 prerequisite). */
 export function orderTransitionNeedsReason(to: OrderStatus): boolean {
-  return to === 'cancelled'
+  return to === 'cancelled' || to === 'refunded' || to === 'partially_refunded' || to === 'disputed'
 }
 
 export type TransitionOutcome = { ok: true; from: string; to: string; noop: boolean } | { ok: false; status: number; error: string }
