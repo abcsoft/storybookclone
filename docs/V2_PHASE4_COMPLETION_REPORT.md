@@ -3,7 +3,7 @@
 Verdict: **COMPLETE**
 Branch: `feat/commerce-payments-v2`
 Baseline HEAD: `2d6ccb0504c3cc45ea6105a4783f72e216d9c86b` (accepted Phase-3 tip)
-Phase-4 code/test tip: `97f03d4` (the last commit that changes code, tests, scripts
+Phase-4 code/test tip: `fd2ab74` (the last commit that changes code, tests, scripts
 or seed). The branch tip is the docs commit that carries this report; the commit
 list for the whole phase is in §13.
 
@@ -179,6 +179,7 @@ Browser routes/viewports exercised by the new journey: `/books/the-star-collecto
 9. **`stripeProviderConfigForTests`** was added to the payments index so a test can assert the config report without reaching into adapter internals. It returns exactly what `stripeConfig()` returns.
 10. **The provider event row is written AFTER the attempt is resolved** so the event is linked to its order and attempt at insert time (the trigger then keeps that linkage immutable). This was found by the browser journey, not by a unit test, and the unit suite was extended to assert the linkage.
 11. **The Phase-4 rule "production/print state controls cancellation eligibility" was made explicit rather than left implied.** The state machine already refused cancellation from `shipped`/`delivered`, but nothing named the rule, so an operator saw only a missing option. `PRODUCTION_STATES` + `cancellationEligibility()` now state it, DERIVED from `ORDER_STATUS_FLOW` so the two can never drift; the admin order page renders the refusal reason; and PW asserts the agreement for every status plus the end-to-end refusal. **No edge was added, removed or narrowed** — in particular `printing -> cancelled` is a pre-existing Phase-1 edge and remains legal, and a shipped order can still be refunded (a ledger operation on the payment axis). Graining eligibility inside the print pipeline is FUL-10 (Phase 7).
+12. **A read RACE in the Phase-4 browser journey was found and fixed (it is not weakened).** `phase4.6b` waited only for the `#order-payment-status` selector — which is present in the SERVER-rendered HTML — and then read the element immediately, so it raced `payment-return.js`'s asynchronous reconciliation. It passed on two runs and failed on a third with the server's honest "Nothing has been charged for this order yet." instead of the reconciled "No payment has been recorded yet.". The step now waits (bounded, 20s) for the reconciliation to land, exactly as the paid-recovery step `phase4.8` already did, and still fails if the page ever claims payment was received. This makes the assertion STRONGER: it now requires the recovery path to actually run rather than passing on server HTML alone. `npm run test:e2e` was then re-run **three consecutive times** on the frozen tree, green every time.
 
 ## 13. Commit list
 
@@ -193,10 +194,14 @@ Phase 4 on `feat/commerce-payments-v2`, oldest first (baseline `2d6ccb0`):
 | `564faf8` | `test(phase4): commerce fixtures and the cart/quote, payments/webhooks and refunds/admin suites` |
 | `f570607` | `test(phase4): the commerce browser journey, the migration upgrade scenario and the finance audit routes` |
 | `97f03d4` | `chore(seed): give the seeded promotion its authoritative basis-point rate` |
-| *(this commit)* | `docs(phase4): completion report, traceability and baseline/progress updates` |
+| `962abce` | `docs(phase4): completion report, requirement traceability and baseline/progress updates` |
+| `fd2ab74` | `test(phase4): wait for the payment-return reconciliation instead of racing it` |
+| *(this commit)* | `docs(phase4): record the journey race fix and the commit list` |
 
 Every commit is additive on top of the previous one: no history was rewritten, no
-commit was amended, nothing was force-pushed, and nothing was pushed at all.
+commit was amended, nothing was force-pushed, and nothing was pushed at all. The
+last commit that changes code, tests, scripts or seed is `fd2ab74`; the commits
+after it are documentation only.
 
 Confirmation:
 - no merge/deploy (nothing was pushed; AutoCoder reviews and pushes)

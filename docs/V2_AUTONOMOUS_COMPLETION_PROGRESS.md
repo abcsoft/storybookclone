@@ -15,12 +15,12 @@ action would be. Every claim here was executed; nothing is aspirational.
 | Pushed? | **No.** AutoCoder reviews and pushes. |
 | History rewritten? | **No.** Every change is a new commit on top of `2d6ccb0`. |
 | Migrations added | `0026`, `0027` (forward-only; `0001`–`0025` byte-identical) |
-| Phase-4 code/test tip | `97f03d4` — the last commit that changes code, tests, scripts or seed |
+| Phase-4 code/test tip | `fd2ab74` — the last commit that changes code, tests, scripts or seed |
 
 The branch tip on `feat/commerce-payments-v2` is the docs commit that carries
-this file. Eight commits make up Phase 4 (`889d8bc`, `9482f3c`, `2096faf`,
-`5bf7fdc`, `564faf8`, `f570607`, `97f03d4`, then the docs commit); the full list
-is in `docs/V2_PHASE4_COMPLETION_REPORT.md` §13.
+this file. Ten commits make up Phase 4 (`889d8bc`, `9482f3c`, `2096faf`,
+`5bf7fdc`, `564faf8`, `f570607`, `97f03d4`, `962abce`, `fd2ab74`, then the docs
+commit); the full list is in `docs/V2_PHASE4_COMPLETION_REPORT.md` §13.
 
 ## 2. Migration ledger
 
@@ -86,7 +86,7 @@ Three honest limits repeat there:
 | `npm run secrets:scan` | `0` | no matches across 324 files |
 | `npm run secrets:scan -- --mode=archive` | `0` | no matches across 325 files |
 | `npm run build` | `0` | `dist/_worker.js` 715.40 kB (gzip 189.28 kB) — up from 577.88 kB in Phase 3 |
-| `npm run test:e2e` | `0` | **13 journey groups** including the new `phase4-commerce-payments` group (12 steps) |
+| `npm run test:e2e` | `0` | **13 journey groups** including the new `phase4-commerce-payments` group (12 steps); re-run **three consecutive times** after the journey race fix, green each time |
 | `npm run audit:frontend -- phase4-commerce` | `0` | **0 findings**: 29 public routes at 360/390/768/1024/1440/1920, the admin surfaces (including all six `/admin/finance/*` pages) at desktop + mobile, and the accessibility pass |
 | `npm audit --omit=dev` | `0` | 0 vulnerabilities |
 | `npm audit` | `1` | 3 high, dev-only `sharp <0.35.4` ← `miniflare` ← `wrangler`; **pre-existing, not in the worker bundle, unchanged** |
@@ -236,4 +236,15 @@ deliberately left these to it and nothing else in the commerce flow is open:
   edge and is preserved verbatim rather than narrowed (narrowing it would change
   a Phase-0…3 contract); a shipped order can still be REFUNDED, which is a ledger
   operation on the payment axis. This ADDED 3 tests; nothing was weakened.
+* **A read RACE in the Phase-4 browser journey was found and fixed by re-running
+  the gate.** `phase4.6b` waited only for the `#order-payment-status` selector —
+  present in the SERVER-rendered HTML — and then read the element immediately,
+  racing `payment-return.js`'s async reconciliation. Two runs were green and a
+  third failed with the server's honest "Nothing has been charged for this order
+  yet." instead of the reconciled "No payment has been recorded yet.". The step
+  now waits (bounded, 20s) for the reconciliation, exactly as `phase4.8` already
+  did, and still fails if the page claims payment was received — so it is
+  STRONGER, requiring the recovery path to actually run. `npm run test:e2e` was
+  then re-run three consecutive times, green each time. This is why the full gate
+  set is re-run on the frozen tree rather than trusted from an earlier pass.
 * **`.openclaw_test_out.txt`** (untracked diagnostic) was never staged.
