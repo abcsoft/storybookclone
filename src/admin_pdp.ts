@@ -13,10 +13,10 @@ function adminPage(opts: { title: string; active: string; body: string; previewH
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>${esc(opts.title)} · ${esc(brand().name)} Admin</title>
-  <link rel="icon" href="/static/img/logo.png" type="image/png">
-  <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.5.2/css/all.min.css" rel="stylesheet">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link href="/static/admin.css" rel="stylesheet">
+  <link href="/static/icons.css" rel="stylesheet">
+  <link href="/static/storefront.css" rel="stylesheet">
   <link href="/static/admin-pdp.css" rel="stylesheet">
 </head>
 <body class="admin-pdp-edit">
@@ -240,9 +240,9 @@ function tabMagic(p: Product, d: any) {
     <h2>"See How a Simple Photo Becomes a Beautiful Story" slider</h2>
     <form class="a-form" method="post" action="/admin/products/${p.id}/pdp/magic">
       ${row('Heading', 'heading', 'text', d.magic.heading)}
-      ${row('Left image URL', 'left_image', 'text', d.magic.left_image, '/static/img/magic/before.webp')}
+      ${row('Left image URL', 'left_image', 'text', d.magic.left_image, '/static/img/art/magic-before.svg')}
       ${row('Left caption', 'left_caption', 'text', d.magic.left_caption, 'Your real photo')}
-      ${row('Right image URL', 'right_image', 'text', d.magic.right_image, '/static/img/magic/after.webp')}
+      ${row('Right image URL', 'right_image', 'text', d.magic.right_image, '/static/img/art/magic-after.svg')}
       ${row('Right caption', 'right_caption', 'text', d.magic.right_caption, 'Personalised version')}
       ${area('Below-slider paragraph', 'body', d.magic.body, 3)}
       <button class="a-btn" type="submit">Save magic block</button>

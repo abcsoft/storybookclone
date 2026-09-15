@@ -265,8 +265,11 @@ const CSP = [
   // Inline scripts/styles are still used by the server-rendered pages; the
   // nonce/hash-based CSP that removes them is an explicit Phase 8 item.
   "script-src 'self' 'unsafe-inline'",
-  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net",
-  "font-src 'self' https://fonts.gstatic.com https://cdn.jsdelivr.net data:",
+  // No third-party style/font origin is allowed. The storefront and admin use
+  // the project's own stylesheets, its own masked SVG icons and a system font
+  // stack (V2 Phase 2, SF-01), so a page view makes no cross-origin request.
+  "style-src 'self' 'unsafe-inline'",
+  "font-src 'self' data:",
   "img-src 'self' data: blob:",
   "connect-src 'self'",
   "frame-ancestors 'none'",

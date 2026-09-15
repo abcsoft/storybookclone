@@ -306,8 +306,28 @@ describe('SF-01 the artwork is original, generated and deterministic', () => {
       const text = readFileSync(join(styleDir, f), 'utf8')
       expect(text, `${f} loads a remote asset`).not.toMatch(/https?:\/\/(fonts\.googleapis|fonts\.gstatic|cdn\.jsdelivr|use\.fontawesome|cdnjs)/i)
     }
-    const layout = readFileSync(join(root, 'src', 'layout.ts'), 'utf8')
-    expect(layout).not.toMatch(/fonts\.googleapis|fontawesome|jsdelivr/i)
+    // Every server template, not just the shell: a new page must not
+    // reintroduce a CDN link either.
+    const srcDir = join(root, 'src')
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir)) {
+        const full = join(dir, entry)
+        if (statSync(full).isDirectory()) {
+          walk(full)
+          continue
+        }
+        if (!/\.(ts|tsx)$/.test(entry)) continue
+        const text = readFileSync(full, 'utf8')
+        expect(text, `${full} loads a remote asset`).not.toMatch(/fonts\.googleapis|fonts\.gstatic|fontawesome|cdn\.jsdelivr|cdnjs/i)
+      }
+    }
+    walk(srcDir)
+  })
+
+  it('the Content-Security-Policy no longer allows a third-party style/font origin', () => {
+    const security = readFileSync(join(root, 'src', 'security.ts'), 'utf8')
+    expect(/style-src[\s\S]*fonts\.googleapis/.test(security)).toBe(false)
+    expect(/font-src[\s\S]*gstatic/.test(security)).toBe(false)
   })
 
   it('the design system exposes its tokens and the responsive/reduced-motion gates', () => {

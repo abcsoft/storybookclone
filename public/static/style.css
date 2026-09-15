@@ -10,9 +10,13 @@
   --blush: #fff4fb;
   --radius: 18px;
   --shadow: 0 18px 50px rgba(90, 30, 130, 0.12);
-  --font: 'Figtree', system-ui, sans-serif;
-  --script: 'Just Me Again Down Here', cursive;
-  --hand: 'Kalam', cursive;
+  /* Original typography: system stacks only — no webfont is downloaded, so a
+     page view makes no cross-origin request. See public/static/storefront.css
+     for the Phase-2 component layer and the responsive/accessibility gates. */
+  --font: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif;
+  --font-display: ui-serif, Georgia, Cambria, 'Times New Roman', serif;
+  --script: 'Segoe Script', 'Bradley Hand', 'Comic Sans MS', cursive;
+  --hand: 'Segoe Script', 'Bradley Hand', cursive;
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; }
