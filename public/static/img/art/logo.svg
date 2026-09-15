@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-hidden="true" focusable="false"><defs><linearGradient id="g3942835354" x1="0" y1="0" x2="0" y2="1">
+<stop offset="0" stop-color="#d8f3dc"/><stop offset="1" stop-color="#95d5b2"/>
+</linearGradient></defs><rect width="64" height="64" fill="url(#g3942835354)"/><g opacity="0.85" transform="translate(35.65 21.06)">
+<ellipse cx="0" cy="0" rx="4.3" ry="2.67" fill="#ffffff"/>
+<ellipse cx="3.66" cy="0.52" rx="2.92" ry="2.06" fill="#ffffff"/>
+<ellipse cx="-3.44" cy="0.69" rx="2.58" ry="1.89" fill="#ffffff"/>
+</g><g opacity="0.85" transform="translate(49.5 17.24)">
+<ellipse cx="0" cy="0" rx="6.11" ry="3.79" fill="#ffffff"/>
+<ellipse cx="5.2" cy="0.73" rx="4.16" ry="2.93" fill="#ffffff"/>
+<ellipse cx="-4.89" cy="0.98" rx="3.67" ry="2.69" fill="#ffffff"/>
+</g><g transform="translate(32 37.12) rotate(-6)">
+<rect x="-16.64" y="-11.98" width="33.28" height="23.96" rx="1.66" fill="#ffd166"/>
+<rect x="-16.64" y="-11.98" width="2" height="23.96" fill="#1b4332" opacity="0.35"/>
+<path d="M0 -11.32 Q 7.32 -14.64 15.31 -9.98 L 15.31 10.65 Q 7.32 5.99 0 9.98 Z" fill="#ffffff" opacity="0.92"/>
+</g><path d="NaN" fill="#ffd166" opacity="0.9"/></svg>

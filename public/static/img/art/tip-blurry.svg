@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" width="240" height="240" role="img" aria-hidden="true" focusable="false"><defs><linearGradient id="g3117832325" x1="0" y1="0" x2="0" y2="1">
+<stop offset="0" stop-color="#fdf6e3"/><stop offset="1" stop-color="#f3e3c3"/>
+</linearGradient></defs><rect width="240" height="240" fill="url(#g3117832325)"/><g opacity="0.85" transform="translate(119.03 70.08)">
+<ellipse cx="0" cy="0" rx="19.78" ry="12.26" fill="#ffffff"/>
+<ellipse cx="16.81" cy="2.37" rx="13.45" ry="9.49" fill="#ffffff"/>
+<ellipse cx="-15.82" cy="3.16" rx="11.87" ry="8.7" fill="#ffffff"/>
+</g><g opacity="0.85" transform="translate(68.72 75.22)">
+<ellipse cx="0" cy="0" rx="18.68" ry="11.58" fill="#ffffff"/>
+<ellipse cx="15.87" cy="2.24" rx="12.7" ry="8.96" fill="#ffffff"/>
+<ellipse cx="-14.94" cy="2.99" rx="11.21" ry="8.22" fill="#ffffff"/>
+</g><g transform="translate(120 120)" opacity="0.55"><circle cx="0" cy="0" r="72" fill="#9aa3b2"/><circle cx="64.8" cy="-14.4" r="54" fill="#b6bdc9"/></g></svg>

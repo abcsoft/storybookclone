@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Storybook Studio">
+  <rect width="64" height="64" rx="14" fill="#2d6a4f"/>
+  <path d="M14 22h15a5 5 0 0 1 5 5v18a4 4 0 0 0-4-4H14z" fill="#f6e0b5"/>
+  <path d="M50 22H35a5 5 0 0 0-5 5v18a4 4 0 0 1 4-4h16z" fill="#ffd166"/>
+  <path d="M32 27v18" stroke="#2d6a4f" stroke-width="2.4" stroke-linecap="round"/>
+  <path d="M41 14l1.6 4.4L47 20l-4.4 1.6L41 26l-1.6-4.4L35 20l4.4-1.6z" fill="#ffffff"/>
+</svg>

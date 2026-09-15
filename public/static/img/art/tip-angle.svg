@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" width="240" height="240" role="img" aria-hidden="true" focusable="false"><defs><linearGradient id="g1815814584" x1="0" y1="0" x2="0" y2="1">
+<stop offset="0" stop-color="#fdf6e3"/><stop offset="1" stop-color="#f3e3c3"/>
+</linearGradient></defs><rect width="240" height="240" fill="url(#g1815814584)"/><g opacity="0.85" transform="translate(197.87 42.09)">
+<ellipse cx="0" cy="0" rx="15.32" ry="9.5" fill="#ffffff"/>
+<ellipse cx="13.02" cy="1.84" rx="10.42" ry="7.35" fill="#ffffff"/>
+<ellipse cx="-12.26" cy="2.45" rx="9.19" ry="6.74" fill="#ffffff"/>
+</g><g opacity="0.85" transform="translate(48.35 32.93)">
+<ellipse cx="0" cy="0" rx="23.51" ry="14.57" fill="#ffffff"/>
+<ellipse cx="19.98" cy="2.82" rx="15.98" ry="11.28" fill="#ffffff"/>
+<ellipse cx="-18.81" cy="3.76" rx="14.1" ry="10.34" fill="#ffffff"/>
+</g><g transform="translate(120 120) rotate(24)"><ellipse rx="43.2" ry="72" fill="#b6bdc9"/></g></svg>

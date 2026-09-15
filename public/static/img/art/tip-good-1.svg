@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" width="240" height="240" role="img" aria-hidden="true" focusable="false"><defs><linearGradient id="g1893921370" x1="0" y1="0" x2="0" y2="1">
+<stop offset="0" stop-color="#d8f3dc"/><stop offset="1" stop-color="#95d5b2"/>
+</linearGradient></defs><rect width="240" height="240" fill="url(#g1893921370)"/><g opacity="0.85" transform="translate(59.02 35.68)">
+<ellipse cx="0" cy="0" rx="17.06" ry="10.58" fill="#ffffff"/>
+<ellipse cx="14.5" cy="2.05" rx="11.6" ry="8.19" fill="#ffffff"/>
+<ellipse cx="-13.65" cy="2.73" rx="10.23" ry="7.51" fill="#ffffff"/>
+</g><g opacity="0.85" transform="translate(205.48 31.72)">
+<ellipse cx="0" cy="0" rx="22" ry="13.64" fill="#ffffff"/>
+<ellipse cx="18.7" cy="2.64" rx="14.96" ry="10.56" fill="#ffffff"/>
+<ellipse cx="-17.6" cy="3.52" rx="13.2" ry="9.68" fill="#ffffff"/>
+</g><g transform="translate(120 120)"><circle cx="0" cy="0" r="72" fill="#ffffff"/><circle cx="-21.6" cy="-10.8" r="7.92" fill="#1b4332"/><circle cx="21.6" cy="-10.8" r="7.92" fill="#1b4332"/><path d="M-25.2 25.2 Q 0 50.4 25.2 25.2" stroke="#52b788" stroke-width="7.2" fill="none" stroke-linecap="round"/></g></svg>
