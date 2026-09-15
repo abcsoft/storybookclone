@@ -14,7 +14,7 @@ session; nothing is aspirational.
 | Task origin | V2 Phase-1 Independent Audit (findings M-1…M-3, L-A…L-E) |
 | Phase-0 audited tip | `6e080e8` |
 | `main` | `4d76779` — **untouched** (never merged, never pushed, never checked out) |
-| Pushed? | **No.** Nothing was pushed; AutoCoder reviews and pushes. |
+| Pushed? | **Yes** - `24f342a` was pushed to `origin/fix/phase2-critical-recovery` after AutoCoder review (fast-forward from `f6f9873`; no force, no rewrite). |
 | History rewritten? | **No.** `f6f9873` was not amended, rebased or rewritten; all work is new commits on top. |
 
 Coherent fix commits added (on top of `f6f9873`):
