@@ -1,4 +1,4 @@
-// --- app.js (WonderWraps Storefront & Cart Interactive Logic) — ES module ---
+// --- app.js (Storefront & Cart interactive logic) — ES module ---
 import { readCart, writeCart, addItem, removeItem, setQty, cartCount } from './cart.js'
 import { quote as fetchQuote, subscribeNewsletter } from './api.js'
 
@@ -74,7 +74,7 @@ if (nl) {
 }
 
 // ============================================================================
-// CART PAGE LOGIC (WonderWraps Matching Design & Smart Cross-Sell)
+// CART PAGE LOGIC (matching design + smart cross-sell)
 // ============================================================================
 async function renderCart() {
   const root = document.getElementById('cart-root')

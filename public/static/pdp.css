@@ -1,6 +1,6 @@
 /* =========================================================================
-   WonderWraps PDP (WonderWraps PDP cloned page)
-   Mirrors https://wonderwraps.com/books/girls-sticker-pack visually:
+   Product detail page (PDP) styles
+   Layout: long-scrolling product page with a sticky buy box.
    - top thin purple banner with code chip
    - hero with thumbnail rail + main image + price/CTA + accordions
    - purple "Start Personalising" panel with TIPS card
@@ -1029,7 +1029,7 @@ body.pdp-page {
 
 /* ==========================================================================
    PERSONALIZED BOOK READER / CUSTOMIZATION PAGE (/my/books/:slug)
-   Matching wonderwraps.com/my/books/princess-gando-the-one-we-all-needed-gando-6
+   Reader ("my books") layout
    ========================================================================== */
 
 .reader-promo-banner {
@@ -1766,7 +1766,7 @@ body.pdp-page {
   }
 
   /* ==========================================================================
-     WONDERWRAPS CART PAGE STYLES (Matching Reference UI)
+     CART PAGE STYLES
      ========================================================================== */
   .cart-promo-banner {
     background: #c084fc;
@@ -2160,50 +2160,10 @@ body.pdp-page {
     color: #1e1b2e;
   }
 
-  /* Payment Express Buttons */
-  .cart-express-pay-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 12px;
-    margin-bottom: 16px;
-  }
-  .btn-paypal-express {
-    background: #ffc439;
-    color: #003087;
-    border: none;
-    border-radius: 8px;
-    padding: 10px 14px;
-    font-size: 15px;
-    font-weight: 800;
-    font-style: italic;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-    transition: opacity 0.15s ease;
-  }
-  .btn-paypal-express:hover {
-    opacity: 0.92;
-  }
-  .btn-paypal-later {
-    background: #ffc439;
-    color: #003087;
-    border: none;
-    border-radius: 8px;
-    padding: 10px 14px;
-    font-size: 14px;
-    font-weight: 700;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-    transition: opacity 0.15s ease;
-  }
-  .btn-paypal-later:hover {
-    opacity: 0.92;
-  }
+  /* L-E: the PayPal Express/Later buttons and their two-column grid were
+     removed. This version collects no real payment (the checkout page says so
+     itself), so styling an unavailable payment method only advertised a
+     capability the app does not have. */
 
   /* Main Checkout CTA Button */
   .btn-cart-checkout {

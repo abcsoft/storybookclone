@@ -1,5 +1,5 @@
-// WonderWraps PDP clone — `books/:slug` and `stickers/:slug` rendered as a single
-// long-scrolling product page that mirrors wonderwraps.com/books/girls-sticker-pack.
+// Product detail page (PDP) — `books/:slug` and `stickers/:slug` rendered as a
+// single long-scrolling product page.
 // All sections are data-driven from the per-product PDP rows so admins can edit them.
 import type { Product } from './db'
 import { money, languages } from './data'

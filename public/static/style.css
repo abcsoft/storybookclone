@@ -321,7 +321,6 @@ details.faq p { margin: 0 0 16px; color: var(--muted); }
   border-top: 1px solid rgba(255,255,255,.12);
   display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap;
 }
-.pay-marks { display: flex; gap: 12px; font-size: 28px; }
 .page-hero {
   background: radial-gradient(1200px 400px at 20% -20%, #ffe7a8, transparent), var(--soft);
   padding: 48px 20px 28px; text-align: center;

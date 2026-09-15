@@ -1,5 +1,6 @@
 import { esc, stars } from './layout'
-import { money, type Product, languages, faqs } from './data'
+import { money, type Product, languages, faqList } from './data'
+import { brand } from './brand'
 import { humanPhotoPolicy } from './photo-policy'
 
 export function homePage(opts: {
@@ -248,7 +249,7 @@ export function homePage(opts: {
         <h2>Frequently asked questions</h2>
       </div>
       <div class="faq-group">
-        ${faqs.slice(0, 5).map(f => `
+        ${faqList().slice(0, 5).map(f => `
           <details class="faq-item">
             <summary>${esc(f.q)}</summary>
             <p>${esc(f.a)}</p>
@@ -404,6 +405,7 @@ export function productPage(p: Product, pathPrefix: string, related: Product[] =
 }
 
 export function faqsPage() {
+  const faqs = faqList()
   const cats = [...new Set(faqs.map(f => f.cat))]
   return `
   <section class="page-hero"><h1>Frequently Asked Questions</h1><p>Everything you need to know about our personalised stories, shipping, and photo quality.</p></section>
@@ -427,7 +429,7 @@ export function faqsPage() {
 
 export function contactPage(sent?: boolean, error?: string) {
   return `
-  <section class="page-hero"><h1>Contact WonderWraps</h1><p>Questions about an order, custom request, or photo? We’d love to help.</p></section>
+  <section class="page-hero"><h1>Contact ${esc(brand().name)}</h1><p>Questions about an order, custom request, or photo? We’d love to help.</p></section>
   <section class="section">
     <div class="wrap" style="max-width:640px">
       ${sent ? `<p class="notice ok">Thank you — your message was saved. We read this inbox manually, so replies are not instant.</p>` : ''}
@@ -462,8 +464,8 @@ export function supportPage() {
     <div class="wrap grid-3">
       <article class="product-card" style="padding:24px">
         <h3><i class="fas fa-envelope"></i> Email us</h3>
-        <p>support@wonderwraps.com</p>
-        <a class="link" href="mailto:support@wonderwraps.com">Send a message</a>
+        <p>${esc(brand().contactEmail)}</p>
+        <a class="link" href="mailto:${esc(brand().contactEmail)}">Send a message</a>
       </article>
       <article class="product-card" style="padding:24px">
         <h3><i class="fas fa-circle-question"></i> FAQs</h3>
@@ -489,7 +491,7 @@ export function authPage(kind: 'login' | 'register' | 'forgot', msg?: string) {
   return `
   <section class="auth">
     <div class="auth-form">
-      <a class="brand" href="/"><img src="/static/img/logo.png" alt="" width="40" height="40"><span>WonderWraps</span></a>
+      <a class="brand" href="/"><img src="/static/img/logo.png" alt="" width="40" height="40"><span>${esc(brand().name)}</span></a>
       <h1>${h}</h1>
       <p>${s}</p>
       ${msg ? `<p class="notice">${esc(msg)}</p>` : ''}
@@ -505,8 +507,8 @@ export function authPage(kind: 'login' | 'register' | 'forgot', msg?: string) {
       ${kind === 'forgot' ? `<p><a class="link" href="/login">Back to login</a></p>` : ''}
     </div>
     <aside class="auth-art">
-      <h2>Adored by millions worldwide</h2>
-      <p>Hyper-personalised storybooks where your child is the hero.</p>
+      <h2>${esc(brand().tagline)}</h2>
+      <p>Personalised storybooks where your child is the hero — built from the photo and details you provide.</p>
       <img src="/static/img/login-art.webp" alt="Parent and child with a storybook">
     </aside>
   </section>`
@@ -516,7 +518,7 @@ export function resetPasswordPage(token: string, msg?: string) {
   return `
   <section class="auth">
     <div class="auth-form">
-      <a class="brand" href="/"><img src="/static/img/logo.png" alt="" width="40" height="40"><span>WonderWraps</span></a>
+      <a class="brand" href="/"><img src="/static/img/logo.png" alt="" width="40" height="40"><span>${esc(brand().name)}</span></a>
       <h1>Reset Password</h1>
       <p>Choose a new password (at least 8 characters).</p>
       ${msg ? `<p class="notice">${esc(msg)}</p>` : ''}
@@ -531,8 +533,8 @@ export function resetPasswordPage(token: string, msg?: string) {
       <p><a class="link" href="/login">Back to login</a></p>
     </div>
     <aside class="auth-art">
-      <h2>Adored by millions worldwide</h2>
-      <p>Hyper-personalised storybooks where your child is the hero.</p>
+      <h2>${esc(brand().tagline)}</h2>
+      <p>Personalised storybooks where your child is the hero — built from the photo and details you provide.</p>
       <img src="/static/img/login-art.webp" alt="Parent and child with a storybook">
     </aside>
   </section>`
@@ -676,7 +678,7 @@ export const BLOG_POSTS: BlogPost[] = [
 
 export function blogIndex() {
   return `
-  <section class="page-hero"><h1>WonderWraps Blog</h1><p>Notes on personalising books, photos and bedtime reading.</p></section>
+  <section class="page-hero"><h1>${esc(brand().name)} Blog</h1><p>Notes on personalising books, photos and bedtime reading.</p></section>
   <section class="section">
     <div class="wrap grid-3">
       ${BLOG_POSTS.map(
@@ -702,7 +704,7 @@ export function blogPost(slug: string): string | null {
   return `
   <section class="page-hero">
     <div class="wrap" style="max-width:760px">
-      <p class="eyebrow">WonderWraps Blog · ${esc(post.category)}</p>
+      <p class="eyebrow">${esc(brand().name)} Blog · ${esc(post.category)}</p>
       <h1>${esc(post.title)}</h1>
     </div>
   </section>
@@ -757,8 +759,9 @@ export function legalPage(kind: 'privacy' | 'terms') {
       <p>Not applicable in this version: no real payment is collected, nothing is printed or
       shipped, and therefore no refund, delivery or satisfaction guarantee applies.</p>
       <h2>4. Legal review required</h2>
-      <p>Owner action required: engage legal counsel, then replace this page with reviewed
-      policy text before launch.</p>
+      <p>Owner action required: configure the final legal entity and contact address in the site
+      brand settings (currently “${esc(brand().legalName)}” / ${esc(brand().contactEmail)}), engage legal
+      counsel, then replace this page with reviewed policy text before launch.</p>
     </div>
   </section>`
 }

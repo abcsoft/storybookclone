@@ -1,4 +1,4 @@
-// Product Detail Page (e.g. https://wonderwraps.com/books/girls-sticker-pack)
+// Product Detail Page data access (sections, gallery, FAQs, related products)
 // — read & write helpers for the per-product editables:
 // banner, gallery, accordions, steps, photo tips, magic slider,
 // trust cards, reactions, media logos, related products, FAQs.

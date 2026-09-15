@@ -2,6 +2,7 @@
 // limiting (Workers isolates are ephemeral so an in-memory limiter would not
 // actually limit anything), and generic responses so the API never reveals
 // whether a given email has an account (enumeration protection).
+import { brand } from './brand'
 import { hashPassword } from './auth'
 import { destroyAllSessionsForUser } from './auth'
 import { sha256Hex } from './secrets'
@@ -59,7 +60,7 @@ export async function requestPasswordReset(db: D1Database, email: string, resetU
 
   await adapter.send({
     to: user.email,
-    subject: 'Reset your WonderWraps password',
+    subject: `Reset your ${brand().name} password`,
     text: `Reset your password: ${resetUrlBase}?token=${rawToken}\nThis link expires in 30 minutes and can only be used once. If you didn't request this, you can ignore this email.`
   })
 }

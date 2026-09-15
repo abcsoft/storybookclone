@@ -1,6 +1,7 @@
-// Admin UI for editing the per-product WonderWraps PDP
+// Admin UI for editing the per-product PDP
 // (banner, gallery, accordions, steps, photo tips, magic, trust, reactions, media, related, FAQs).
 import { esc } from './layout'
+import { brand } from './brand'
 import { money } from './data'
 import { loadPdp, ensurePdpPageRow } from './pdp'
 import { queryProducts, type Product } from './db'
@@ -11,7 +12,7 @@ function adminPage(opts: { title: string; active: string; body: string; previewH
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>${esc(opts.title)} · WonderWraps Admin</title>
+  <title>${esc(opts.title)} · ${esc(brand().name)} Admin</title>
   <link rel="icon" href="/static/img/logo.png" type="image/png">
   <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.5.2/css/all.min.css" rel="stylesheet">
@@ -276,7 +277,7 @@ function tabTrust(p: Product, d: any) {
   `).join('')
 
   return `<section class="a-card pdp-tab" data-tab="trust" hidden>
-    <h2>"Why 100K+ parents trust WonderWraps" cards</h2>
+    <h2>"Why parents trust ${esc(brand().name)}" cards</h2>
     <p class="muted">Three cards on the dark purple band. Common patterns: Years of Experience / Happy Families / Personalisation Standards.</p>
     ${rows || '<p class="muted">No cards yet.</p>'}
     <form class="a-form a-inline-form" method="post" action="/admin/products/${p.id}/pdp/trust">

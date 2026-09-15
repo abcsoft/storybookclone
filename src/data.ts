@@ -2,6 +2,7 @@
 // see that file's comment for why this matters).
 export type { Product } from './product'
 import type { Product } from './product'
+import { brand } from './brand'
 
 export const products: Product[] = [
   {
@@ -469,7 +470,13 @@ export const languages = [
 
 export type Faq = { q: string; a: string; cat: string }
 
-export const faqs: Faq[] = [
+/**
+ * FAQ copy is built per call (not as a module-level constant) so the brand
+ * name always comes from the single src/brand.ts boundary — L-D.
+ */
+export function faqList(): Faq[] {
+  const b = brand()
+  return [
   {
     cat: 'Popular',
     q: 'How do I personalise a book?',
@@ -542,17 +549,21 @@ export const faqs: Faq[] = [
   },
   {
     cat: 'About Us',
-    q: 'What is WonderWraps?',
-    a: 'WonderWraps is an online business that creates personalized children’s books where your child becomes the star of the story.'
-  }
-]
+    q: `What is ${b.name}?`,
+    a: `${b.name} is an online business that creates personalized children’s books where your child becomes the star of the story.`
+    }
+  ]
+}
 
-export const blogPosts = [
+/** Blog copy is built per call so its brand references come from src/brand.ts (L-D). */
+export function blogPosts() {
+  const b = brand()
+  return [
   {
     slug: 'how-to-make-a-kids-book',
     title: "How to Make a Kids' Book for Lasting Memories",
     date: 'July 4, 2025',
-    excerpt: 'Learn how to make a kids’ book that will help you create a special story your child will treasure — with creativity, a few tools, or WonderWraps.',
+    excerpt: `Learn how to make a kids’ book that will help you create a special story your child will treasure — with creativity, a few tools, or ${b.name}.`,
     image: '/static/img/books-header.webp',
     body: `<p>Reading can change everything — and for children, it helps shape who they become. It encourages creativity, builds empathy, reduces stress, and supports their development.</p>
 <p>But it’s not just about whether kids read, but what they read. The stories they’re exposed to, the characters they follow, and the language they absorb all influence how they see themselves and the world around them.</p>
@@ -561,7 +572,7 @@ export const blogPosts = [
 <h3>Brainstorm the story idea</h3>
 <p>The best children’s stories often revolve around kindness, curiosity, courage, friendship, or learning to handle emotions. Personalization — a name they recognize, a challenge they’re quietly working through — gives the book lasting value.</p>
 <h3>Illustrate, edit, and print</h3>
-<p>Most picture books follow a 32-page layout. With WonderWraps, we take care of the tricky parts like design, illustration, and layout so you can focus on the child you’re creating it for.</p>`
+<p>Most picture books follow a 32-page layout. With ${b.name}, we take care of the tricky parts like design, illustration, and layout so you can focus on the child you’re creating it for.</p>`
   },
   {
     slug: 'personalized-childrens-books',
@@ -570,18 +581,19 @@ export const blogPosts = [
     excerpt: 'When children see their own names, birthdays, or favourite hobbies in a book, their eyes light up. Here’s why personalised stories last.',
     image: '/static/img/cta-reading.webp',
     body: `<p>When children see their own names, birthdays, or favourite hobbies in a book, their eyes light up. A personalised storybook isn’t just a present — it’s a mirror that says: you belong in stories, too.</p>
-<p>WonderWraps books place your child’s face and name into professionally illustrated adventures, creating a keepsake families read again and again.</p>`
+<p>${b.name} books place your child’s face and name into professionally illustrated adventures, creating a keepsake families read again and again.</p>`
   },
   {
     slug: 'best-baby-books',
     title: 'Best Baby Books for Newborns & Toddlers',
     date: 'November 3, 2025',
-    excerpt: 'From first birthdays to new-sibling stories, here are the WonderWraps titles families reach for in the earliest years.',
+    excerpt: `From first birthdays to new-sibling stories, here are the ${b.name} titles families reach for in the earliest years.`,
     image: '/static/img/cover-birthday-girl.webp',
     body: `<p>The earliest years are full of firsts — first smiles, first words, first days. A board-style or short picture book that names your child as the hero becomes part of the bedtime ritual.</p>
 <p>Families love Happy Birthday Girl, Boy’s Smile, and our new-sibling stories for toddlers ages 2–4.</p>`
   }
-]
+  ]
+}
 
 export function getProduct(slug: string) {
   return products.find((p) => p.slug === slug)

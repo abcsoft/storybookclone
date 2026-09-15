@@ -1,3 +1,5 @@
+import { brand } from './brand'
+
 export function page(opts: {
   title: string
   description?: string
@@ -6,17 +8,20 @@ export function page(opts: {
   /** True when a session user is rendering this page (shows the POST logout control). */
   loggedIn?: boolean
 }) {
-  const desc =
-    opts.description ||
-    'Create unique kids’ storybooks with WonderWraps. Upload photos and watch them become part of personalized stories your child will treasure forever.'
+  const b = brand()
+  const desc = opts.description || b.description
+  // L-D: the site name is appended HERE, once, from the brand boundary — route
+  // titles never embed a brand literal (a caller that already included it is
+  // not suffixed twice).
+  const title = opts.title.includes(b.name) ? opts.title : `${opts.title} · ${b.name}`
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>${esc(opts.title)}</title>
+  <title>${esc(title)}</title>
   <meta name="description" content="${esc(desc)}">
-  <link rel="icon" href="/static/img/logo.png" type="image/png">
+  <link rel="icon" href="${b.logoPath}" type="image/png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700;800;900&family=Just+Me+Again+Down+Here&family=Kalam:wght@400;700&display=swap" rel="stylesheet">
@@ -35,9 +40,9 @@ export function page(opts: {
       <button class="icon-btn hamburger" id="menu-toggle" aria-label="Open menu" aria-expanded="false">
         <i class="fas fa-bars"></i>
       </button>
-      <a class="brand" href="/" aria-label="WonderWraps home">
-        <img src="/static/img/logo.png" alt="" width="40" height="40">
-        <span>WonderWraps</span>
+      <a class="brand" href="/" aria-label="${esc(b.name)} home">
+        <img src="${b.logoPath}" alt="" width="40" height="40">
+        <span>${esc(b.name)}</span>
       </a>
       <nav class="desktop-nav" aria-label="Primary">
         <a href="/" class="${opts.active === 'home' ? 'active' : ''}">Home</a>
@@ -99,7 +104,7 @@ export function page(opts: {
   <footer class="site-footer">
     <div class="footer-grid">
       <section>
-        <h2>About WonderWraps</h2>
+        <h2>About ${esc(b.name)}</h2>
         <ul>
           <li><a href="/contact">Contact us</a></li>
           <li><a href="/faqs">FAQs</a></li>
@@ -132,7 +137,7 @@ export function page(opts: {
            payment (checkout states that on the page), so no payment brands are
            advertised anywhere in the storefront. -->
       <p>Test storefront — no real payments, printing or shipping in this version.</p>
-      <p>WonderWraps © 2026 All rights reserved</p>
+      <p>${esc(b.name)} © ${b.copyrightYear} All rights reserved</p>
     </div>
   </footer>
   <script type="module" src="/static/app.js"></script>

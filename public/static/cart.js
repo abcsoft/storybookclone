@@ -19,6 +19,9 @@
 //   * the cart thumbnail is therefore always a stable, public product asset.
 
 export const CART_KEY = 'ww_cart_v1'
+// LEGACY INTERNAL STORAGE KEYS (do NOT rename): a visitor's cart may still
+// live under an earlier internal key. These are never rendered — they exist
+// only so an existing cart is migrated rather than silently lost.
 const LEGACY_KEYS = ['wonderwraps_cart', 'ww_cart']
 
 // Fields that must never survive into storage, whatever a caller passes.

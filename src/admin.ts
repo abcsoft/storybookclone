@@ -1,5 +1,6 @@
 // Admin panel: layout + server-rendered views (dashboard, products, orders, users, discounts, inbox).
 import { esc } from './layout'
+import { brand } from './brand'
 import { money, type Product } from './data'
 import { type DiscountRow } from './db'
 import { ORDER_STATUSES, PREVIEW_STATUSES, ORDER_STATUS_FLOW, PREVIEW_STATUS_FLOW, orderTransitionNeedsReason, statusLabel, type OrderStatus, type PreviewStatus } from './orders-status'
@@ -19,7 +20,7 @@ function adminPage(opts: { title: string; active: string; body: string }) {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>${esc(opts.title)} · WonderWraps Admin</title>
+  <title>${esc(opts.title)} · ${esc(brand().name)} Admin</title>
   <link rel="icon" href="/static/img/logo.png" type="image/png">
   <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.5.2/css/all.min.css" rel="stylesheet">
@@ -27,7 +28,7 @@ function adminPage(opts: { title: string; active: string; body: string }) {
 </head>
 <body>
   <aside class="admin-side">
-    <a class="admin-brand" href="/admin"><img src="/static/img/logo.png" alt="" width="32" height="32"><span>WonderWraps<br><small>Admin</small></span></a>
+    <a class="admin-brand" href="/admin"><img src="/static/img/logo.png" alt="" width="32" height="32"><span>${esc(brand().name)}<br><small>Admin</small></span></a>
     <nav>
       ${nav
         .map(
@@ -52,7 +53,7 @@ export function adminLogin(msg?: string) {
 <html lang="en">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Admin Login · WonderWraps</title>
+  <title>Admin Login · ${esc(brand().name)}</title>
   <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;600;800&display=swap" rel="stylesheet">
   <link href="/static/admin.css" rel="stylesheet">
 </head>
@@ -256,7 +257,7 @@ export function adminProducts(products: Product[], flash?: string) {
           .join('')}
       </tbody>
     </table></div>
-    <p class="muted">📝 opens the WonderWraps PDP editor for that product (banner, gallery, accordions, tips, magic slider, trust cards, reactions, media logos, related products and FAQs).</p>`
+    <p class="muted">📝 opens the ${esc(brand().name)} PDP editor for that product (banner, gallery, accordions, tips, magic slider, trust cards, reactions, media logos, related products and FAQs).</p>`
   })
 }
 

@@ -50,7 +50,7 @@ FROM products WHERE slug='girls-sticker-pack';
 INSERT OR IGNORE INTO pdp_trust (product_id, title, body, icon, sort_order)
 SELECT id, 'Years of Experience in Personalized Books', 'A team of illustrators and storytellers dedicated to crafting personalised keepsakes one child at a time.', 'sparkle',   1 FROM products WHERE slug='girls-sticker-pack';
 INSERT OR IGNORE INTO pdp_trust (product_id, title, body, icon, sort_order)
-SELECT id, 'Thousands of Happy Stories Families Worldwide', 'Over 100K families in 200+ countries have celebrated bedtime, birthdays and big days with WonderWraps.',    'globe',   2 FROM products WHERE slug='girls-sticker-pack';
+SELECT id, 'A personalisation promise', 'Every book is built from the photo and details you provide, so the story is about your child.',    'globe',   2 FROM products WHERE slug='girls-sticker-pack';
 INSERT OR IGNORE INTO pdp_trust (product_id, title, body, icon, sort_order)
 SELECT id, 'Highest Personalization Standards', 'Multiple artistic checks, secure uploads, and obsessive attention to detail on every page and sticker.',          'shield', 3 FROM products WHERE slug='girls-sticker-pack';
 
@@ -99,7 +99,7 @@ SELECT id, 'Do you ship to my location?',
   2, 1 FROM products WHERE slug='girls-sticker-pack';
 INSERT OR IGNORE INTO pdp_faqs (product_id, question, answer, sort_order, active)
 SELECT id, 'Can I get a refund for my order?',
-  'You can receive a full refund if your book hasn''t been printed yet, or a partial refund if it has been printed but not yet shipped. Once printed and shipped, we''re unable to offer a refund. To request a refund contact us through our support page or by email at support@wonderwraps.com.',
+  'You can receive a full refund if your book hasn''t been printed yet, or a partial refund if it has been printed but not yet shipped. Once printed and shipped, we''re unable to offer a refund. To request a refund contact us through our support page or by email at support@storybook-studio.example.',
   3, 1 FROM products WHERE slug='girls-sticker-pack';
 INSERT OR IGNORE INTO pdp_faqs (product_id, question, answer, sort_order, active)
 SELECT id, 'How long does shipping take?',
@@ -115,7 +115,7 @@ SELECT id, 'What if I have issues with my order?',
   6, 1 FROM products WHERE slug='girls-sticker-pack';
 INSERT OR IGNORE INTO pdp_faqs (product_id, question, answer, sort_order, active)
 SELECT id, 'How can I reach customer support?',
-  'Email us at support@wonderwraps.com or use the contact form on our support page. We typically reply within one business day.',
+  'Email us at support@storybook-studio.example or use the contact form on our support page. We typically reply within one business day.',
   7, 1 FROM products WHERE slug='girls-sticker-pack';
 INSERT OR IGNORE INTO pdp_faqs (product_id, question, answer, sort_order, active)
 SELECT id, 'What languages are your books available in?',
