@@ -42,55 +42,224 @@ export class DisabledFaceAnalysisAdapter implements FaceAnalysisAdapter {
   }
 }
 
+/** Provider response is rejected outright above this many faces (a malformed/hostile provider must not fan out into unbounded rows). */
+export const MAX_DETECTED_FACES = 20
+/** Cap on the provider response body we are willing to read (1 MiB). */
+export const MAX_FACE_RESPONSE_BYTES = 1024 * 1024
+/** Default provider call deadline. */
+export const FACE_ANALYSIS_TIMEOUT_MS = 10_000
+/** Only these categories are ever accepted; anything else (including missing) becomes `unknown`, never `child`. */
+const KNOWN_FACE_CATEGORIES = new Set(['child', 'adult', 'unknown'])
+
+export type HttpFaceAnalysisOptions = {
+  /**
+   * Allow a plain-HTTP endpoint. TRUE only in an explicit local/test mode
+   * (ENVIRONMENT=development) — every deployed environment must use HTTPS,
+   * otherwise the bearer key and the photo bytes travel in clear text.
+   */
+  allowInsecureHttp?: boolean
+  /** Provider call deadline in ms (AbortSignal). */
+  timeoutMs?: number
+}
+
+/** True for an `https:` URL; `http:`/anything else is insecure. */
+export function isSecureFaceEndpoint(endpoint: string): boolean {
+  try {
+    return new URL(endpoint).protocol === 'https:'
+  } catch {
+    return false
+  }
+}
+
+function badResponse(message: string): DomainError {
+  return new DomainError('face_analysis_bad_response', message, 502)
+}
+
+async function readBodyWithLimit(res: Response, maxBytes: number): Promise<string> {
+  const declared = Number(res.headers.get('content-length'))
+  if (Number.isFinite(declared) && declared > maxBytes) throw badResponse('The face-analysis provider response was too large.')
+  const body: ReadableStream<Uint8Array> | null = (res as unknown as { body?: ReadableStream<Uint8Array> | null }).body ?? null
+  if (!body || typeof body.getReader !== 'function') {
+    const text = await res.text()
+    if (new TextEncoder().encode(text).length > maxBytes) throw badResponse('The face-analysis provider response was too large.')
+    return text
+  }
+  const reader = body.getReader()
+  const chunks: Uint8Array[] = []
+  let total = 0
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    if (value) {
+      total += value.length
+      if (total > maxBytes) {
+        try {
+          await reader.cancel()
+        } catch {
+          /* the stream is already being discarded */
+        }
+        throw badResponse('The face-analysis provider response was too large.')
+      }
+      chunks.push(value)
+    }
+  }
+  const merged = new Uint8Array(total)
+  let offset = 0
+  for (const chunk of chunks) {
+    merged.set(chunk, offset)
+    offset += chunk.length
+  }
+  return new TextDecoder().decode(merged)
+}
+
+/**
+ * Accepts only a real finite number, or a non-empty numeric string. `null`,
+ * `undefined`, booleans, objects and arrays are NOT coerced to 0 — a provider
+ * that omits or nulls a value has not supplied one.
+ */
+function requireFiniteNumber(value: unknown): number | null {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null
+  if (typeof value === 'string' && value.trim() !== '') {
+    const n = Number(value)
+    return Number.isFinite(n) ? n : null
+  }
+  return null
+}
+
 /**
  * Real, provider-neutral HTTP adapter. The configured endpoint receives the
- * raw image bytes and must return `{ faces: [{ bbox: {x,y,width,height},
- * confidence, category }] }` with normalized 0..1 box coordinates. Any
- * transport/HTTP/parse/validation failure is fail-closed: it surfaces as an
- * honest `face_analysis_unavailable` / `face_analysis_bad_response`, never as
- * a fabricated "no faces found" or a fabricated detection.
+ * raw image bytes and must return `{ faces: [{ id?, bbox: {x,y,width,height},
+ * confidence, category }] }` with normalized 0..1 box coordinates.
+ *
+ * Every failure mode is fail-closed and surfaces as an honest
+ * `face_analysis_unavailable` / `face_analysis_bad_response` — never as a
+ * fabricated "no faces found" or a fabricated detection. The adapter:
+ *   * refuses a non-HTTPS endpoint outside an explicit local/test mode;
+ *   * bounds the call with an AbortSignal deadline (no hung request);
+ *   * requires a JSON content type and bounds the response body size;
+ *   * bounds the number of faces;
+ *   * rejects non-finite / out-of-range / non-contained boxes and duplicate
+ *     or malformed records;
+ *   * clamps confidence to the documented 0..1 contract and rejects a
+ *     non-numeric confidence;
+ *   * maps a missing/unrecognised category to `unknown` — specifically never
+ *     to `child`, which is the high-risk default.
+ *
+ * Error messages NEVER include the endpoint, the bearer key or the provider
+ * body (which could echo either), so a provider failure cannot leak a secret
+ * into an API response or a log.
  */
 export class HttpFaceAnalysisAdapter implements FaceAnalysisAdapter {
   readonly name = 'http'
+  private readonly timeoutMs: number
+  private readonly allowInsecureHttp: boolean
+
   constructor(
     private readonly endpoint: string,
     private readonly apiKey: string,
-    private readonly fetchImpl: typeof fetch = fetch
-  ) {}
+    private readonly fetchImpl: typeof fetch = fetch,
+    options: HttpFaceAnalysisOptions = {}
+  ) {
+    this.timeoutMs = Number.isFinite(options.timeoutMs) && (options.timeoutMs as number) > 0 ? (options.timeoutMs as number) : FACE_ANALYSIS_TIMEOUT_MS
+    this.allowInsecureHttp = options.allowInsecureHttp === true
+  }
 
   async analyze(bytes: Uint8Array): Promise<FaceDetectionResult[]> {
+    if (!this.allowInsecureHttp && !isSecureFaceEndpoint(this.endpoint)) {
+      // Deliberately does not echo the endpoint value.
+      throw new DomainError('face_analysis_unavailable', 'The face-analysis endpoint is not a secure HTTPS URL.', 503)
+    }
+
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs)
     let res: Response
     try {
       res = await this.fetchImpl(this.endpoint, {
         method: 'POST',
         headers: { 'content-type': 'application/octet-stream', authorization: `Bearer ${this.apiKey}` },
-        body: bytes
+        body: bytes,
+        signal: controller.signal
       })
     } catch {
-      throw new DomainError('face_analysis_unavailable', 'The face-analysis provider could not be reached.', 503)
+      // Never surface the underlying error: it can embed the endpoint (and
+      // therefore any token in its query string).
+      throw new DomainError(
+        'face_analysis_unavailable',
+        controller.signal.aborted ? 'The face-analysis provider timed out.' : 'The face-analysis provider could not be reached.',
+        503
+      )
+    } finally {
+      clearTimeout(timer)
     }
     if (!res.ok) {
       throw new DomainError('face_analysis_unavailable', `The face-analysis provider returned an error (${res.status}).`, 503)
     }
+
+    const contentType = String(res.headers.get('content-type') || '').toLowerCase()
+    if (!contentType.includes('application/json')) {
+      throw badResponse('The face-analysis provider returned a response that is not JSON.')
+    }
+
+    let text: string
+    try {
+      text = await readBodyWithLimit(res, MAX_FACE_RESPONSE_BYTES)
+    } catch (err) {
+      if (err instanceof DomainError) throw err
+      throw badResponse('The face-analysis provider returned an unreadable response.')
+    }
+
     let payload: unknown
     try {
-      payload = await res.json()
+      payload = JSON.parse(text)
     } catch {
-      throw new DomainError('face_analysis_bad_response', 'The face-analysis provider returned an unreadable response.', 502)
+      throw badResponse('The face-analysis provider returned an unreadable response.')
     }
-    const rawFaces = payload && typeof payload === 'object' && Array.isArray((payload as any).faces) ? (payload as any).faces : null
-    if (!rawFaces) throw new DomainError('face_analysis_bad_response', 'The face-analysis provider returned an unexpected response.', 502)
+    const rawFaces = payload && typeof payload === 'object' && Array.isArray((payload as { faces?: unknown }).faces) ? (payload as { faces: unknown[] }).faces : null
+    if (!rawFaces) throw badResponse('The face-analysis provider returned an unexpected response.')
+    if (rawFaces.length > MAX_DETECTED_FACES) {
+      throw badResponse('The face-analysis provider returned an implausible number of faces.')
+    }
 
     const results: FaceDetectionResult[] = []
+    const seenIds = new Set<string>()
     for (const raw of rawFaces) {
-      const bbox = raw && typeof raw === 'object' ? raw.bbox : null
-      const nums = [bbox?.x, bbox?.y, bbox?.width, bbox?.height].map(Number)
-      if (nums.some((n) => !Number.isFinite(n))) {
-        throw new DomainError('face_analysis_bad_response', 'The face-analysis provider returned an invalid face box.', 502)
+      if (!raw || typeof raw !== 'object') throw badResponse('The face-analysis provider returned a malformed face record.')
+      const record = raw as { id?: unknown; bbox?: unknown; confidence?: unknown; category?: unknown }
+
+      // Duplicate provider ids mean the response is not a set of distinct
+      // faces — accept none of it rather than silently collapsing rows.
+      if (record.id !== undefined && record.id !== null) {
+        const id = String(record.id)
+        if (!id) throw badResponse('The face-analysis provider returned a face with an empty id.')
+        if (seenIds.has(id)) throw badResponse('The face-analysis provider returned duplicate face ids.')
+        seenIds.add(id)
       }
-      const [bboxX, bboxY, bboxW, bboxH] = nums
-      const confidence = Number.isFinite(Number(raw?.confidence)) ? Number(raw.confidence) : 0
-      const category = raw?.category === 'adult' || raw?.category === 'unknown' ? raw.category : 'child'
+
+      const bbox = record.bbox
+      if (!bbox || typeof bbox !== 'object') throw badResponse('The face-analysis provider returned a face without a bounding box.')
+      const box = bbox as { x?: unknown; y?: unknown; width?: unknown; height?: unknown }
+      const bboxX = requireFiniteNumber(box.x)
+      const bboxY = requireFiniteNumber(box.y)
+      const bboxW = requireFiniteNumber(box.width)
+      const bboxH = requireFiniteNumber(box.height)
+      if (bboxX === null || bboxY === null || bboxW === null || bboxH === null) {
+        throw badResponse('The face-analysis provider returned an invalid face box.')
+      }
+      // Normalized, positive, and fully contained in the image.
+      if (bboxX < 0 || bboxY < 0 || bboxW <= 0 || bboxH <= 0 || bboxX > 1 || bboxY > 1 || bboxW > 1 || bboxH > 1) {
+        throw badResponse('The face-analysis provider returned a face box outside the image.')
+      }
+      if (bboxX + bboxW > 1 || bboxY + bboxH > 1) {
+        throw badResponse('The face-analysis provider returned a face box that leaves the image.')
+      }
+
+      const rawConfidence = requireFiniteNumber(record.confidence)
+      if (rawConfidence === null) throw badResponse('The face-analysis provider returned an invalid confidence value.')
+      const confidence = Math.min(1, Math.max(0, rawConfidence))
+
+      // Missing/unrecognised categories are `unknown` — NEVER `child`.
+      const category = typeof record.category === 'string' && KNOWN_FACE_CATEGORIES.has(record.category) ? (record.category as FaceDetectionResult['category']) : 'unknown'
+
       results.push({ bboxX, bboxY, bboxW, bboxH, confidence, category })
     }
     return results
@@ -153,7 +322,12 @@ export function isFaceAnalysisConfigured(env: FaceAnalysisEnv): boolean {
  */
 export function getFaceAnalysisAdapter(env: FaceAnalysisEnv): FaceAnalysisAdapter {
   if (isFaceAnalysisConfigured(env)) {
-    return new HttpFaceAnalysisAdapter(env.FACE_ANALYSIS_API_URL as string, env.FACE_ANALYSIS_API_KEY as string)
+    // HTTPS-only outside the explicit local/dev mode (M-3): a deployed
+    // environment can never be configured into sending photo bytes and a
+    // bearer key over plain HTTP.
+    return new HttpFaceAnalysisAdapter(env.FACE_ANALYSIS_API_URL as string, env.FACE_ANALYSIS_API_KEY as string, fetch, {
+      allowInsecureHttp: env.ENVIRONMENT === 'development'
+    })
   }
   if (env.FACE_ANALYSIS_PROVIDER === 'deterministic-fake' && env.ENVIRONMENT === 'development') {
     return new DeterministicFakeFaceAnalysisAdapter()
