@@ -1,515 +1,836 @@
+// Storefront templates (V2 Phase 2).
+//
+// Every page in here is a RENDERER for data it is handed: the homepage renders
+// CMS blocks by `kind`, the catalog renders a `CatalogResult`, the blog renders
+// `cms_pages` rows, the FAQ renders `cms_faqs` groups. No headline, navigation
+// entry, FAQ answer, blog post or legal paragraph is written in this file, so
+// an operator can change any of them in admin without a code edit (§12 Phase 2,
+// ADM-07).
+//
+// TRUTHFULNESS: the copy rendered here describes what this build really does.
+// It states plainly that no payment is collected, nothing is printed or shipped
+// and no tracking is sent, because none of those exist yet. There is no review
+// count, star rating, customer statistic, press mention or delivery promise
+// anywhere in this file (see test/unit/phase1-truthful-claims.test.ts).
+
 import { esc, stars } from './layout'
-import { money, type Product, languages, faqList } from './data'
 import { brand } from './brand'
+import type { Product } from './product'
+import type { CmsBlock, CmsPage, FaqItem, Collection, HomeSectionData } from './cms'
+import type { CatalogResult, CatalogFilters, ActiveChip } from './catalog'
+import { AGE_BUCKETS, FORMAT_LABELS, AUDIENCE_LABELS, CATALOG_SORTS, catalogHref, paginationLinks } from './catalog'
 import { humanPhotoPolicy } from './photo-policy'
+import type { Review, ReviewSummary } from './reviews'
+import type { PdpFacts } from './pdp'
 
-export function homePage(opts: {
-  bestsellers: Product[]
-  newReleases: Product[]
-  girls: Product[]
-  boys: Product[]
-  careers: Product[]
-}) {
-  return `
-  <!-- HERO -->
-  <section class="hero">
-    <div class="wrap hero-grid">
-      <div class="hero-copy">
-        <p class="eyebrow"><i class="fas fa-sparkles"></i> The magical gift of reading</p>
-        <h1>Make your child the hero of their very own adventure</h1>
-        <p class="hero-sub">Upload a single photo. We turn your child into the star of a personalised storybook or sticker pack they’ll cherish forever.</p>
-        <div class="hero-actions">
-          <a class="btn btn-purple" href="/books">Explore books <i class="fas fa-arrow-right"></i></a>
-          <a class="btn btn-outline" href="/stickers">View sticker packs</a>
-        </div>
-        <div class="hero-trust">
-          <div class="avatars">
-            <span class="avatar-chip">👧</span>
-            <span class="avatar-chip">👦</span>
-            <span class="avatar-chip">🧒</span>
-            <span class="avatar-chip">✨</span>
-          </div>
-          <!-- T-06: no rating, review count or customer-count statistic is
-               rendered — none of it is verified in this version. -->
-          <div>
-            <p class="stars-line"><strong>Your child, the hero</strong></p>
-            <p class="tiny">Every book is personalised with their name, age and photo.</p>
-          </div>
-        </div>
-      </div>
-      <div class="hero-media">
-        <div class="hero-frame">
-          <img src="/static/img/hero.webp" alt="Kids reading personalised books" loading="eager" width="600" height="400">
-          <div class="hero-floating-badge">
-            <span class="badge-icon">🎁</span>
-            <div>
-              <strong>Save 20% on 2+ books</strong>
-              <small>Use code EXTRA20</small>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </section>
+/** Formats an integer minor-unit amount in the visitor's selected currency. */
+export type Money = (minor: number) => string
 
-  <!-- BESTSELLERS -->
-  <section class="section">
-    <div class="wrap">
-      <div class="section-head">
-        <div>
-          <p class="eyebrow">Most Loved</p>
-          <h2>Trending personalised storybooks</h2>
-        </div>
-        <a class="link" href="/books">See all books <i class="fas fa-arrow-right"></i></a>
-      </div>
-      <div class="grid-4">
-        ${opts.bestsellers.slice(0, 4).map(productCard).join('')}
-      </div>
-    </div>
-  </section>
-
-  <!-- NEW RELEASES -->
-  <section class="section">
-    <div class="wrap">
-      <div class="section-head">
-        <div>
-          <p class="eyebrow">Fresh Stories</p>
-          <h2>New releases your kids will adore</h2>
-        </div>
-        <a class="link" href="/books">Browse catalog <i class="fas fa-arrow-right"></i></a>
-      </div>
-      <div class="grid-4">
-        ${opts.newReleases.slice(0, 4).map(productCard).join('')}
-      </div>
-    </div>
-  </section>
-
-  <!-- HOW IT WORKS -->
-  <section class="section how">
-    <div class="wrap">
-      <div class="section-head">
-        <div>
-          <p class="eyebrow">Quick & Easy</p>
-          <h2>How the magic happens in 4 simple steps</h2>
-        </div>
-      </div>
-      <div class="steps">
-        <article class="step">
-          <div class="num">1</div>
-          <div class="step-icon"><img src="/static/img/step-1.webp" alt="" width="160" height="120"></div>
-          <h3>1. Choose a story</h3>
-          <p>Browse our hand-crafted tales across fairytales, dinosaurs, outer space, sports, and inspiring careers.</p>
-        </article>
-        <article class="step">
-          <div class="num">2</div>
-          <div class="step-icon"><img src="/static/img/step-2.webp" alt="" width="160" height="120"></div>
-          <h3>2. Upload child's photo</h3>
-          <p>Add their name and photo. Our smart illustration pipeline weaves their likeness right into the story.</p>
-        </article>
-        <article class="step">
-          <div class="num">3</div>
-          <div class="step-icon"><img src="/static/img/step-4.webp" alt="" width="160" height="120"></div>
-          <h3>3. Personalise the details</h3>
-          <p>Pick their age, language, and cover, then write a heartfelt dedication before checking out.</p>
-        </article>
-        <article class="step">
-          <div class="num">4</div>
-          <div class="step-icon"><img src="/static/img/step-3.webp" alt="" width="160" height="120"></div>
-          <h3>4. Receive your book</h3>
-          <p>Printed on premium silky lustre pages, hardbound or softcover, delivered directly to your doorstep.</p>
-        </article>
-      </div>
-    </div>
-  </section>
-
-  <!-- GIRLS' BOOKS -->
-  <section class="section">
-    <div class="wrap">
-      <div class="section-head">
-        <div>
-          <p class="eyebrow">For Her</p>
-          <h2>Girls' books she'll want to read again and again</h2>
-        </div>
-        <a class="link" href="/books?gender=girl">See all girls' books <i class="fas fa-arrow-right"></i></a>
-      </div>
-      <div class="grid-4">
-        ${opts.girls.slice(0, 4).map(productCard).join('')}
-      </div>
-    </div>
-  </section>
-
-  <!-- CUSTOMIZATION SHOWCASE -->
-  <section class="section bg-soft">
-    <div class="wrap cta-banner">
-      <div class="cta-copy">
-        <span class="badge">Made just for them</span>
-        <h2>Every detail, personalised by you</h2>
-        <p>Upload one photo and choose their name, age, language, and cover style. Add a private dedication — we securely prepare your personalisation and let you review every detail before you check out.</p>
-        <ul class="feature-list">
-          <li><i class="fas fa-lock"></i> Your photo is stored privately and securely — never shown publicly</li>
-          <li><i class="fas fa-language"></i> Multiple languages and reading ages</li>
-          <li><i class="fas fa-heart"></i> A handwritten-style dedication, just for them</li>
-        </ul>
-        <a class="btn btn-purple" href="/books">Start personalising <i class="fas fa-arrow-right"></i></a>
-      </div>
-      <div class="cta-image">
-        <img src="/static/img/cta-reading.webp" alt="Personalised storybook preview" width="360" height="260">
-      </div>
-    </div>
-  </section>
-
-  <!-- BOYS' BOOKS -->
-  <section class="section">
-    <div class="wrap">
-      <div class="section-head">
-        <div>
-          <p class="eyebrow">For Him</p>
-          <h2>Boys' books built for big adventures</h2>
-        </div>
-        <a class="link" href="/books?gender=boy">See all boys' books <i class="fas fa-arrow-right"></i></a>
-      </div>
-      <div class="grid-4">
-        ${opts.boys.slice(0, 4).map(productCard).join('')}
-      </div>
-    </div>
-  </section>
-
-  <!-- CAREER DREAMS -->
-  <section class="section bg-soft">
-    <div class="wrap">
-      <div class="section-head">
-        <div>
-          <p class="eyebrow">Inspiring Future Dreams</p>
-          <h2>When I Grow Up… Career adventures</h2>
-        </div>
-        <a class="link" href="/books?career=1">All career books <i class="fas fa-arrow-right"></i></a>
-      </div>
-      <div class="grid-4">
-        ${opts.careers.slice(0, 4).map(productCard).join('')}
-      </div>
-    </div>
-  </section>
-
-  <!-- AGE PICKER -->
-  <section class="section age-section">
-    <div class="wrap">
-      <div class="section-head centered">
-        <p class="eyebrow">Tailored for Every Stage</p>
-        <h2>Find the perfect story for their age</h2>
-      </div>
-      <div class="age-grid">
-        <a class="age-card" href="/books/age/2-4">
-          <img src="/static/img/age-2-4.webp" alt="Toddlers 2-4" width="280" height="200">
-          <div class="age-info">
-            <h3>Ages 2 – 4</h3>
-            <p>Simple rhymes & colourful animal friends</p>
-            <span class="btn-sm">Explore <i class="fas fa-chevron-right"></i></span>
-          </div>
-        </a>
-        <a class="age-card" href="/books/age/4-6">
-          <img src="/static/img/age-4-6.webp" alt="Kids 4-6" width="280" height="200">
-          <div class="age-info">
-            <h3>Ages 4 – 6</h3>
-            <p>Magic journeys, self-confidence & friendship</p>
-            <span class="btn-sm">Explore <i class="fas fa-chevron-right"></i></span>
-          </div>
-        </a>
-        <a class="age-card" href="/books/age/6-8">
-          <img src="/static/img/age-6-8.webp" alt="Kids 6-8" width="280" height="200">
-          <div class="age-info">
-            <h3>Ages 6 – 8+</h3>
-            <p>Exciting mysteries, outer space & sports heroes</p>
-            <span class="btn-sm">Explore <i class="fas fa-chevron-right"></i></span>
-          </div>
-        </a>
-      </div>
-    </div>
-  </section>
-
-  <!-- STICKERS CALLOUT -->
-  <section class="section">
-    <div class="wrap cta-banner">
-      <div class="cta-copy">
-        <span class="badge">New Pack</span>
-        <h2>Personalised Sticker Packs</h2>
-        <p>Turn their cute face into 30+ waterproof stickers for water bottles, notebooks, and school gear!</p>
-        <a class="btn btn-purple" href="/stickers">Shop stickers <i class="fas fa-arrow-right"></i></a>
-      </div>
-      <div class="cta-image">
-        <img src="/static/img/stickers-girl.webp" alt="Personalised stickers preview" width="360" height="260">
-      </div>
-    </div>
-  </section>
-
-  <!-- FAQ PREVIEW -->
-  <section class="section bg-soft">
-    <div class="wrap" style="max-width:760px">
-      <div class="section-head centered">
-        <p class="eyebrow">Got Questions?</p>
-        <h2>Frequently asked questions</h2>
-      </div>
-      <div class="faq-group">
-        ${faqList().slice(0, 5).map(f => `
-          <details class="faq-item">
-            <summary>${esc(f.q)}</summary>
-            <p>${esc(f.a)}</p>
-          </details>
-        `).join('')}
-      </div>
-      <p class="section-foot centered"><a class="link" href="/faqs">See all FAQs <i class="fas fa-arrow-right"></i></a></p>
-    </div>
-  </section>
-  `
+function icon(name: string): string {
+  return `<i class="fa-${esc(name)}" aria-hidden="true"></i>`
 }
 
-export function productCard(p: Product) {
+function asMinor(p: Product): number | null {
+  if (typeof p.priceMinor === 'number') return p.priceMinor
+  if (typeof p.price === 'number') return Math.round(p.price * 100)
+  return null
+}
+
+// ---------------------------------------------------------------------------
+// shared blocks
+// ---------------------------------------------------------------------------
+
+export function productCard(p: Product, fmt: Money): string {
   const isSticker = p.category === 'sticker'
   const link = isSticker ? `/stickers/${p.slug}` : `/books/${p.slug}`
-  const sale = p.compareAt ? `-${Math.round((1 - p.price / p.compareAt) * 100)}%` : ''
+  const minor = asMinor(p)
+  const available = p.availableInCurrency !== false && minor != null
+  const compareMinor = typeof p.compareAtMinor === 'number' ? p.compareAtMinor : p.compareAt != null ? Math.round(p.compareAt * 100) : null
+  const sale = available && compareMinor != null && compareMinor > (minor as number) ? `-${Math.round((1 - (minor as number) / compareMinor) * 100)}%` : ''
   return `
   <article class="product-card">
-    <a class="card-cover-wrap" href="${link}">
-      <img src="${esc(p.image)}" alt="${esc(p.title)}" loading="lazy" width="300" height="300">
-      ${p.bestseller ? '<span class="badge badge-best">Bestseller</span>' : ''}
+    <a class="card-cover-wrap" href="${esc(link)}">
+      <img src="${esc(p.image)}" alt="${esc(p.title)}" loading="lazy" decoding="async" width="600" height="600">
+      ${p.bestseller ? '<span class="badge badge-best">Most ordered</span>' : ''}
       ${p.newRelease ? '<span class="badge badge-new">New</span>' : ''}
       ${sale ? `<span class="badge badge-sale">${sale}</span>` : ''}
     </a>
     <div class="card-body">
-      <div class="card-meta">
-        <span class="card-ages"><i class="fas fa-child"></i> ${esc(p.ages)}</span>
-        ${/* T-06: no star rating / review count on cards — not verified data. */ ''}
-      </div>
-      <h3><a href="${link}">${esc(p.title)}</a></h3>
-      <p class="card-tagline">${esc(p.tagline || p.description.slice(0, 80) + '…')}</p>
+      <p class="card-meta"><span class="card-ages">${icon('child')} ${esc(p.ages)}</span></p>
+      <h3><a href="${esc(link)}">${esc(p.title)}</a></h3>
+      <p class="card-tagline">${esc(p.tagline || p.description.slice(0, 90))}</p>
       <div class="card-foot">
-        <div class="card-price">
-          <strong>${money(p.price)}</strong>
-          ${p.compareAt ? `<s>${money(p.compareAt)}</s>` : ''}
-        </div>
-        <a class="btn-sm btn-purple" href="${link}">Personalise</a>
+        <p class="card-price">
+          ${available ? `<strong>${esc(fmt(minor as number))}</strong>${compareMinor != null && compareMinor > (minor as number) ? ` <s>${esc(fmt(compareMinor))}</s>` : ''}` : '<span class="unavailable">Not available in your currency</span>'}
+        </p>
+        <a class="btn-sm btn-primary" href="${esc(link)}">${isSticker ? 'Personalise' : 'Read more'}</a>
       </div>
     </div>
   </article>`
 }
 
-export function catalogPage(opts: {
+export function productGrid(items: Product[], fmt: Money): string {
+  if (!items.length) return ''
+  return `<div class="grid-4">${items.map((p) => productCard(p, fmt)).join('')}</div>`
+}
+
+function sectionHead(opts: { eyebrow?: string; title: string; subtitle?: string; linkLabel?: string; linkHref?: string; centered?: boolean }): string {
+  return `
+      <div class="section-head${opts.centered ? ' centered' : ''}">
+        <div>
+          ${opts.eyebrow ? `<p class="eyebrow">${esc(opts.eyebrow)}</p>` : ''}
+          <h2>${esc(opts.title)}</h2>
+          ${opts.subtitle ? `<p class="section-sub">${esc(opts.subtitle)}</p>` : ''}
+        </div>
+        ${opts.linkLabel && opts.linkHref ? `<a class="link" href="${esc(opts.linkHref)}">${esc(opts.linkLabel)} ${icon('arrow-right')}</a>` : ''}
+      </div>`
+}
+
+export function faqAccordion(items: FaqItem[]): string {
+  if (!items.length) return '<p class="muted">No questions are published yet.</p>'
+  return `<div class="faq-group">${items
+    .map(
+      (f) => `
+    <details class="faq-item">
+      <summary>${esc(f.question)}</summary>
+      <div class="faq-body"><p>${esc(f.answer)}</p></div>
+    </details>`
+    )
+    .join('')}</div>`
+}
+
+export function emptyState(opts: { title: string; body: string; actionLabel?: string; actionHref?: string }): string {
+  return `
+  <div class="state-box" role="status">
+    <p class="state-icon" aria-hidden="true">${icon('box-open')}</p>
+    <h2>${esc(opts.title)}</h2>
+    <p>${esc(opts.body)}</p>
+    ${opts.actionLabel && opts.actionHref ? `<a class="btn btn-primary" href="${esc(opts.actionHref)}">${esc(opts.actionLabel)}</a>` : ''}
+  </div>`
+}
+
+export function errorState(opts: { title: string; body: string; retryHref?: string }): string {
+  return `
+  <div class="state-box state-error" role="alert">
+    <p class="state-icon" aria-hidden="true">${icon('circle-info')}</p>
+    <h2>${esc(opts.title)}</h2>
+    <p>${esc(opts.body)}</p>
+    ${opts.retryHref ? `<a class="btn btn-outline" href="${esc(opts.retryHref)}">${icon('arrows-sort')} Try again</a>` : ''}
+  </div>`
+}
+
+function loadingState(label: string): string {
+  return `<div class="state-box state-loading" role="status" aria-live="polite"><p class="state-icon"><i class="fa-spinner fa-spin" aria-hidden="true"></i></p><p>${esc(label)}</p></div>`
+}
+
+// ---------------------------------------------------------------------------
+// homepage — a renderer for ordered CMS blocks
+// ---------------------------------------------------------------------------
+
+export function homePage(sections: HomeSectionData[], fmt: Money, photos: { tips: Array<{ kind: 'bad' | 'good'; label: string; imageUrl: string }> }): string {
+  return sections.map(({ block, products, collections, faqs }) => renderBlock(block, products, collections, faqs, fmt, photos)).join('\n')
+}
+
+function renderBlock(
+  block: CmsBlock,
+  products: Product[],
+  collections: Collection[],
+  faqs: FaqItem[],
+  fmt: Money,
+  photos: { tips: Array<{ kind: 'bad' | 'good'; label: string; imageUrl: string }> }
+): string {
+  const cta = block.ctaLabel && block.ctaHref ? `<a class="btn btn-primary" href="${esc(block.ctaHref)}">${esc(block.ctaLabel)} ${icon('arrow-right')}</a>` : ''
+  const secondary = block.secondaryCtaLabel && block.secondaryCtaHref ? `<a class="btn btn-outline" href="${esc(block.secondaryCtaHref)}">${esc(block.secondaryCtaLabel)}</a>` : ''
+  const media = block.imagePath
+    ? `<div class="hero-media"><img src="${esc(block.imagePath)}" alt="${esc(block.imageAlt || '')}" loading="eager" decoding="async" width="720" height="560"></div>`
+    : ''
+
+  switch (block.kind) {
+    case 'hero':
+      return `
+  <section class="hero" aria-labelledby="hero-title">
+    <div class="wrap hero-grid">
+      <div class="hero-copy">
+        ${block.eyebrow ? `<p class="eyebrow">${esc(block.eyebrow)}</p>` : ''}
+        <h1 id="hero-title">${esc(block.title)}</h1>
+        <p class="hero-sub">${esc(block.subtitle)}</p>
+        <div class="hero-actions">${cta}${secondary}</div>
+      </div>
+      ${media}
+    </div>
+  </section>`
+
+    case 'product-grid':
+      if (!products.length) {
+        return `
+  <section class="section">
+    <div class="wrap">
+      ${sectionHead({ eyebrow: block.eyebrow, title: block.title, subtitle: block.subtitle })}
+      ${emptyState({ title: 'Nothing in this section yet', body: 'No titles are linked to this section. An administrator can add them in the catalogue.', actionLabel: 'Browse everything', actionHref: '/books' })}
+    </div>
+  </section>`
+      }
+      return `
+  <section class="section">
+    <div class="wrap">
+      ${sectionHead({ eyebrow: block.eyebrow, title: block.title, subtitle: block.subtitle, linkLabel: block.ctaLabel, linkHref: block.ctaHref })}
+      ${productGrid(products, fmt)}
+    </div>
+  </section>`
+
+    case 'collection-grid':
+      if (!collections.length) {
+        return `
+  <section class="section bg-soft">
+    <div class="wrap">
+      ${sectionHead({ eyebrow: block.eyebrow, title: block.title, subtitle: block.subtitle, centered: true })}
+      ${emptyState({ title: 'No collections here yet', body: 'No collections of this kind are published. An administrator can create one in the catalogue.', actionLabel: 'Browse everything', actionHref: '/books' })}
+    </div>
+  </section>`
+      }
+      return `
+  <section class="section bg-soft">
+    <div class="wrap">
+      ${sectionHead({ eyebrow: block.eyebrow, title: block.title, subtitle: block.subtitle, centered: true, linkLabel: block.ctaLabel, linkHref: block.ctaHref })}
+      <div class="grid-3 collection-list">
+        ${collections
+          .map(
+            (c) => `
+        <a class="collection-card" href="/collections/${esc(c.slug)}">
+          <h3>${esc(c.title)}</h3>
+          <p>${esc(c.subtitle || c.description)}</p>
+          <span class="link">Open collection ${icon('arrow-right')}</span>
+        </a>`
+          )
+          .join('')}
+      </div>
+    </div>
+  </section>`
+
+    case 'steps':
+      return `
+  <section class="section how">
+    <div class="wrap">
+      ${sectionHead({ eyebrow: block.eyebrow, title: block.title, subtitle: block.subtitle, centered: true })}
+      <ol class="steps">
+        <li class="step"><span class="num">1</span><h3>Choose a story</h3><p>Every title lists the reading age and the format, and collections group them by theme.</p></li>
+        <li class="step"><span class="num">2</span><h3>Upload one photo</h3><p>${esc(humanPhotoPolicy())}</p></li>
+        <li class="step"><span class="num">3</span><h3>Read every page</h3><p>Open the reader and check the personalisation. Each edit is saved as its own revision.</p></li>
+        <li class="step"><span class="num">4</span><h3>Add it to your cart</h3><p>Totals are calculated on the server. This version records the order without charging a payment.</p></li>
+      </ol>
+    </div>
+  </section>`
+
+    case 'photo-guidance': {
+      const bad = photos.tips.filter((t) => t.kind === 'bad')
+      const good = photos.tips.filter((t) => t.kind === 'good')
+      return `
+  <section class="section bg-soft">
+    <div class="wrap">
+      ${sectionHead({ eyebrow: block.eyebrow, title: block.title, subtitle: block.subtitle })}
+      <div class="tips-grid">
+        <div>
+          <h3 class="tips-heading tips-bad">${icon('eye-slash')} These do not work</h3>
+          <ul class="tips-list">${bad.map((t) => `<li><img src="${esc(t.imageUrl)}" alt="" width="240" height="240" loading="lazy"><span>${esc(t.label)}</span></li>`).join('')}</ul>
+        </div>
+        <div>
+          <h3 class="tips-heading tips-good">${icon('check-circle')} These do</h3>
+          <ul class="tips-list">${good.map((t) => `<li><img src="${esc(t.imageUrl)}" alt="" width="240" height="240" loading="lazy"><span>${esc(t.label)}</span></li>`).join('')}</ul>
+        </div>
+      </div>
+      <p class="tiny">The upload policy on the product page is the policy the server enforces: ${esc(humanPhotoPolicy())}</p>
+    </div>
+  </section>`
+    }
+
+    case 'age-grid':
+      return `
+  <section class="section age-section">
+    <div class="wrap">
+      ${sectionHead({ eyebrow: block.eyebrow, title: block.title, subtitle: block.subtitle, centered: true })}
+      <div class="age-grid">
+        ${AGE_BUCKETS.slice(0, 3)
+          .map(
+            (b) => `
+        <a class="age-card" href="/books?age=${esc(b.value)}">
+          <img src="/static/img/art/age-${esc(b.value)}.svg" alt="" width="640" height="420" loading="lazy">
+          <span class="age-info"><h3>${esc(b.label)}</h3><span class="btn-sm">See titles ${icon('chevron-right')}</span></span>
+        </a>`
+          )
+          .join('')}
+      </div>
+    </div>
+  </section>`
+
+    case 'sticker-cross-sell':
+      return `
+  <section class="section">
+    <div class="wrap cta-banner">
+      <div class="cta-copy">
+        ${block.eyebrow ? `<span class="badge">${esc(block.eyebrow)}</span>` : ''}
+        <h2>${esc(block.title)}</h2>
+        <p>${esc(block.subtitle)}</p>
+        ${cta}
+      </div>
+      ${block.imagePath ? `<div class="cta-image"><img src="${esc(block.imagePath)}" alt="${esc(block.imageAlt || '')}" width="960" height="540" loading="lazy"></div>` : ''}
+    </div>
+  </section>`
+
+    case 'faq-preview':
+      return `
+  <section class="section bg-soft">
+    <div class="wrap wrap-narrow">
+      ${sectionHead({ eyebrow: block.eyebrow, title: block.title, subtitle: block.subtitle, centered: true })}
+      ${faqAccordion(faqs.slice(0, block.maxItems || 5))}
+      ${block.ctaLabel && block.ctaHref ? `<p class="section-foot centered"><a class="link" href="${esc(block.ctaHref)}">${esc(block.ctaLabel)} ${icon('arrow-right')}</a></p>` : ''}
+    </div>
+  </section>`
+
+    case 'final-cta':
+      return `
+  <section class="section bg-soft">
+    <div class="wrap cta-banner">
+      <div class="cta-copy">
+        <h2>${esc(block.title)}</h2>
+        <p>${esc(block.subtitle)}</p>
+        ${cta}
+      </div>
+      ${block.imagePath ? `<div class="cta-image"><img src="${esc(block.imagePath)}" alt="${esc(block.imageAlt || '')}" width="640" height="420" loading="lazy"></div>` : ''}
+    </div>
+  </section>`
+
+    case 'newsletter':
+      return `
+  <section class="section">
+    <div class="wrap wrap-narrow centered-text">
+      ${sectionHead({ eyebrow: block.eyebrow, title: block.title, subtitle: block.subtitle, centered: true })}
+      <form class="newsletter newsletter-inline" method="post" action="/api/newsletter">
+        <label class="sr-only" for="home-nl-email">Email address</label>
+        <input id="home-nl-email" name="email" type="email" required placeholder="you@example.com" autocomplete="email">
+        <button type="submit" class="btn btn-primary">Subscribe</button>
+      </form>
+      <p class="nl-msg tiny" role="status" aria-live="polite" hidden></p>
+    </div>
+  </section>`
+
+    case 'rich-text':
+      return `
+  <section class="section">
+    <div class="wrap wrap-narrow prose">
+      ${block.title ? `<h2>${esc(block.title)}</h2>` : ''}
+      ${block.body}
+    </div>
+  </section>`
+
+    case 'announcement':
+      // Rendered in the shell (layout.ts) from the same data, not inline.
+      return ''
+
+    default:
+      return ''
+  }
+}
+
+// ---------------------------------------------------------------------------
+// catalog
+// ---------------------------------------------------------------------------
+
+export type CatalogViewOptions = {
+  result: CatalogResult
+  basePath: string
   title: string
   subtitle: string
-  items: Product[]
-  image?: string
-  filter?: string
-}) {
+  /** Category tabs shown above the grid (Storybooks / Stickers / All). */
+  tabs?: Array<{ label: string; href: string; active: boolean }>
+  /** Query string to apply when the shopper presses "Apply" in the filter form. */
+  action: string
+  /** Currency-aware formatter for the selected currency. Required. */
+  fmt: Money
+}
+
+function filterForm(opts: CatalogViewOptions): string {
+  const f = opts.result.filters
+  const facets = opts.result.facets
+  const checkbox = (name: string, value: string, label: string, count: number, checked: boolean) => `
+      <li><label class="check"><input type="checkbox" name="${esc(name)}" value="${esc(value)}"${checked ? ' checked' : ''}><span>${esc(label)}</span> <span class="facet-count">${count}</span></label></li>`
+  const minMajor = f.priceMin != null ? Math.round(f.priceMin / 100) : ''
+  const maxMajor = f.priceMax != null ? Math.round(f.priceMax / 100) : ''
+  return `
+  <form class="catalog-filters" id="catalog-filters" method="get" action="${esc(opts.action)}" aria-label="Filter the catalogue">
+    <div class="filter-head">
+      <h2>Filters</h2>
+      <a class="link" href="${esc(opts.basePath)}">Clear all</a>
+    </div>
+    <div class="filter-group">
+      <h3>Search</h3>
+      <label class="sr-only" for="catalog-q">Search the catalogue</label>
+      <input id="catalog-q" type="search" name="q" value="${esc(f.q)}" placeholder="Title, theme, age…">
+    </div>
+    ${facets.audience.length ? `<fieldset class="filter-group"><legend>Audience</legend><ul>${facets.audience.map((a) => checkbox('audience', a.value, a.label, a.count, f.audience.includes(a.value))).join('')}</ul></fieldset>` : ''}
+    ${facets.ages.length ? `<fieldset class="filter-group"><legend>Reading age</legend><ul>${facets.ages.map((a) => checkbox('age', a.value, a.label, a.count, f.ageMin === a.min && f.ageMax === a.max)).join('')}</ul></fieldset>` : ''}
+    ${facets.themes.length ? `<fieldset class="filter-group"><legend>Collection</legend><ul>${facets.themes.map((t) => checkbox('theme', t.value, t.label, t.count, f.theme.includes(t.value))).join('')}</ul></fieldset>` : ''}
+    ${facets.formats.length ? `<fieldset class="filter-group"><legend>Format</legend><ul>${facets.formats.map((t) => checkbox('format', t.value, t.label, t.count, f.format.includes(t.value))).join('')}</ul></fieldset>` : ''}
+    ${
+      facets.languages.length
+        ? `<fieldset class="filter-group"><legend>Available in</legend><ul>${facets.languages.map((l) => checkbox('language', l.value, l.label, l.count, f.language.includes(l.value))).join('')}</ul>
+           <p class="tiny">Only languages with published translations are listed.</p></fieldset>`
+        : ''
+    }
+    <fieldset class="filter-group">
+      <legend>Availability in your currency</legend>
+      <ul>
+        ${checkbox('availability', 'available', `Available (${facets.availability.available})`, facets.availability.available + facets.availability.unavailable, f.availability === 'available')}
+        ${checkbox('availability', 'unavailable', `Not offered (${facets.availability.unavailable})`, facets.availability.available + facets.availability.unavailable, f.availability === 'unavailable')}
+      </ul>
+    </fieldset>
+    <div class="filter-group">
+      <h3>Price</h3>
+      ${facets.price ? `<p class="tiny">This result set runs from ${esc(String(facets.price.minMinor / 100))} to ${esc(String(facets.price.maxMinor / 100))}.</p>` : ''}
+      <div class="price-range">
+        <label class="sr-only" for="price-min">Minimum price</label>
+        <input id="price-min" type="number" name="price_min" min="0" step="1" value="${esc(String(minMajor))}" placeholder="Min">
+        <label class="sr-only" for="price-max">Maximum price</label>
+        <input id="price-max" type="number" name="price_max" min="0" step="1" value="${esc(String(maxMajor))}" placeholder="Max">
+      </div>
+    </div>
+    <div class="filter-group">
+      <label for="catalog-sort">Sort by</label>
+      <select id="catalog-sort" name="sort">
+        ${CATALOG_SORTS.map((s) => `<option value="${esc(s)}"${f.sort === s ? ' selected' : ''}>${esc(sortLabel(s))}</option>`).join('')}
+      </select>
+    </div>
+    ${f.perPage !== 12 ? `<input type="hidden" name="per_page" value="${esc(String(f.perPage))}">` : ''}
+    <button type="submit" class="btn btn-primary filter-apply">Apply filters</button>
+  </form>`
+}
+
+function sortLabel(s: string): string {
+  switch (s) {
+    case 'price-asc':
+      return 'Price: low to high'
+    case 'price-desc':
+      return 'Price: high to low'
+    case 'newest':
+      return 'Recently added'
+    case 'title':
+      return 'Title (A–Z)'
+    default:
+      return 'Catalogue order'
+  }
+}
+
+function chips(chips: ActiveChip[], basePath: string): string {
+  if (!chips.length) return ''
+  return `
+    <ul class="filter-chips" aria-label="Active filters">
+      ${chips
+        .map(
+          (c) => `<li><span class="chip"><span class="chip-label">${esc(c.label)}:</span> ${esc(c.value)} <a class="chip-remove" href="${esc(c.removeHref)}" aria-label="Remove filter ${esc(c.label)}: ${esc(c.value)}">${icon('xmark')}</a></span></li>`
+        )
+        .join('')}
+      <li><a class="link" href="${esc(basePath)}">Clear all filters</a></li>
+    </ul>`
+}
+
+export function catalogView(opts: CatalogViewOptions): string {
+  const { result, basePath, filters } = { result: opts.result, basePath: opts.basePath, filters: opts.result.filters }
+  const count =
+    result.total === 0
+      ? 'No titles match these filters'
+      : `${result.total} ${result.total === 1 ? 'title' : 'titles'} match${result.total === 1 ? 'es' : ''} these filters`
+  const grid = result.items.length ? productGrid(result.items, opts.fmt) : ''
+  const pageLinks = paginationLinks(filters, basePath, result.pageCount)
   return `
   <section class="page-hero">
     <div class="wrap">
+      <nav class="breadcrumb" aria-label="Breadcrumb"><ol><li><a href="/">Home</a></li><li aria-current="page">${esc(opts.title)}</li></ol></nav>
       <h1>${esc(opts.title)}</h1>
       <p>${esc(opts.subtitle)}</p>
+      ${opts.tabs ? `<div class="catalog-tabs" role="tablist">${opts.tabs.map((t) => `<a role="tab" aria-selected="${t.active}" class="${t.active ? 'active' : ''}" href="${esc(t.href)}">${esc(t.label)}</a>`).join('')}</div>` : ''}
+    </div>
+  </section>
+  <section class="section">
+    <div class="wrap catalog-layout">
+      ${filterForm(opts)}
+      <div class="catalog-results">
+        <p class="result-count" id="result-count" role="status">${esc(count)}</p>
+        ${chips(result.chips, basePath)}
+        ${grid}
+        ${
+          result.pageCount > 1
+            ? `<nav class="pagination" aria-label="Pagination">
+          ${pageLinks
+            .map((l) =>
+              l.page === -1
+                ? '<span class="page-gap" aria-hidden="true">…</span>'
+                : `<a class="page-link${l.current ? ' current' : ''}" href="${esc(l.href)}"${l.current ? ' aria-current="page"' : ''}>${l.page}</a>`
+            )
+            .join('')}
+        </nav>`
+            : ''
+        }
+      </div>
+    </div>
+  </section>`
+}
+
+// ---------------------------------------------------------------------------
+// collection landing page
+// ---------------------------------------------------------------------------
+
+export function collectionPage(opts: {
+  collection: Collection
+  result: CatalogResult
+  faqs: FaqItem[]
+  fmt: Money
+}): string {
+  const { collection, result, faqs, fmt } = opts
+  const basePath = `/collections/${collection.slug}`
+  return `
+  <section class="page-hero collection-hero">
+    <div class="wrap collection-hero-grid">
+      <div>
+        <nav class="breadcrumb" aria-label="Breadcrumb"><ol><li><a href="/">Home</a></li><li><a href="/collections">Collections</a></li><li aria-current="page">${esc(collection.title)}</li></ol></nav>
+        <p class="eyebrow">${esc(collection.kind === 'age' ? 'Shop by age' : collection.kind === 'theme' ? 'Shop by theme' : collection.kind === 'career' ? 'Career stories' : collection.kind === 'sticker' ? 'Sticker packs' : 'Collection')}</p>
+        <h1>${esc(collection.title)}</h1>
+        <p class="hero-sub">${esc(collection.subtitle || collection.description)}</p>
+        ${collection.description ? `<p>${esc(collection.description)}</p>` : ''}
+      </div>
+      ${
+        collection.heroImage
+          ? `<div class="collection-hero-media"><img src="${esc(collection.heroImage)}" alt="${esc(collection.heroAlt || '')}" width="600" height="600" loading="eager" decoding="async"></div>`
+          : ''
+      }
     </div>
   </section>
   <section class="section">
     <div class="wrap">
-      <div class="grid-4">${opts.items.map(productCard).join('') || '<p>No stories match that filter yet.</p>'}</div>
+      <p class="result-count" role="status">${result.total === 0 ? 'No titles in this collection yet' : `${result.total} ${result.total === 1 ? 'title' : 'titles'} in this collection`}</p>
+      ${result.items.length ? productGrid(result.items, fmt) : emptyState({ title: 'This collection is empty', body: 'No titles are linked to it yet. An administrator can add them in the catalogue.', actionLabel: 'Browse all storybooks', actionHref: '/books' })}
+      ${
+        result.pageCount > 1
+          ? `<nav class="pagination" aria-label="Pagination">${paginationLinks(result.filters, basePath, result.pageCount)
+              .map((l) => (l.page === -1 ? '<span class="page-gap">…</span>' : `<a class="page-link${l.current ? ' current' : ''}" href="${esc(l.href)}"${l.current ? ' aria-current="page"' : ''}>${l.page}</a>`))
+              .join('')}</nav>`
+          : ''
+      }
     </div>
   </section>
-  ${ctaBlock()}
-  `
+  ${
+    faqs.length
+      ? `<section class="section bg-soft"><div class="wrap wrap-narrow">
+      ${sectionHead({ eyebrow: 'Questions', title: `${collection.title}: common questions`, centered: true })}
+      ${faqAccordion(faqs)}
+    </div></section>`
+      : ''
+  }`
 }
 
-export function booksCatalog(q: Record<string, string | undefined>, items: Product[]) {
-  let filter = ''
-  if (q.gender === 'girl') filter = 'girl'
-  if (q.gender === 'boy') filter = 'boy'
-  if (q.career) filter = 'career'
-  return catalogPage({
-    title: 'Personalised Storybooks for Kids',
-    subtitle: 'Crafted to spark imagination and lasting memories.',
-    items,
-    image: '/static/img/books-header.webp',
-    filter
-  })
-}
+export function collectionsIndexPage(collections: Collection[]): string {
+  const groups: Array<{ label: string; items: Collection[] }> = [
+    { label: 'Shop by audience', items: collections.filter((c) => c.kind === 'audience') },
+    { label: 'Shop by theme', items: collections.filter((c) => c.kind === 'theme') },
+    { label: 'Shop by age', items: collections.filter((c) => c.kind === 'age') },
+    { label: 'Career stories', items: collections.filter((c) => c.kind === 'career') },
+    { label: 'Sticker packs', items: collections.filter((c) => c.kind === 'sticker') },
+    { label: 'Everything', items: collections.filter((c) => c.kind === 'editorial') }
+  ].filter((g) => g.items.length > 0)
 
-export function stickersCatalog(items: Product[]) {
-  return catalogPage({
-    title: 'Personalised Sticker Packs',
-    subtitle: 'Stickers that celebrate your child’s big dreams.',
-    items,
-    image: '/static/img/stickers-header.webp'
-  })
-}
-
-export function ageCatalog(min: number, max: number, label: string, items: Product[]) {
-  return catalogPage({
-    title: `Stories for ages ${label}`,
-    subtitle: 'Crafted to spark imagination and lasting memories.',
-    items,
-    filter: label
-  })
-}
-
-export function productPage(p: Product, pathPrefix: string, related: Product[] = []) {
-  const sale = p.compareAt ? `-${Math.round((1 - p.price / p.compareAt) * 100)}%` : ''
-  const isSticker = p.category === 'sticker'
   return `
-  <section class="product-hero">
-    <div class="wrap pdp">
-      <div class="pdp-gallery">
-        <div class="pdp-cover">
-          ${sale ? `<span class="badge sale-badge">${sale}</span>` : ''}
-          <img src="${esc(p.image)}" alt="${esc(p.title)} product preview">
-        </div>
-        <p class="gallery-note"><i class="fas fa-shield-heart"></i> Private and secure. Your photo is only used to personalise your order.</p>
-      </div>
-      <div class="pdp-details">
-        <p class="eyebrow">${isSticker ? 'Personalised sticker pack' : 'Personalised storybook'}</p>
-        <h1>${esc(p.title)}</h1>
-        ${/* T-06: no star rating / review count — this version has no verified
-             reviewed data, so none is rendered. */ ''}
-        <p class="pdp-tagline">${esc(p.tagline)}</p>
-        <p class="pdp-description">${esc(p.description)}</p>
-        <div class="pdp-price"><strong>${money(p.price)}</strong> ${p.compareAt ? `<s>${money(p.compareAt)}</s><span class="limited">Limited Time</span>` : ''}</div>
-        <div class="pdp-benefits">
-          ${p.traits.slice(0, 3).map(t => `<span><i class="fas fa-check-circle"></i>${esc(t)}</span>`).join('')}
-        </div>
-        <form class="personalise-panel" id="personalise-form" data-slug="${p.slug}" data-title="${esc(p.title)}" data-image="${esc(p.image)}" data-kind="${p.category}">
-          <div class="panel-heading"><span class="step-bubble">1</span><div><h2>Start Personalising</h2><p>Upload your child's photo to get started.</p></div></div>
-          <div class="form-grid">
-            <div><label for="child-name">Child's name</label><input id="child-name" name="childName" required maxlength="24" placeholder="e.g. Maya"></div>
-            <div><label for="child-age">Age</label><input id="child-age" name="childAge" type="number" min="1" max="14" required value="6"></div>
-          </div>
-          <label for="photo">Child's Photo</label>
-          <label class="upload-dropzone" for="photo">
-            <i class="fas fa-cloud-arrow-up"></i><strong>Drop a photo or click to upload</strong><span>${esc(humanPhotoPolicy())}</span>
-            <input id="photo" name="photo" type="file" accept="image/jpeg,image/png,image/webp" required>
-          </label>
-          <div class="photo-result"><img id="photo-preview" class="preview-face" alt="Photo preview" hidden><p class="tiny" id="upload-status" hidden></p></div>
-          <details class="photo-tips"><summary><i class="fas fa-lightbulb"></i> Photo tips for the best result</summary><ul><li>Use a clear, front-facing photo</li><li>Make sure the face is not covered by food or accessories</li><li>Avoid far-away photos or side angles</li></ul></details>
-          <label for="lang">Language</label>
-          <select id="lang" name="language">${languages.map(l => `<option>${l}</option>`).join('')}</select>
-          <label for="dedication">Dedication (optional)</label>
-          <textarea id="dedication" name="dedication" rows="2" maxlength="200" placeholder="For Maya, with love from Grandma"></textarea>
-          <button class="btn btn-purple personalise-submit" type="submit" id="personalise-btn"><i class="fas fa-wand-magic-sparkles"></i> Personalise Now</button>
-          <p class="tiny secure-note"><i class="fas fa-lock"></i> Your image and information stay protected. No third-party data use.</p>
-        </form>
-      </div>
+  <section class="page-hero">
+    <div class="wrap">
+      <nav class="breadcrumb" aria-label="Breadcrumb"><ol><li><a href="/">Home</a></li><li aria-current="page">Collections</li></ol></nav>
+      <h1>Collections</h1>
+      <p>Storybooks grouped by audience, theme, age and career.</p>
     </div>
   </section>
-  <section class="section how product-steps">
-    <div class="wrap"><div class="section-head"><div><p class="eyebrow">Simple and magical</p><h2>From photo to personalised joy</h2></div></div>
-      <div class="steps"><article class="step"><div class="num">1</div><h3>Upload Child's Picture</h3><p>Choose a clear photo that looks like them.</p></article><article class="step"><div class="num">2</div><h3>Preview and Order</h3><p>Review your personalisation before checkout.</p></article><article class="step"><div class="num">3</div><h3>Printed with Care</h3><p>We create and deliver your keepsake.</p></article></div>
-    </div>
-  </section>
-  <section class="section"><div class="wrap"><h2>You may also like</h2><div class="grid-4">${related.map(productCard).join('')}</div></div></section>
-  ${ctaBlock()}
-  `
-}
-
-export function faqsPage() {
-  const faqs = faqList()
-  const cats = [...new Set(faqs.map(f => f.cat))]
-  return `
-  <section class="page-hero"><h1>Frequently Asked Questions</h1><p>Everything you need to know about our personalised stories, shipping, and photo quality.</p></section>
+  ${groups
+    .map(
+      (g) => `
   <section class="section">
-    <div class="wrap faq-wrap">
-      ${cats.map(cat => `
-        <div class="faq-group">
-          <h2>${esc(cat)}</h2>
-          ${faqs.filter(f => f.cat === cat).map(f => `
-            <details class="faq-item">
-              <summary>${esc(f.q)}</summary>
-              <p>${esc(f.a)}</p>
-            </details>
-          `).join('')}
-        </div>
-      `).join('')}
+    <div class="wrap">
+      <h2>${esc(g.label)}</h2>
+      <div class="grid-3 collection-list">
+        ${g.items
+          .map(
+            (c) => `
+        <a class="collection-card" href="/collections/${esc(c.slug)}">
+          <h3>${esc(c.title)}</h3>
+          <p>${esc(c.subtitle || c.description)}</p>
+          <span class="link">Open collection ${icon('arrow-right')}</span>
+        </a>`
+          )
+          .join('')}
+      </div>
+    </div>
+  </section>`
+    )
+    .join('')}`
+}
+
+// ---------------------------------------------------------------------------
+// content pages (blog / FAQ / legal / content)
+// ---------------------------------------------------------------------------
+
+export function blogIndexPage(pages: CmsPage[]): string {
+  return `
+  <section class="page-hero">
+    <div class="wrap">
+      <nav class="breadcrumb" aria-label="Breadcrumb"><ol><li><a href="/">Home</a></li><li aria-current="page">Blog</li></ol></nav>
+      <h1>${esc(brand().name)} blog</h1>
+      <p>Notes on personalisation, photos and reading at home.</p>
     </div>
   </section>
-  ${ctaBlock()}`
+  <section class="section">
+    <div class="wrap">
+      ${
+        pages.length
+          ? `<div class="grid-3">${pages
+              .map(
+                (post) => `
+        <article class="product-card blog-card">
+          ${post.imagePath ? `<img src="${esc(post.imagePath)}" alt="${esc(post.imageAlt || '')}" width="600" height="600" loading="lazy">` : ''}
+          <div class="card-body">
+            ${post.category ? `<p class="tiny muted">${esc(post.category)}</p>` : ''}
+            <h3>${esc(post.title)}</h3>
+            <p class="tiny">${esc(post.excerpt)}</p>
+            <a class="link" href="/blog/${esc(post.slug)}">Read the article ${icon('arrow-right')}</a>
+          </div>
+        </article>`
+              )
+              .join('')}</div>`
+          : emptyState({ title: 'No articles yet', body: 'No articles have been published. An administrator can publish one in the CMS.', actionLabel: 'Back to the storefront', actionHref: '/' })
+      }
+    </div>
+  </section>`
 }
+
+export function blogPostPage(post: CmsPage): string {
+  return `
+  <article>
+    <section class="page-hero">
+      <div class="wrap wrap-narrow">
+        <nav class="breadcrumb" aria-label="Breadcrumb"><ol><li><a href="/">Home</a></li><li><a href="/blog">Blog</a></li><li aria-current="page">${esc(post.title)}</li></ol></nav>
+        ${post.category ? `<p class="eyebrow">${esc(post.category)}</p>` : ''}
+        <h1>${esc(post.title)}</h1>
+        <p>${esc(post.excerpt)}</p>
+      </div>
+    </section>
+    <section class="section">
+      <div class="wrap wrap-narrow prose">
+        ${post.imagePath ? `<img class="post-image" src="${esc(post.imagePath)}" alt="${esc(post.imageAlt || '')}" width="1200" height="630" loading="lazy">` : ''}
+        ${post.body}
+      </div>
+    </section>
+  </article>`
+}
+
+export function faqsPage(items: FaqItem[]): string {
+  const groups: string[] = []
+  const byGroup = new Map<string, FaqItem[]>()
+  for (const f of items) {
+    if (!byGroup.has(f.group)) {
+      byGroup.set(f.group, [])
+      groups.push(f.group)
+    }
+    byGroup.get(f.group)!.push(f)
+  }
+  return `
+  <section class="page-hero">
+    <div class="wrap">
+      <nav class="breadcrumb" aria-label="Breadcrumb"><ol><li><a href="/">Home</a></li><li aria-current="page">FAQs</li></ol></nav>
+      <h1>Frequently asked questions</h1>
+      <p>Every answer describes what this version of the storefront actually does.</p>
+    </div>
+  </section>
+  <section class="section">
+    <div class="wrap wrap-narrow">
+      ${
+        groups.length
+          ? groups
+              .map(
+                (g) => `
+        <section class="faq-section">
+          <h2>${esc(g)}</h2>
+          ${faqAccordion(byGroup.get(g)!)}
+        </section>`
+              )
+              .join('')
+          : emptyState({ title: 'No questions published', body: 'The FAQ is empty. An administrator can add answers in the CMS.', actionLabel: 'Contact support', actionHref: '/contact' })
+      }
+    </div>
+  </section>`
+}
+
+/**
+ * Legal / policy / content page. Legal pages keep an explicit draft banner —
+ * the owner must replace this text with counsel-reviewed copy before launch
+ * (S-14), and the banner is driven by the page's own `kind`, so a real page
+ * cannot accidentally be presented as reviewed legal terms.
+ */
+export function contentPage(page: CmsPage): string {
+  const isDraftLegal = page.kind === 'legal' || page.kind === 'refund' || page.kind === 'shipping'
+  return `
+  <section class="page-hero">
+    <div class="wrap wrap-narrow">
+      <nav class="breadcrumb" aria-label="Breadcrumb"><ol><li><a href="/">Home</a></li><li aria-current="page">${esc(page.title)}</li></ol></nav>
+      <h1>${esc(page.title)}${isDraftLegal ? ' <span class="badge badge-draft">Draft</span>' : ''}</h1>
+      <p>${esc(page.excerpt)}</p>
+    </div>
+  </section>
+  <section class="section">
+    <div class="wrap wrap-narrow prose">
+      ${
+        isDraftLegal
+          ? `<div class="notice notice-draft" role="note">
+        <strong>This page is a placeholder.</strong>
+        <p>It has not been reviewed by a lawyer and is not final legal text. It must be replaced with
+        jurisdiction-aware content and reviewed by the site owner and qualified legal counsel before this
+        storefront accepts real customers, payments or uploaded photographs of children. Any real payments,
+        printing, shipping and retention or deletion workflows it would need to describe are not implemented
+        in this version.</p>
+      </div>`
+          : ''
+      }
+      ${page.body}
+      ${
+        isDraftLegal
+          ? `<p class="notice">Owner action required: configure the final legal entity and contact address in the
+        CMS settings (currently “${esc(brand().legalName)}” / ${esc(brand().contactEmail)}), engage legal counsel, then
+        replace this page with reviewed text.</p>`
+          : ''
+      }
+    </div>
+  </section>`
+}
+
+// ---------------------------------------------------------------------------
+// support / contact / not found
+// ---------------------------------------------------------------------------
 
 export function contactPage(sent?: boolean, error?: string) {
   return `
-  <section class="page-hero"><h1>Contact ${esc(brand().name)}</h1><p>Questions about an order, custom request, or photo? We’d love to help.</p></section>
+  <section class="page-hero">
+    <div class="wrap">
+      <nav class="breadcrumb" aria-label="Breadcrumb"><ol><li><a href="/">Home</a></li><li aria-current="page">Contact</li></ol></nav>
+      <h1>Contact ${esc(brand().name)}</h1>
+      <p>Questions about an order, a photo, or a problem with the personalisation.</p>
+    </div>
+  </section>
   <section class="section">
-    <div class="wrap" style="max-width:640px">
-      ${sent ? `<p class="notice ok">Thank you — your message was saved. We read this inbox manually, so replies are not instant.</p>` : ''}
-      ${error ? `<p class="notice error">${esc(error)}</p>` : ''}
+    <div class="wrap wrap-narrow">
+      ${sent ? `<p class="notice ok" role="status">Thank you — your message was saved. This inbox is read manually, so replies are not instant.</p>` : ''}
+      ${error ? `<p class="notice error" role="alert">${esc(error)}</p>` : ''}
       <form class="form" method="post" action="/contact">
         <label for="name">Your name</label>
-        <input id="name" name="name" required>
+        <input id="name" name="name" required autocomplete="name">
         <label for="email">Email address</label>
-        <input id="email" name="email" type="email" required>
+        <input id="email" name="email" type="email" required autocomplete="email">
         <label for="topic">Topic</label>
         <select id="topic" name="topic">
           <option>Order enquiry</option>
-          <option>Photo verification</option>
-          <option>Shipping & delivery</option>
-          <option>Wholesale & partnerships</option>
+          <option>Photo or personalisation</option>
+          <option>Something is wrong with a page</option>
+          <option>Privacy or data request</option>
         </select>
         <label for="message">Message</label>
-        <textarea id="message" name="message" rows="5" required></textarea>
-        <button class="btn btn-purple" type="submit">Submit</button>
+        <textarea id="message" name="message" rows="6" required></textarea>
+        <button class="btn btn-primary" type="submit">Send message</button>
       </form>
+      <p class="tiny">We reply by email. We do not promise a response time in this version.</p>
     </div>
   </section>`
 }
 
-export function supportPage() {
+export function supportPage(extra: { photoGuidelinesHref: string }) {
   return `
   <section class="page-hero">
-    <h1>Support</h1>
-    <p>We’re here to help with orders, personalisation and photos.</p>
+    <div class="wrap">
+      <nav class="breadcrumb" aria-label="Breadcrumb"><ol><li><a href="/">Home</a></li><li aria-current="page">Support</li></ol></nav>
+      <h1>Support</h1>
+      <p>Help with orders, personalisation and photos.</p>
+    </div>
   </section>
   <section class="section">
     <div class="wrap grid-3">
-      <article class="product-card" style="padding:24px">
-        <h3><i class="fas fa-envelope"></i> Email us</h3>
+      <article class="info-card">
+        <h2>${icon('envelope')} Email us</h2>
         <p>${esc(brand().contactEmail)}</p>
-        <a class="link" href="mailto:${esc(brand().contactEmail)}">Send a message</a>
+        <a class="link" href="mailto:${esc(brand().contactEmail)}">Send an email</a>
       </article>
-      <article class="product-card" style="padding:24px">
-        <h3><i class="fas fa-circle-question"></i> FAQs</h3>
-        <p>Find answers about personalisation, languages, photos and more.</p>
-        <a class="link" href="/faqs">Browse FAQs</a>
+      <article class="info-card">
+        <h2>${icon('circle-question')} FAQs</h2>
+        <p>Answers about personalisation, photos, languages and what this version does not do.</p>
+        <a class="link" href="/faqs">Read the FAQs</a>
       </article>
-      <article class="product-card" style="padding:24px">
-        <h3><i class="fas fa-paper-plane"></i> Contact form</h3>
-        <p>Tell us about your order and we’ll reply by email.</p>
-        <a class="link" href="/contact">Get in touch</a>
+      <article class="info-card">
+        <h2>${icon('camera-retro')} Photo guidelines</h2>
+        <p>What makes a photo work, and what the server will reject.</p>
+        <a class="link" href="${esc(extra.photoGuidelinesHref)}">Read the guidelines</a>
+      </article>
+      <article class="info-card">
+        <h2>${icon('paper-plane')} Contact form</h2>
+        <p>Tell us about an order and we will look at the record.</p>
+        <a class="link" href="/contact">Open the form</a>
+      </article>
+      <article class="info-card">
+        <h2>${icon('tag')} Refund policy</h2>
+        <p>No refunds apply in this version, because no real payment is collected.</p>
+        <a class="link" href="/support/refund-policy">Read the draft policy</a>
+      </article>
+      <article class="info-card">
+        <h2>${icon('box-open')} Shipping information</h2>
+        <p>Nothing is printed or shipped in this version.</p>
+        <a class="link" href="/support/shipping">Read the draft page</a>
       </article>
     </div>
   </section>`
 }
 
+export function notFoundPage() {
+  return `
+  <section class="page-hero">
+    <div class="wrap">
+      <h1>Page Not Found</h1>
+      <p>The page, story or article you are looking for does not exist.</p>
+      <p><a class="btn btn-primary" href="/">Return to the home page</a></p>
+    </div>
+  </section>`
+}
+
+// ---------------------------------------------------------------------------
+// account / cart / checkout (kept, now currency-aware)
+// ---------------------------------------------------------------------------
+
 export function authPage(kind: 'login' | 'register' | 'forgot', msg?: string) {
   const titles = {
-    login: ['Login to Account', 'Enter your credentials to access your account.'],
-    register: ['Create Account', 'Create an account to carry on with your personalised book.'],
-    forgot: ['Forgot Password', 'Enter your email and we’ll send reset instructions.']
+    login: ['Login to your account', 'Enter your details to see your saved books.'],
+    register: ['Create an account', 'Create an account to keep your orders together.'],
+    forgot: ['Forgot your password', 'Enter your email and we will send reset instructions.']
   }
   const [h, s] = titles[kind]
   return `
   <section class="auth">
     <div class="auth-form">
-      <a class="brand" href="/"><img src="/static/img/logo.png" alt="" width="40" height="40"><span>${esc(brand().name)}</span></a>
+      <a class="brand" href="/"><img src="${esc(brand().logoPath)}" alt="" width="40" height="40"><span>${esc(brand().name)}</span></a>
       <h1>${h}</h1>
       <p>${s}</p>
-      ${msg ? `<p class="notice">${esc(msg)}</p>` : ''}
+      ${msg ? `<p class="notice" role="status">${esc(msg)}</p>` : ''}
       <form class="form" method="post" action="${kind === 'login' ? '/login' : kind === 'register' ? '/register' : '/forgot-password'}">
-        ${kind === 'register' ? `<label for="name">Name</label><input id="name" name="name" required>` : ''}
+        ${kind === 'register' ? '<label for="name">Name</label><input id="name" name="name" required autocomplete="name">' : ''}
         <label for="email">Email</label>
-        <input id="email" name="email" type="email" required>
-        ${kind !== 'forgot' ? `<label for="password">Password</label><input id="password" name="password" type="password" minlength="6" required>` : ''}
-        <button class="btn btn-purple" type="submit">${kind === 'login' ? 'Login' : kind === 'register' ? 'Create Account' : 'Send reset link'}</button>
+        <input id="email" name="email" type="email" required autocomplete="email">
+        ${kind !== 'forgot' ? `<label for="password">Password</label><input id="password" name="password" type="password" minlength="6" required autocomplete="${kind === 'login' ? 'current-password' : 'new-password'}">` : ''}
+        <button class="btn btn-primary" type="submit">${kind === 'login' ? 'Login' : kind === 'register' ? 'Create account' : 'Send reset link'}</button>
       </form>
-      ${kind === 'login' ? `<p><a class="link" href="/forgot-password">Forgot your password?</a></p><p>Not a member? <a class="link" href="/register">Create Account</a></p>` : ''}
-      ${kind === 'register' ? `<p>Already have an account? <a class="link" href="/login">Login</a></p>` : ''}
-      ${kind === 'forgot' ? `<p><a class="link" href="/login">Back to login</a></p>` : ''}
+      ${kind === 'login' ? '<p><a class="link" href="/forgot-password">Forgot your password?</a></p><p>No account yet? <a class="link" href="/register">Create one</a></p>' : ''}
+      ${kind === 'register' ? '<p>Already have an account? <a class="link" href="/login">Login</a></p>' : ''}
+      ${kind === 'forgot' ? '<p><a class="link" href="/login">Back to login</a></p>' : ''}
     </div>
     <aside class="auth-art">
       <h2>${esc(brand().tagline)}</h2>
-      <p>Personalised storybooks where your child is the hero — built from the photo and details you provide.</p>
-      <img src="/static/img/login-art.webp" alt="Parent and child with a storybook">
+      <p>Personalised storybooks built from the photo and details you provide. Nothing is charged or printed in this version.</p>
+      <img src="/static/img/art/login-art.svg" alt="Illustrated night-time pines with a lantern" width="640" height="420" loading="lazy">
     </aside>
   </section>`
 }
@@ -518,72 +839,71 @@ export function resetPasswordPage(token: string, msg?: string) {
   return `
   <section class="auth">
     <div class="auth-form">
-      <a class="brand" href="/"><img src="/static/img/logo.png" alt="" width="40" height="40"><span>${esc(brand().name)}</span></a>
-      <h1>Reset Password</h1>
+      <a class="brand" href="/"><img src="${esc(brand().logoPath)}" alt="" width="40" height="40"><span>${esc(brand().name)}</span></a>
+      <h1>Reset password</h1>
       <p>Choose a new password (at least 8 characters).</p>
-      ${msg ? `<p class="notice">${esc(msg)}</p>` : ''}
+      ${msg ? `<p class="notice" role="status">${esc(msg)}</p>` : ''}
       <form class="form" method="post" action="/reset-password">
         <input type="hidden" name="token" value="${esc(token)}">
         <label for="password">New password</label>
-        <input id="password" name="password" type="password" minlength="8" required>
+        <input id="password" name="password" type="password" minlength="8" required autocomplete="new-password">
         <label for="confirmPassword">Confirm new password</label>
-        <input id="confirmPassword" name="confirmPassword" type="password" minlength="8" required>
-        <button class="btn btn-purple" type="submit">Reset password</button>
+        <input id="confirmPassword" name="confirmPassword" type="password" minlength="8" required autocomplete="new-password">
+        <button class="btn btn-primary" type="submit">Reset password</button>
       </form>
       <p><a class="link" href="/login">Back to login</a></p>
     </div>
     <aside class="auth-art">
       <h2>${esc(brand().tagline)}</h2>
-      <p>Personalised storybooks where your child is the hero — built from the photo and details you provide.</p>
-      <img src="/static/img/login-art.webp" alt="Parent and child with a storybook">
+      <p>Personalised storybooks built from the photo and details you provide.</p>
+      <img src="/static/img/art/login-art.svg" alt="Illustrated night-time pines with a lantern" width="640" height="420" loading="lazy">
     </aside>
   </section>`
 }
 
 export function cartPage() {
   return `
-  <!-- The site-wide promo banner (layout.ts #promo-banner) already shows
-       this exact message on every page — this page repeated it a second
-       time immediately below it (frontend audit finding). -->
-  <main class="cart-page-bg">
-    <div class="cart-container-main" id="cart-root">
-      <div class="cart-loading-state">
-        <i class="fas fa-spinner fa-spin fa-2x text-purple-600"></i>
-        <p class="mt-3 text-gray-600">Loading your cart...</p>
+  <section class="section cart-page-bg">
+    <div class="wrap">
+      <div class="cart-container-main" id="cart-root">
+        ${loadingState('Loading your cart…')}
       </div>
     </div>
-  </main>`
+  </section>`
 }
 
 export function checkoutPage(user: { name?: string; email?: string } | null = null) {
   return `
-  <section class="page-hero"><h1>Checkout</h1><p>Enter your shipping details. Prices are verified securely on our server.</p></section>
+  <section class="page-hero">
+    <div class="wrap">
+      <h1>Checkout</h1>
+      <p>Totals are recalculated on the server for the currency you selected.</p>
+    </div>
+  </section>
   <section class="section">
-    <div class="wrap" style="max-width:720px">
-      <div id="checkout-summary"></div>
+    <div class="wrap wrap-narrow">
+      <div id="checkout-summary">${loadingState('Loading your order summary…')}</div>
       <form class="form" id="checkout-form">
         <label for="fullName">Full name</label>
-        <input id="fullName" name="fullName" required value="${esc(user?.name || '')}">
+        <input id="fullName" name="fullName" required autocomplete="name" value="${esc(user?.name || '')}">
         <label for="email">Email</label>
-        <input id="email" name="email" type="email" required value="${esc(user?.email || '')}">
-        <label for="address">Shipping address</label>
-        <input id="address" name="address" required>
+        <input id="email" name="email" type="email" required autocomplete="email" value="${esc(user?.email || '')}">
+        <label for="address">Address</label>
+        <input id="address" name="address" required autocomplete="street-address">
         <label for="city">City</label>
-        <input id="city" name="city" required>
+        <input id="city" name="city" required autocomplete="address-level2">
         <label for="country">Country</label>
-        <input id="country" name="country" required placeholder="United States">
+        <input id="country" name="country" required autocomplete="country-name" value="">
         <label for="shipping">Shipping method</label>
-        <select id="shipping" name="shipping">
-          <!-- T-05: the priced methods are real (the server quotes them), but
-               no delivery-time promise is made — fulfilment is not implemented. -->
-          <option value="standard">Standard — $12.00</option>
-          <option value="express">Express — $28.00</option>
+        <select id="shipping" name="shipping" data-shipping>
+          <option value="standard">Standard</option>
+          <option value="express">Express</option>
         </select>
         <p class="tiny">No delivery is scheduled in this version: printing and shipping are later milestones, so these amounts are recorded on the order only.</p>
         <p class="tiny">Code <strong>EXTRA20</strong> applies automatically: 20% off when you order 2 or more books.</p>
-        <p class="tiny checkout-test-payment-notice"><i class="fas fa-flask"></i> Test checkout — no real payment is collected. A production payment provider is a later milestone.</p>
-        <div id="checkout-error" class="notice" hidden></div>
-        <button class="btn btn-purple" type="submit" id="place-order-btn">Place order</button>
+        <p class="tiny checkout-test-payment-notice">${icon('flask')} Test checkout — no real payment is collected. A production payment provider is a later milestone.</p>
+        <div id="checkout-error" class="notice" role="alert" hidden></div>
+        <button class="btn btn-primary" type="submit" id="place-order-btn">Place order</button>
       </form>
     </div>
   </section>
@@ -592,18 +912,19 @@ export function checkoutPage(user: { name?: string; email?: string } | null = nu
 
 export function myBooksPage(loggedIn: boolean) {
   return `
-  <section class="page-hero"><h1>My Books & Orders</h1><p>Your saved personalised books and orders.</p></section>
+  <section class="page-hero">
+    <div class="wrap">
+      <h1>My Books &amp; Orders</h1>
+      <p>Books and orders saved to your account.</p>
+    </div>
+  </section>
   <section class="section">
-    <div class="wrap" id="orders-root" ${loggedIn ? 'data-mode="list"' : ''}>
-      ${!loggedIn ? `
-        <div class="auth-required-box" style="text-align:center;padding:48px 24px;background:#fff;border-radius:16px;max-width:540px;margin:0 auto;box-shadow:0 4px 20px rgba(0,0,0,0.05)">
-          <i class="fas fa-lock" style="font-size:36px;color:#8B5CF6;margin-bottom:16px"></i>
-          <h2 style="margin-bottom:8px">Sign in to view your books</h2>
-          <p style="color:#6B7280;margin-bottom:24px">Log in to see the books and orders saved to your account.</p>
-          <a class="btn btn-purple" href="/login" style="margin-right:12px">Login</a>
-          <a class="btn btn-outline" href="/register">Create Account</a>
-        </div>
-      ` : '<p class="my-books-loading">Loading your orders…</p>'}
+    <div class="wrap" id="orders-root"${loggedIn ? ' data-mode="list"' : ''}>
+      ${
+        loggedIn
+          ? loadingState('Loading your orders…')
+          : emptyState({ title: 'Sign in to view your books', body: 'Log in to see the books and orders saved to your account. Guest orders cannot be linked to an account in this version.', actionLabel: 'Login', actionHref: '/login' })
+      }
     </div>
   </section>
   ${loggedIn ? '<script type="module" src="/static/my-books.js"></script>' : ''}`
@@ -611,182 +932,106 @@ export function myBooksPage(loggedIn: boolean) {
 
 export function myBookOrderDetailPage(orderId: string | number) {
   return `
-  <section class="page-hero"><h1>Order Detail</h1></section>
+  <section class="page-hero"><div class="wrap"><h1>Order detail</h1></div></section>
   <section class="section">
-    <div class="wrap" id="order-detail-root" data-order-id="${esc(String(orderId))}"><p class="my-books-loading">Loading…</p></div>
+    <div class="wrap" id="order-detail-root" data-order-id="${esc(String(orderId))}">${loadingState('Loading this order…')}</div>
   </section>
   <script type="module" src="/static/my-books.js"></script>`
 }
 
-/**
- * The blog is record-backed (T-07). This registry is the source of truth: the
- * index links only to posts that exist here, and an unknown slug returns null
- * so the route renders a genuine 404 instead of a generic article.
- *
- * T-06: no fabricated statistics, expert bylines, awards or press
- * endorsements are written here. The copy describes what the product does.
- */
-export type BlogPost = { slug: string; title: string; category: string; excerpt: string; body: string; image: string }
+// ---------------------------------------------------------------------------
+// PDP helpers shared with pages_pdp.ts
+// ---------------------------------------------------------------------------
 
-export const BLOG_POSTS: BlogPost[] = [
-  {
-    slug: 'why-personalised-books-work',
-    title: 'Why personalised books hold a child’s attention',
-    category: 'Parenting',
-    excerpt: 'Seeing their own name and face in a story gives a child a reason to keep turning the pages.',
-    image: '/static/img/cover-princess.webp',
-    body: `
-      <p>When a child opens a book and finds their own name — and a picture of themselves — the story stops being somebody else’s and becomes theirs. That ownership is the simplest reason a personalised book gets picked up again and again.</p>
-      <h2>1. Self-representation keeps attention</h2>
-      <p>A child who is the hero of the page has a reason to find out what happens next. That is the whole trick, and it does not need a study to explain: familiar characters are simply more interesting to a young reader.</p>
-      <h2>2. Reading together is the real habit</h2>
-      <p>Time spent reading side by side is what builds a habit. A personalised book gives you a prop that puts your child at the centre of that time, night after night.</p>
-      <h2>3. A keepsake you can edit before you order</h2>
-      <p>On this storefront you can upload a photo, set the name and age, and review each revision before adding the book to your cart.</p>`
-  },
-  {
-    slug: 'birthday-gift-ideas',
-    title: 'Choosing a personalised book as a birthday gift',
-    category: 'Gifts',
-    excerpt: 'A practical checklist for picking a story, an age range and a photo that will work on the page.',
-    image: '/static/img/cover-birthday-girl.webp',
-    body: `
-      <p>A personalised book works as a gift because it is specific to one child. Here is how to choose well.</p>
-      <h2>Pick the story to match what they already love</h2>
-      <p>Adventure, animals, space, dragons — start from the interest, not the artwork. The catalog lists an age range on each product page.</p>
-      <h2>Choose a photo that will read well</h2>
-      <p>A clear, front-facing, well-lit photo gives the best result. Blurry or side-on photos and harsh shadows are the usual cause of a disappointing page.</p>
-      <h2>Check the details before you order</h2>
-      <p>You can review and edit the name, age, language and dedication in the reader before you check out, and every edit is saved as its own revision.</p>`
-  },
-  {
-    slug: 'calm-bedtime-routines',
-    title: 'Building a calmer bedtime routine around a book',
-    category: 'Bedtime',
-    excerpt: 'A short, repeatable routine that ends with a story your child is part of.',
-    image: '/static/img/cover-dragon.webp',
-    body: `
-      <p>A routine works because it is predictable. A story at the end of it gives the whole sequence a destination.</p>
-      <h2>Keep the order the same each night</h2>
-      <p>Bath, teeth, pyjamas, story. The order matters more than the clock.</p>
-      <h2>Let them choose the book</h2>
-      <p>Giving your child one decision — which book — makes the rest of the routine easier to follow.</p>
-      <h2>End on the story, not on a screen</h2>
-      <p>Holding a physical book to the last page gives a natural, quiet stopping point for the day.</p>`
-  }
-]
-
-export function blogIndex() {
+export function factsList(facts: PdpFacts | null): string {
+  if (!facts) return ''
+  const rows: Array<[string, string]> = []
+  if (facts.pageCount) rows.push(['Pages', String(facts.pageCount)])
+  if (facts.formatLabel) rows.push(['Format', facts.formatLabel])
+  if (facts.trimSize) rows.push(['Trim size', facts.trimSize])
+  if (facts.binding) rows.push(['Binding', facts.binding])
+  if (facts.productionNote) rows.push(['Production', facts.productionNote])
+  // A delivery/production estimate is rendered ONLY when a real value exists.
+  if (facts.productionEstimateDays != null) rows.push(['Estimated production', `${facts.productionEstimateDays} days`])
+  if (!rows.length) return ''
   return `
-  <section class="page-hero"><h1>${esc(brand().name)} Blog</h1><p>Notes on personalising books, photos and bedtime reading.</p></section>
-  <section class="section">
-    <div class="wrap grid-3">
-      ${BLOG_POSTS.map(
-        (post) => `
-      <article class="product-card">
-        <img src="${esc(post.image)}" alt="" width="300" height="200">
-        <div style="padding:16px">
-          <p class="tiny muted">${esc(post.category)}</p>
-          <h3>${esc(post.title)}</h3>
-          <p class="tiny">${esc(post.excerpt)}</p>
-          <a class="link" href="/blog/${esc(post.slug)}">Read story <i class="fas fa-arrow-right"></i></a>
-        </div>
-      </article>`
-      ).join('')}
-    </div>
+  <section class="pdp-facts" aria-labelledby="pdp-facts-heading">
+    <h2 id="pdp-facts-heading">Product facts</h2>
+    <dl class="facts-grid">
+      ${rows.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join('')}
+    </dl>
   </section>`
 }
 
-/** Returns the matching post body, or null so the route renders a real 404 (T-07). */
-export function blogPost(slug: string): string | null {
-  const post = BLOG_POSTS.find((p) => p.slug === slug)
-  if (!post) return null
+export function reviewsSection(opts: {
+  summary: ReviewSummary
+  reviews: Review[]
+  productSlug: string
+  submitAction: string
+  notice?: { message: string; isError: boolean }
+}): string {
+  const { summary, reviews } = opts
+  const hasReviews = summary.publishedCount > 0
+  const notice = opts.notice && opts.notice.message
+    ? `<p class="notice ${opts.notice.isError ? 'error' : 'ok'}" role="${opts.notice.isError ? 'alert' : 'status'}">${esc(opts.notice.message)}</p>`
+    : ''
   return `
-  <section class="page-hero">
-    <div class="wrap" style="max-width:760px">
-      <p class="eyebrow">${esc(brand().name)} Blog · ${esc(post.category)}</p>
-      <h1>${esc(post.title)}</h1>
-    </div>
-  </section>
-  <section class="section">
-    <article class="wrap" style="max-width:760px;line-height:1.8;color:#374151">
-      ${post.body}
-      <div style="margin:40px 0;padding:24px;background:#F3F4F6;border-radius:12px">
-        <h3 style="margin-bottom:8px">Ready to make your child the hero?</h3>
-        <p style="margin-bottom:16px">Browse the personalised storybooks and sticker packs.</p>
-        <a class="btn btn-purple" href="/books">Explore books</a>
-      </div>
-    </article>
+  <section class="pdp-reviews" id="reviews" aria-labelledby="reviews-heading">
+    <h2 id="reviews-heading">Customer reviews</h2>
+    ${notice}
+    ${
+      hasReviews
+        ? `<div class="reviews-summary">
+        <p class="reviews-average">${stars(summary.averageRating || 0, { label: `${summary.averageRating} out of 5 from ${summary.publishedCount} published ${summary.publishedCount === 1 ? 'review' : 'reviews'}` })}</p>
+        <p class="tiny">${summary.publishedCount} published ${summary.publishedCount === 1 ? 'review' : 'reviews'}. Only reviews that passed moderation are shown.</p>
+        <ul class="reviews-histogram">${[5, 4, 3, 2, 1]
+          .map((s) => `<li><span>${s} star${s === 1 ? '' : 's'}</span><span class="bar" style="--pct:${summary.publishedCount ? Math.round(((summary.histogram[s as 1 | 2 | 3 | 4 | 5] || 0) / summary.publishedCount) * 100) : 0}%"></span><span>${summary.histogram[s as 1 | 2 | 3 | 4 | 5] || 0}</span></li>`)
+          .join('')}</ul>
+      </div>`
+        : `<p class="notice" role="status">No reviews have been published for this title yet. A review appears here only after a customer writes one and it passes moderation.</p>`
+    }
+    <ul class="reviews-list">
+      ${reviews
+        .map(
+          (r) => `
+      <li class="review">
+        <p class="review-head"><strong>${esc(r.authorName)}</strong> ${stars(r.rating, { label: `${r.rating} out of 5` })} ${r.verifiedPurchase ? `<span class="badge badge-verified">Verified order</span>` : ''}</p>
+        ${r.title ? `<h3 class="review-title">${esc(r.title)}</h3>` : ''}
+        <p>${esc(r.body)}</p>
+        <p class="tiny muted">${esc(String(r.createdAt).slice(0, 10))}</p>
+      </li>`
+        )
+        .join('')}
+    </ul>
+    <form class="form review-form" method="post" action="${esc(opts.submitAction)}">
+      <h3>Write a review</h3>
+      <p class="tiny">Every review is moderated before it appears. Links and markup are not allowed.</p>
+      <label for="review-author">Name shown with the review</label>
+      <input id="review-author" name="authorName" maxlength="60" required>
+      <label for="review-rating">Rating</label>
+      <select id="review-rating" name="rating" required>
+        <option value="5">5 stars</option>
+        <option value="4">4 stars</option>
+        <option value="3">3 stars</option>
+        <option value="2">2 stars</option>
+        <option value="1">1 star</option>
+      </select>
+      <label for="review-title">Headline (optional)</label>
+      <input id="review-title" name="title" maxlength="120">
+      <label for="review-body">Your review</label>
+      <textarea id="review-body" name="body" rows="5" minlength="20" maxlength="2000" required></textarea>
+      <input type="hidden" name="productSlug" value="${esc(opts.productSlug)}">
+      <button class="btn btn-primary" type="submit">Submit review</button>
+    </form>
   </section>`
 }
 
-/**
- * S-14: these pages are explicitly-marked drafts, not final legal terms.
- * The placeholder status must be visible on the rendered page and must stay
- * until the owner and a qualified lawyer supply real, jurisdiction-aware copy
- * (Phase 2/8). Nothing here should be relied on as legal advice or as binding
- * terms.
- */
-export function legalPage(kind: 'privacy' | 'terms') {
-  const isPrivacy = kind === 'privacy'
+export function stickyMobileCta(opts: { label: string; href: string; price?: string }): string {
   return `
-  <section class="page-hero">
-    <h1>${isPrivacy ? 'Privacy Policy' : 'Terms & Conditions'} <span class="badge badge-new">Draft</span></h1>
-    <p>Placeholder content — not final legal terms.</p>
-  </section>
-  <section class="section">
-    <div class="wrap" style="max-width:800px;line-height:1.7;color:#4B5563">
-      <div class="notice" style="background:#FEF3C7;color:#92400E;padding:16px;border-radius:12px;margin-bottom:24px">
-        <strong>This page is a placeholder.</strong>
-        <p style="margin:8px 0 0">It has not been reviewed by a lawyer and is not final legal
-        text. It must be replaced with jurisdiction-aware content and reviewed by the site
-        owner and qualified legal counsel before this storefront accepts real customers,
-        payments or uploaded photographs of children. Any real payments, printing, shipping
-        and retention/deletion workflows it would need to describe are not implemented in
-        this version.</p>
-      </div>
-      <h2>1. Overview (draft)</h2>
-      <p>This draft describes the intended handling of personal data for a personalised
-      children's book service: photos uploaded for personalisation would be used solely to
-      create the ordered product.</p>
-      <h2>2. Data & security (draft)</h2>
-      <p>In the current implementation, uploaded photos are stored in private object storage
-      and are readable only through the application's ownership checks. Authentication
-      tokens and password-reset tokens are stored only as hashes. No retention/deletion
-      schedule is deployed in this version — see the operations notes in the repository
-      documentation.</p>
-      <h2>3. Orders, shipping and refunds (draft)</h2>
-      <p>Not applicable in this version: no real payment is collected, nothing is printed or
-      shipped, and therefore no refund, delivery or satisfaction guarantee applies.</p>
-      <h2>4. Legal review required</h2>
-      <p>Owner action required: configure the final legal entity and contact address in the site
-      brand settings (currently “${esc(brand().legalName)}” / ${esc(brand().contactEmail)}), engage legal
-      counsel, then replace this page with reviewed policy text before launch.</p>
-    </div>
-  </section>`
+  <div class="sticky-cta" role="region" aria-label="Order this title">
+    <p class="sticky-price">${opts.price ? esc(opts.price) : ''}</p>
+    <a class="btn btn-primary" href="${esc(opts.href)}">${esc(opts.label)}</a>
+  </div>`
 }
 
-export function notFoundPage() {
-  return `
-  <section class="page-hero">
-    <h1>Page Not Found</h1>
-    <p>The page or story you are looking for does not exist.</p>
-    <a class="btn btn-purple" href="/">Return to Home</a>
-  </section>`
-}
-
-function ctaBlock() {
-  return `
-  <section class="section bg-soft">
-    <div class="wrap cta-banner">
-      <div class="cta-copy">
-        <h2>Give the gift of wonder today</h2>
-        <p>Make your child the hero of their own illustrated storybook. Create their keepsake today.</p>
-        <a class="btn btn-purple" href="/books">Create a storybook <i class="fas fa-arrow-right"></i></a>
-      </div>
-      <div class="cta-image">
-        <img src="/static/img/cta-reading.webp" alt="Kids reading together" width="360" height="260">
-      </div>
-    </div>
-  </section>`
-}
+export { AUDIENCE_LABELS, FORMAT_LABELS, catalogHref }

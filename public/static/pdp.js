@@ -554,7 +554,7 @@ function rotateDraftKey(slug) {
       id: `${productSlug || 'book'}-${Date.now()}`,
       slug: productSlug,
       title: form?.dataset.title || 'Personalised storybook',
-      image: form?.dataset.image || '/static/img/cover-princess.webp',
+      image: form?.dataset.image || '/static/img/art/cover-the-lantern-and-the-long-night.svg',
       kind: form?.dataset.kind || 'book',
       coverType: selectedCover,
       userBookId,

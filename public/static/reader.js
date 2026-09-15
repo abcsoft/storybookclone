@@ -56,12 +56,26 @@ let guestOrderToken = null
   }
 })()
 
+// Each widget initialises independently. Before this change a throw in any one
+// of them silently disabled every widget that came after it — including the
+// PDF-request form's submit handler, which then fell back to a NATIVE form
+// submit (a full page reload) instead of the API call. A failure in one widget
+// must never take the others down with it.
 document.addEventListener('DOMContentLoaded', () => {
-  initCoverOptionSelector()
-  initPageFlip()
-  initPdfRequestForm()
-  initContinueButton()
-  initChangeDetailsDropdown()
+  const widgets = [
+    ['pdfRequestForm', initPdfRequestForm],
+    ['coverOptionSelector', initCoverOptionSelector],
+    ['pageFlip', initPageFlip],
+    ['continueButton', initContinueButton],
+    ['changeDetailsDropdown', initChangeDetailsDropdown]
+  ]
+  for (const [name, init] of widgets) {
+    try {
+      init()
+    } catch (err) {
+      console.error(`[reader] ${name} failed to initialise:`, err)
+    }
+  }
 })
 
 // 1. Cover Option Selector (from the server-owned contract)
@@ -107,6 +121,12 @@ function initPdfRequestForm() {
   const submitBtn = document.getElementById('btn-pdf-submit')
   const status = document.getElementById('pdf-status-msg')
   if (!form || !input) return
+  // The button is server-rendered disabled precisely so this line is the gate:
+  // by the time it is enabled, the submit handler below is definitely attached.
+  if (submitBtn) {
+    submitBtn.disabled = false
+    submitBtn.removeAttribute('aria-disabled')
+  }
 
   const showStatus = (text, isError) => {
     if (!status) return

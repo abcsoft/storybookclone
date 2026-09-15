@@ -1,34 +1,30 @@
 import { Hono, type Context } from 'hono'
 import { cors } from 'hono/cors'
-import { page, esc } from './layout'
+import { esc } from './layout'
+import { html, htmlNotFound, loadPageContext, storeOf, type PageContextVars } from './page-context'
+import { registerStorefrontRoutes } from './storefront'
 import {
-  homePage,
-  booksCatalog,
-  stickersCatalog,
-  ageCatalog,
-  faqsPage,
   contactPage,
-  supportPage,
   authPage,
   cartPage,
   checkoutPage,
   myBooksPage,
   myBookOrderDetailPage,
-  resetPasswordPage,
-  blogIndex,
-  blogPost,
-  legalPage,
-  notFoundPage
+  resetPasswordPage
 } from './pages'
-import { productDetailPage } from './pages_pdp'
 import { loadPdp, ensurePdpPageRow, savePdpPage, upsertGallery, deleteGallery, upsertAccordion, deleteAccordion, upsertStep, upsertTip, deleteTip, saveMagic, upsertTrust, deleteTrust, upsertReaction, deleteReaction, upsertMedia, deleteMedia, setRelated, upsertFaq, deleteFaq } from './pdp'
 import { adminPdpEditor } from './admin_pdp'
+import { adminCatalogProducts } from './admin_catalog'
+import { adminCmsHome, adminCmsNavigation, adminCmsPages, adminCmsPageEditor, adminCmsSettings } from './admin_cms'
+import { adminReviews } from './admin_reviews'
+import { registerAdminStoreRoutes } from './admin_routes'
 import {
   queryProducts,
   getProductBySlug,
   getProductVariants,
   quoteCart,
   shippingFor,
+  shippingForCurrency,
   round2,
   minorToMajor,
   type CatalogQuery,
@@ -153,7 +149,7 @@ export type Bindings = {
   BRAND_LOGO_PATH?: string
   BRAND_COPYRIGHT_YEAR?: string
 }
-export type Vars = { user: AuthUser | null; requestId: string | null; csrfToken?: string }
+export type Vars = { user: AuthUser | null; requestId: string | null; csrfToken?: string } & Partial<PageContextVars>
 
 const app = new Hono<{ Bindings: Bindings; Variables: Vars }>()
 
@@ -277,6 +273,109 @@ export async function bootstrapLocalDefaults(db: D1Database, bootstrap?: { email
     )
     if (batch.length) await db.batch(batch)
   }
+  // ---- V2 Phase 2 derivation (idempotent, run on every boot) -------------
+  // The SAME derivations migrations 0020/0023 apply to an EXISTING database,
+  // repeated here because a freshly-migrated database has no catalogue yet:
+  // products arrive from the seed above (or from seed.sql), and these
+  // statements derive the rows the storefront reads. Nothing new is invented —
+  // every price and fact comes from the product's own row.
+  //
+  // Per-currency prices: the product's own minor-unit price is authoritative in
+  // its own currency; the additional currencies are the documented static
+  // fixture prices (GBP 0.79, EUR 0.92, CAD 1.36, AUD 1.52 of the USD amount).
+  await db
+    .prepare(
+      `INSERT OR IGNORE INTO product_prices (product_id, currency, price_minor, compare_at_price_minor)
+       SELECT id, COALESCE(NULLIF(currency, ''), 'USD'), price_minor, compare_at_price_minor FROM products WHERE price_minor IS NOT NULL`
+    )
+    .run()
+  for (const [code, factor] of [['GBP', 0.79], ['EUR', 0.92], ['CAD', 1.36], ['AUD', 1.52]] as const) {
+    await db
+      .prepare(
+        `INSERT OR IGNORE INTO product_prices (product_id, currency, price_minor, compare_at_price_minor)
+         SELECT product_id, ?, CAST(ROUND(price_minor * ?) AS INTEGER),
+                CASE WHEN compare_at_price_minor IS NULL THEN NULL ELSE CAST(ROUND(compare_at_price_minor * ?) AS INTEGER) END
+           FROM product_prices WHERE currency = 'USD'`
+      )
+      .bind(code, factor, factor)
+      .run()
+  }
+  await db
+    .prepare(
+      `INSERT OR IGNORE INTO variant_prices (variant_id, currency, price_minor, compare_at_price_minor)
+       SELECT v.id, p.currency, v.price_minor, v.compare_at_price_minor
+         FROM product_variants v JOIN products p ON p.id = v.product_id WHERE v.active = 1`
+    )
+    .run()
+  for (const [code, factor] of [['GBP', 0.79], ['EUR', 0.92], ['CAD', 1.36], ['AUD', 1.52]] as const) {
+    await db
+      .prepare(
+        `INSERT OR IGNORE INTO variant_prices (variant_id, currency, price_minor, compare_at_price_minor)
+         SELECT variant_id, ?, CAST(ROUND(price_minor * ?) AS INTEGER), NULL FROM variant_prices WHERE currency = 'USD'`
+      )
+      .bind(code, factor)
+      .run()
+  }
+  // Collection membership derived from each product's own catalog facets.
+  await db.prepare(`INSERT OR IGNORE INTO collection_products (collection_id, product_id, sort_order)
+      SELECT c.id, p.id, p.id FROM collections c JOIN products p ON c.slug = 'all-books' AND p.category = 'book'`).run()
+  await db.prepare(`INSERT OR IGNORE INTO collection_products (collection_id, product_id, sort_order)
+      SELECT c.id, p.id, p.id FROM collections c JOIN products p ON c.slug = 'all-stickers' AND p.category = 'sticker'`).run()
+  await db.prepare(`INSERT OR IGNORE INTO collection_products (collection_id, product_id, sort_order)
+      SELECT c.id, p.id, p.id FROM collections c JOIN products p ON c.slug = 'sticker-packs' AND p.category = 'sticker'`).run()
+  await db.prepare(`INSERT OR IGNORE INTO collection_products (collection_id, product_id, sort_order)
+      SELECT c.id, p.id, p.id FROM collections c JOIN products p ON c.slug = 'when-i-grow-up' AND p.career = 1`).run()
+  await db.prepare(`INSERT OR IGNORE INTO collection_products (collection_id, product_id, sort_order)
+      SELECT c.id, p.id, p.id FROM collections c JOIN products p ON c.slug = 'girls-books' AND p.category = 'book' AND (p.gender = 'girl' OR p.gender = 'unisex')`).run()
+  await db.prepare(`INSERT OR IGNORE INTO collection_products (collection_id, product_id, sort_order)
+      SELECT c.id, p.id, p.id FROM collections c JOIN products p ON c.slug = 'boys-books' AND p.category = 'book' AND (p.gender = 'boy' OR p.gender = 'unisex')`).run()
+  await db.prepare(`INSERT OR IGNORE INTO collection_products (collection_id, product_id, sort_order)
+      SELECT c.id, p.id, p.id FROM collections c JOIN products p ON c.slug = 'ages-2-4' AND p.category = 'book' AND p.age_min >= 2 AND p.age_max <= 6`).run()
+  await db.prepare(`INSERT OR IGNORE INTO collection_products (collection_id, product_id, sort_order)
+      SELECT c.id, p.id, p.id FROM collections c JOIN products p ON c.slug = 'ages-4-6' AND p.category = 'book' AND p.age_min <= 4 AND p.age_max >= 6`).run()
+  await db.prepare(`INSERT OR IGNORE INTO collection_products (collection_id, product_id, sort_order)
+      SELECT c.id, p.id, p.id FROM collections c JOIN products p ON c.slug = 'ages-6-8' AND p.category = 'book' AND p.age_max >= 8`).run()
+  // Theme membership is an editorial choice, so it is listed explicitly
+  // (and mirrored in migration 0020 for the upgrade path).
+  await db.prepare(`INSERT OR IGNORE INTO collection_products (collection_id, product_id, sort_order)
+      SELECT c.id, p.id, 100 + p.id FROM collections c JOIN products p
+       WHERE c.slug = 'adventure-and-discovery' AND p.slug IN ('captain-of-the-cardboard-sea', 'the-great-paper-boat-race', 'the-sunrise-kite-club', 'the-little-explorer', 'the-paper-aeroplane-race', 'the-puddle-who-met-the-sea')`).run()
+  await db.prepare(`INSERT OR IGNORE INTO collection_products (collection_id, product_id, sort_order)
+      SELECT c.id, p.id, 100 + p.id FROM collections c JOIN products p
+       WHERE c.slug = 'bedtime-and-calm' AND p.slug IN ('the-lantern-and-the-long-night', 'the-moon-garden', 'the-snowy-night-parade', 'the-moonlight-parade', 'the-snow-fox')`).run()
+  await db.prepare(`INSERT OR IGNORE INTO collection_products (collection_id, product_id, sort_order)
+      SELECT c.id, p.id, 100 + p.id FROM collections c JOIN products p
+       WHERE c.slug = 'animals-and-nature' AND p.slug IN ('the-snow-fox', 'the-lost-little-dinosaur', 'the-forest-that-sang', 'the-puddle-who-met-the-sea')`).run()
+  await db.prepare(`INSERT OR IGNORE INTO collection_products (collection_id, product_id, sort_order)
+      SELECT c.id, p.id, 100 + p.id FROM collections c JOIN products p
+       WHERE c.slug = 'sky-and-space' AND p.slug IN ('the-star-collector', 'the-paper-aeroplane-race', 'up-in-the-clouds', 'the-sunrise-kite-club')`).run()
+  await db.prepare(`INSERT OR IGNORE INTO collection_products (collection_id, product_id, sort_order)
+      SELECT c.id, p.id, 100 + p.id FROM collections c JOIN products p
+       WHERE c.slug = 'kindness-and-feelings' AND p.slug IN ('the-quiet-drum', 'the-brave-little-baker', 'the-kind-vet', 'the-helping-hands-clinic', 'the-forest-that-sang')`).run()
+  // Factual product spec + one cover media row per product.
+  await db
+    .prepare(
+      `INSERT OR IGNORE INTO product_facts (product_id, page_count, trim_size, binding, format_label, production_note)
+       SELECT id, pages, '210 × 210 mm',
+              CASE WHEN category = 'book' THEN 'Hardcover / softcover' ELSE 'Sticker sheet set' END,
+              CASE WHEN category = 'book' THEN 'Square picture book' ELSE 'Sticker pack' END,
+              'This version records the order and keeps your personalisation. It does not print or ship anything yet, so no production or delivery date is scheduled.'
+         FROM products`
+    )
+    .run()
+  await db
+    .prepare(
+      `INSERT OR IGNORE INTO media_assets (public_path, alt_text, width, height, mime_type, source)
+       SELECT DISTINCT image, 'Illustrated cover', 600, 600, 'image/svg+xml', 'generated' FROM products WHERE image <> ''`
+    )
+    .run()
+  await db
+    .prepare(
+      `INSERT OR IGNORE INTO product_media (product_id, media_id, role, sort_order)
+       SELECT p.id, m.id, 'cover', 0 FROM products p JOIN media_assets m ON m.public_path = p.image WHERE p.image <> ''`
+    )
+    .run()
+
   // Keep the minor-unit price truth + the storefront's cover/format variants
   // in sync for every catalog row, idempotently (D-08/D-09). Variants are
   // priced from the product's own price — no new price is invented.
@@ -350,6 +449,15 @@ app.use('*', async (c, next) => {
 })
 app.use('*', attachUser)
 
+// V2 Phase 2: load the CMS shell (navigation, footer, announcement) and the
+// store context (country/currency/language, from the database) once per
+// request, and apply the brand overlay from `site_settings`. It degrades to
+// the built-in defaults rather than 500ing if a CMS read fails.
+app.use('*', async (c, next) => {
+  await loadPageContext(c)
+  await next()
+})
+
 // S-01: the central CSRF/Origin gate for every cookie-authenticated mutation.
 app.use('*', csrfGuard())
 
@@ -393,93 +501,25 @@ function getOrSetUploadOwnerToken(c: Context<{ Bindings: Bindings; Variables: Va
   return token
 }
 
-function html(c: any, title: string, body: string, active?: string, description?: string, status?: 200 | 404) {
-  // S-03: the header needs to know whether a session exists so it can render
-  // the POST logout control instead of the /login link.
-  const rendered = page({ title, body, active, description, loggedIn: !!c.get('user') })
-  return status ? c.html(rendered, status) : c.html(rendered)
-}
-
-/** A missing product/sticker/article is a genuine 404 — never a 200 with a "not found" body (T-07). */
-function htmlNotFound(c: any) {
-  return html(c, 'Not found', notFoundPage(), undefined, undefined, 404)
-}
-
 // ================= STOREFRONT =================
+//
+// V2 Phase 2: the public storefront routes (homepage from CMS blocks, the
+// catalog, collections, PDP, blog, FAQ, legal/content pages, robots/sitemap,
+// locale selection and the review endpoints) are registered from
+// src/storefront.ts, which reads everything from the database. What remains
+// here are the routes that mutate session/order state.
 
-app.get('/', async (c) => {
-  const db = c.env.DB
-  const [best, fresh, girls, boys, careersList] = await Promise.all([
-    queryProducts(db, { bestseller: true }),
-    queryProducts(db, { newRelease: true }),
-    queryProducts(db, { category: 'book', gender: 'girl' }),
-    queryProducts(db, { category: 'book', gender: 'boy' }),
-    queryProducts(db, { career: true })
-  ])
-  return html(
-    c,
-    'Personalized Books for Kids | Custom Storybooks',
-    homePage({ bestsellers: best, newReleases: fresh, girls, boys, careers: careersList }),
-    'home'
-  )
+app.get('/contact', (c) => {
+  return html(c, 'Contact', contactPage(c.req.query('sent') === '1', c.req.query('error') || undefined), '/contact')
 })
 
-app.get('/books', async (c) => {
-  const q = c.req.query()
-  const filter: CatalogQuery = { category: 'book' }
-  if (q.gender === 'girl' || q.gender === 'boy') filter.gender = q.gender
-  if (q.career) filter.career = true
-  if (q.q) filter.q = q.q
-  const items = await queryProducts(c.env.DB, filter)
-  return html(c, 'Books', booksCatalog(q, items), 'books')
-})
-
-app.get('/books/age/2-4', async (c) =>
-  html(c, 'Books ages 2–4', ageCatalog(2, 4, '2-4', await queryProducts(c.env.DB, { category: 'book', ageMin: 2, ageMax: 4 })), 'books')
-)
-app.get('/books/age/4-6', async (c) =>
-  html(c, 'Books ages 4–6', ageCatalog(4, 6, '4-6', await queryProducts(c.env.DB, { category: 'book', ageMin: 4, ageMax: 6 })), 'books')
-)
-app.get('/books/age/6-8', async (c) =>
-  html(c, 'Books ages 6–8', ageCatalog(6, 8, '6-8', await queryProducts(c.env.DB, { category: 'book', ageMin: 6, ageMax: 8 })), 'books')
-)
-app.get('/books/age/8-100', async (c) =>
-  html(c, 'Books ages 8+', ageCatalog(8, 100, '6-8', await queryProducts(c.env.DB, { category: 'book', ageMin: 8, ageMax: 100 })), 'books')
-)
-
-app.get('/stickers', async (c) =>
-  html(c, 'Personalised Sticker Packs', stickersCatalog(await queryProducts(c.env.DB, { category: 'sticker' })), 'stickers')
-)
-
-app.get('/books/:slug', async (c) => {
-  const p = await getProductBySlug(c.env.DB, c.req.param('slug'))
-  if (!p) return htmlNotFound(c)
-  const pdp = await loadPdp(c.env.DB, p)
-  const variants = (await getProductVariants(c.env.DB, p.slug))?.variants
-  const active = p.category === 'sticker' ? 'stickers' : 'books'
-  const prefix = p.category === 'sticker' ? '/stickers' : '/books'
-  return html(c, `${p.title}`, productDetailPage({ product: p, variants, ...pdp }, prefix), active, p.description)
-})
-
-app.get('/stickers/:slug', async (c) => {
-  const p = await getProductBySlug(c.env.DB, c.req.param('slug'))
-  if (!p || p.category !== 'sticker') return htmlNotFound(c)
-  const pdp = await loadPdp(c.env.DB, p)
-  const variants = (await getProductVariants(c.env.DB, p.slug))?.variants
-  return html(c, `${p.title}`, productDetailPage({ product: p, variants, ...pdp }, '/stickers'), 'stickers', p.description)
-})
-
-app.get('/faqs', (c) => html(c, `FAQ - ${brand().name}`, faqsPage(), 'support'))
-app.get('/support', (c) => html(c, 'Support', supportPage(), 'support'))
-
-app.get('/contact', (c) => html(c, 'Contact Us', contactPage(), 'support'))
 app.post('/contact', async (c) => {
   const body = await c.req.parseBody()
   // S-06 + T-08: durable atomic limit, and an HONEST failure (never a fake
   // success when persistence fails).
   const contactLimit = await durableRateLimit(c.env.DB, rateLimitKey('contact', c), { max: 5, windowSeconds: 3600 })
   if (contactLimit.limited) {
-    return c.html(contactPage(false, 'You have sent several messages already. Please try again a little later.'), 429)
+    return html(c, 'Contact us', contactPage(false, 'You have sent several messages already. Please try again a little later.'), '/contact', undefined, 429)
   }
   let saved = false
   try {
@@ -489,11 +529,11 @@ app.post('/contact', async (c) => {
     saved = true
   } catch {}
   // T-08: only claim success when the row actually persisted; otherwise say so
-  // and let the visitor retry (the form is re-rendered with their error).
+  // and let the visitor retry.
   if (!saved) {
-    return html(c, 'Contact Us', contactPage(false, 'We could not save your message just now — please try again in a moment.'), 'support')
+    return html(c, 'Contact us', contactPage(false, 'We could not save your message just now — please try again in a moment.'), '/contact')
   }
-  return html(c, 'Contact Us', contactPage(true), 'support')
+  return html(c, 'Contact us', contactPage(true), '/contact')
 })
 
 // ---------- auth pages ----------
@@ -815,17 +855,9 @@ app.get('/order-success', async (c) => {
   )
 })
 
-app.get('/blog', (c) => html(c, 'Blog', blogIndex()))
-app.get('/blog/:slug', (c) => {
-  const body = blogPost(c.req.param('slug'))
-  if (!body) return htmlNotFound(c)
-  return html(c, 'Blog', body)
-})
-
-app.get('/support/privacy-policy', (c) => html(c, 'Privacy Policy', legalPage('privacy')))
-app.get('/support/terms-and-conditions', (c) => html(c, 'Terms and Conditions', legalPage('terms')))
-app.get('/privacy', (c) => c.redirect('/support/privacy-policy'))
-app.get('/terms', (c) => c.redirect('/support/terms-and-conditions'))
+// The blog, FAQ and legal/content routes now live in src/storefront.ts and are
+// backed by the `cms_pages` / `cms_faqs` tables (V2 Phase 2), so publishing a
+// post or editing a policy is an admin action rather than a code change.
 
 // ---------- photos (R2) ----------
 // NEVER a permanently public URL: only the uploading browser (owner_token),
@@ -871,6 +903,11 @@ app.get('/photos/:key{.+}', async (c) => {
   headers.set('Cache-Control', 'private, max-age=3600')
   return new Response(obj.body, { headers })
 })
+
+// ================= STOREFRONT ROUTES (V2 Phase 2) =================
+// Homepage/CMS blocks, catalog, collections, PDP, blog/FAQ/legal content,
+// robots/sitemap, locale selection and the review endpoints.
+registerStorefrontRoutes(app)
 
 // ================= PUBLIC API =================
 
@@ -951,9 +988,14 @@ app.get('/api/v1/uploads/photo-policy', (c) => c.json(photoPolicySummary()))
 async function handleQuote(c: Context<{ Bindings: Bindings; Variables: Vars }>) {
   const body = await c.req.json<{ items?: any[]; code?: string; shipping?: string }>()
   const items = Array.isArray(body.items) ? body.items : []
-  if (!items.length) return c.json({ subtotal: 0, discount: 0, shipping: 0, total: 0, bookCount: 0, subtotalMinor: 0, discountMinor: 0, shippingMinor: 0, totalMinor: 0, currency: 'USD' })
-  const quoteResult = await quoteCart(c.env.DB, items, body.code)
-  const ship = body.shipping ? shippingFor(String(body.shipping)) : shippingFor('standard')
+  // SF-03/PLT-07: the currency is the SERVER's resolved store choice (the
+  // persisted country/currency selection), never a value from the request body.
+  const currency = storeOf(c).currency
+  if (!items.length) {
+    return c.json({ subtotal: 0, discount: 0, shipping: 0, total: 0, bookCount: 0, subtotalMinor: 0, discountMinor: 0, shippingMinor: 0, totalMinor: 0, currency })
+  }
+  const quoteResult = await quoteCart(c.env.DB, items, body.code, currency)
+  const ship = body.shipping ? await shippingForCurrency(c.env.DB, String(body.shipping), currency) : { priceMinor: 0 }
   const shippingMinor = body.shipping ? ship.priceMinor : 0
   // INTEGER minor units are the financial truth (D-09); the decimal fields
   // are derived display values for compatibility.
@@ -1018,7 +1060,10 @@ async function handleCreateOrder(c: Context<{ Bindings: Bindings; Variables: Var
   const personalizationOwner = await resolvePersonalizationOwner(c)
   const result = await createOrder(
     c.env.DB,
-    { ...body, idempotencyKey },
+    // SF-03/PLT-07: the currency is the SERVER's resolved store choice. A
+    // client-supplied `currency` in the body is overwritten here, so it can
+    // never influence what the server charges.
+    { ...body, idempotencyKey, currency: storeOf(c).currency },
     { userId: user?.id ?? null, uploadOwnerToken: ownerToken, secrets: tokenConfig.secrets, guestTokenTtlSeconds: tokenConfig.ttlSeconds, personalizationOwner }
   )
   if (!result.ok) return c.json({ error: result.error }, result.status as any)
@@ -1539,6 +1584,12 @@ app.post('/admin/discounts/:id/toggle', async (c) => {
 })
 
 // ---- users ----
+// V2 Phase 2 admin screens (ADM-06/07/15/16): catalog, CMS, collections,
+// media, reviews moderation, brand settings and localization readiness.
+// Registered AFTER the /admin/* authorization guard above, so every route
+// below is admin-only by construction.
+registerAdminStoreRoutes(app)
+
 app.get('/admin/users', async (c) => {
   const rows =
     (
@@ -1893,6 +1944,6 @@ function slugify(s: string) {
 // with c.html() and no status, defaulting to 200 OK — every truly missing
 // route (and, worse, every access-denied /photos/:key response relying on
 // c.notFound()) was reporting success.
-app.notFound((c) => c.html(page({ title: `Not found - ${brand().name}`, body: notFoundPage(), loggedIn: !!c.get('user') }), 404))
+app.notFound((c) => htmlNotFound(c))
 
 export default app

@@ -5,12 +5,22 @@ import { money, type Product } from './data'
 import { type DiscountRow } from './db'
 import { ORDER_STATUSES, PREVIEW_STATUSES, ORDER_STATUS_FLOW, PREVIEW_STATUS_FLOW, orderTransitionNeedsReason, statusLabel, type OrderStatus, type PreviewStatus } from './orders-status'
 
-function adminPage(opts: { title: string; active: string; body: string }) {
+export function adminPage(opts: { title: string; active: string; body: string; subtitle?: string }) {
+  // V2 Phase 2: the admin IA now mirrors §10. Navigation is data here (one
+  // static list) and every destination enforces its own permission check
+  // server-side, so hiding a link is never the control.
   const nav = [
     ['dashboard', '/admin', 'fa-gauge', 'Dashboard'],
     ['orders', '/admin/orders', 'fa-box-open', 'Orders'],
-    ['products', '/admin/products', 'fa-book', 'Products'],
-    ['discounts', '/admin/discounts', 'fa-tag', 'Discounts'],
+    ['catalog', '/admin/catalog', 'fa-book', 'Catalog'],
+    ['collections', '/admin/collections', 'fa-tag', 'Collections'],
+    ['media', '/admin/media', 'fa-image', 'Media'],
+    ['cms', '/admin/cms', 'fa-palette', 'CMS'],
+    ['pages', '/admin/cms/pages', 'fa-book-open', 'Pages & blog'],
+    ['reviews', '/admin/reviews', 'fa-check-circle', 'Reviews'],
+    ['discounts', '/admin/discounts', 'fa-sack-dollar', 'Discounts'],
+    ['localization', '/admin/localization', 'fa-language', 'Localization'],
+    ['settings', '/admin/settings', 'fa-store', 'Brand & settings'],
     ['ai-settings', '/admin/ai-settings', 'fa-wand-magic-sparkles', 'AI & Book API'],
     ['users', '/admin/users', 'fa-users', 'Users'],
     ['messages', '/admin/messages', 'fa-envelope', 'Inbox']
@@ -21,14 +31,14 @@ function adminPage(opts: { title: string; active: string; body: string }) {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>${esc(opts.title)} · ${esc(brand().name)} Admin</title>
-  <link rel="icon" href="/static/img/logo.png" type="image/png">
-  <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.5.2/css/all.min.css" rel="stylesheet">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link href="/static/admin.css" rel="stylesheet">
+  <link href="/static/icons.css" rel="stylesheet">
+  <link href="/static/storefront.css" rel="stylesheet">
 </head>
 <body>
   <aside class="admin-side">
-    <a class="admin-brand" href="/admin"><img src="/static/img/logo.png" alt="" width="32" height="32"><span>${esc(brand().name)}<br><small>Admin</small></span></a>
+    <a class="admin-brand" href="/admin"><img src="${esc(brand().logoPath)}" alt="" width="32" height="32"><span>${esc(brand().name)}<br><small>Admin</small></span></a>
     <nav>
       ${nav
         .map(
@@ -42,7 +52,10 @@ function adminPage(opts: { title: string; active: string; body: string }) {
       <form method="post" action="/logout"><button type="submit" class="store-link"><i class="fas fa-right-from-bracket"></i> Logout</button></form>
     </div>
   </aside>
-  <main class="admin-main">${opts.body}</main>
+  <main class="admin-main">
+    <header class="a-page-head"><h1>${esc(opts.title)}</h1>${opts.subtitle ? `<p class="a-inline-note">${opts.subtitle}</p>` : ''}</header>
+    ${opts.body}
+  </main>
   <script src="/static/admin.js"></script>
 </body>
 </html>`
@@ -54,12 +67,13 @@ export function adminLogin(msg?: string) {
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Admin Login · ${esc(brand().name)}</title>
-  <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;600;800&display=swap" rel="stylesheet">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link href="/static/admin.css" rel="stylesheet">
+  <link href="/static/icons.css" rel="stylesheet">
 </head>
 <body class="admin-login">
   <form class="admin-login-card" method="post" action="/admin/login">
-    <img src="/static/img/logo.png" alt="" width="48" height="48">
+    <img src="${esc(brand().logoPath)}" alt="" width="48" height="48">
     <h1>Admin Panel</h1>
     ${msg ? `<p class="a-notice">${esc(msg)}</p>` : ''}
     <label>Email<input name="email" type="email" required autocomplete="username"></label>

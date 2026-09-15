@@ -1,3 +1,4 @@
+import { money as formatMoney } from './format.js'
 // my-books.js — wires My Books (list) and the order-detail page to the real
 // /api/v1/my/orders contract (ES module). Previously #orders-root was never
 // populated by any script at all (confirmed Phase 0/1 baseline defect #6).
@@ -10,8 +11,8 @@ function esc(s) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
 }
-function money(n) {
-  return '$' + (Number(n) || 0).toFixed(2)
+function money(minor) {
+  return formatMoney(minor)
 }
 function statusLabel(s) {
   return String(s || '').replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
@@ -53,7 +54,7 @@ async function renderOrdersList() {
       </div>
       <div>
         <span class="order-status">${esc(statusLabel(o.status))}</span>
-        <strong style="margin-left:12px">${money(o.total)}</strong>
+        <strong style="margin-left:12px">${formatMoney(o.total_minor ?? Math.round((o.total || 0) * 100))}</strong>
       </div>
     </a>
   `
@@ -97,10 +98,10 @@ async function renderOrderDetail() {
         .join('')}
     </div>
     <div class="cart-totals">
-      <div class="cart-summary-row"><span>Subtotal</span><span>${money(order.subtotal)}</span></div>
-      ${order.discount ? `<div class="cart-summary-row"><span>Discount</span><span>−${money(order.discount)}</span></div>` : ''}
-      <div class="cart-summary-row"><span>Shipping</span><span>${money(order.shipping)}</span></div>
-      <div class="cart-summary-row total-row"><span>Total</span><span>${money(order.total)}</span></div>
+      <div class="cart-summary-row"><span>Subtotal</span><span>${formatMoney(order.subtotal_minor ?? Math.round((order.subtotal || 0) * 100))}</span></div>
+      ${order.discount ? `<div class="cart-summary-row"><span>Discount</span><span>−${formatMoney(order.discount_minor ?? Math.round((order.discount || 0) * 100))}</span></div>` : ''}
+      <div class="cart-summary-row"><span>Shipping</span><span>${formatMoney(order.shipping_minor ?? Math.round((order.shipping || 0) * 100))}</span></div>
+      <div class="cart-summary-row total-row"><span>Total</span><span>${formatMoney(order.total_minor ?? Math.round((order.total || 0) * 100))}</span></div>
     </div>
   `
 }

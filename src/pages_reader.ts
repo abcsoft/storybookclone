@@ -102,7 +102,7 @@ export function personalizedBookReaderPage(data: PersonalizedBookData) {
           .map((code, i) => {
             const price = coverPriceFor(code)
             const isDefault = code === data.coverType || (i === 0 && !coverOptions.includes(data.coverType))
-            const thumb = code === 'softcover' ? '/static/img/thumb-softcover.webp' : '/static/img/thumb-hardcover.webp'
+            const thumb = code === 'softcover' ? '/static/img/art/thumb-softcover.svg' : '/static/img/art/thumb-hardcover.svg'
             return `<label class="cover-option-card${isDefault ? ' active' : ''}" id="card-${esc(code)}" data-cover-type="${esc(code)}" data-cover-price="${price}">
           <input type="radio" name="coverOption" value="${esc(code)}" ${isDefault ? 'checked' : ''} class="sr-only">
           ${i === 0 ? '<span class="cover-badge-best">BEST CHOICE</span>' : ''}
@@ -134,7 +134,10 @@ export function personalizedBookReaderPage(data: PersonalizedBookData) {
             <i class="far fa-envelope pdf-mail-icon"></i>
             <input type="email" id="pdf-email" name="email" placeholder="Email Address" required class="pdf-input">
           </div>
-          <button type="submit" class="btn-pdf-submit" id="btn-pdf-submit" title="Record PDF interest (no PDF is sent)">
+          <!-- Starts disabled: the form is wired by reader.js, and until that
+               module has attached its handler a click would trigger a plain
+               HTML form submit (a full page reload) instead of the API call. -->
+          <button type="submit" class="btn-pdf-submit" id="btn-pdf-submit" disabled aria-disabled="true" title="Record PDF interest (no PDF is sent)">
             <i class="fas fa-paper-plane"></i>
           </button>
         </form>

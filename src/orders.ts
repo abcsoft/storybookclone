@@ -3,7 +3,7 @@
 // access via an unforgeable HMAC-signed capability token (never a bare
 // sequential ID). Signing secrets come from environment bindings — see
 // src/secrets.ts resolveGuestOrderTokenSecrets() — never the database.
-import { quoteCart, shippingFor, minorToMajor, type CartLine } from './db'
+import { quoteCart, shippingFor, shippingForCurrency, minorToMajor, type CartLine } from './db'
 import { checkUploadOwnership } from './uploads'
 import { sha256Hex, signWithRotation, hmacSha256Hex, timingSafeEqual, DEFAULT_GUEST_ORDER_TOKEN_TTL_SECONDS, type RotatingSecrets } from './secrets'
 import { PERSONALIZATION_LIMITS } from './personalization/user-books'
@@ -40,6 +40,13 @@ export type CreateOrderInput = {
   code?: string
   paymentMethod?: string
   idempotencyKey?: string
+  /**
+   * ISO-4217 currency the SERVER resolved for this request (V2 Phase 2,
+   * SF-03/PLT-07). It is never taken from the request body: the route reads the
+   * persisted country/currency choice. Every line is priced from that
+   * currency's own price rows, so the browser cannot influence the amount.
+   */
+  currency?: string
 }
 
 export type CreateOrderResult =
@@ -211,9 +218,12 @@ export async function createOrder(
   }
 
   const cartLines: CartLine[] = resolvedItems.map((i) => ({ slug: String(i.slug), kind: undefined, qty: i.qty, variantCode: i.coverType }))
-  const quote = await quoteCart(db, cartLines, input.code)
+  const orderCurrency = String(input.currency || '').toUpperCase() || undefined
+  const quote = await quoteCart(db, cartLines, input.code, orderCurrency)
   if (quote.invalid.length) return { ok: false, status: 400, error: `Unknown product(s) or unavailable option(s): ${quote.invalid.join(', ')}` }
-  const ship = shippingFor(String(input.shippingMethod || 'standard'))
+  const ship = orderCurrency
+    ? await shippingForCurrency(db, String(input.shippingMethod || 'standard'), orderCurrency)
+    : shippingFor(String(input.shippingMethod || 'standard'))
   // INTEGER minor units are the financial truth (D-09); the legacy REAL
   // columns are kept in sync for compatibility only.
   const totalMinor = quote.subtotalMinor - quote.discountMinor + ship.priceMinor

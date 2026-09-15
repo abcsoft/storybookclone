@@ -2,17 +2,20 @@
 // single long-scrolling product page.
 // All sections are data-driven from the per-product PDP rows so admins can edit them.
 import type { Product } from './db'
-import { money, languages } from './data'
 import { PHOTO_POLICY } from './photo-policy'
 import { PERSONALIZATION_LIMITS, CHILD_NAME_ALLOWED_CHARS_PATTERN, CHILD_NAME_ALLOWED_CHARS_HINT, AGE_BEHAVIOUR } from './personalization/user-books'
 import type { ProductVariant } from './db'
+import { esc } from './layout'
+import { reviewsSection, factsList, stickyMobileCta, type Money } from './pages'
+import type { PdpFacts } from './pdp'
+import type { Review, ReviewSummary } from './reviews'
+import type { LanguageOption } from './locale'
 
-// BCP-47 codes for the `languages` display list above, in the SAME order —
-// mirrors the seed rows in migrations/0010_personalization_catalog_domain.sql.
-// The <select> below submits the code (what the Phase 2 domain validates
-// against the `languages` table) while still showing the friendly name.
-const LANGUAGE_CODES = ['en', 'es', 'pt-BR', 'ar', 'fr', 'tr', 'de', 'it', 'nl', 'sq']
-import { esc, stars } from './layout'
+/** Used only when the `languages` table has no active rows at all. */
+const FALLBACK_LANGUAGES: LanguageOption[] = [
+  { code: 'en', name: 'English', nativeName: 'English', direction: 'ltr', fallbackCode: null }
+]
+
 import type {
   GalleryItem,
   AccordionItem,
@@ -42,10 +45,28 @@ type PdpData = {
   media: MediaItem[]
   related: RelatedItem[]
   faqs: FaqItem[]
+  // ---- V2 Phase 2 additions. All server data; nothing is invented here. ----
+  /** Currency-aware formatter for the visitor's selected currency. */
+  fmt: Money
+  /** Factual spec (pages, trim, binding, production note). */
+  facts: PdpFacts | null
+  /** Aggregate over PUBLISHED reviews only (null average when there are none). */
+  reviewSummary: ReviewSummary
+  reviews: Review[]
+  /** Active languages from the `languages` table. */
+  languages: LanguageOption[]
+  /** Canonical path of this PDP. */
+  path: string
+  /** Related products resolved from the catalogue, priced in this currency. */
+  relatedProducts: Product[]
+  /** Outcome of a review submission, carried through the redirect. */
+  reviewNotice?: { message: string; isError: boolean }
 }
 
 // Default copy is used when the PDP DB rows are missing for a product.
-function defaultPdp(product: Product): Omit<PdpData, 'product'> {
+type PdpBlockData = Omit<PdpData, 'product' | 'fmt' | 'facts' | 'reviewSummary' | 'reviews' | 'languages' | 'path' | 'relatedProducts' | 'reviewNotice'>
+
+function defaultPdp(product: Product): PdpBlockData {
   const isBook = product.category === 'book'
   const defaultSteps: StepItem[] = [
     { step_no: 1, title: 'Upload Child\u2019s Photo', body: 'Pick a clear, front-facing photo showing their face. A bright, well-lit picture works best.' },
@@ -100,9 +121,12 @@ function defaultPdp(product: Product): Omit<PdpData, 'product'> {
 
 export function productDetailPage(d: PdpData, pathPrefix: string) {
   const p = d.product
+  const fmt = d.fmt
   const fallback = defaultPdp(p)
   const isBook = p.category === 'book'
   const isSticker = p.category === 'sticker'
+  const languages = d.languages.length ? d.languages : FALLBACK_LANGUAGES
+  const path = d.path || `${pathPrefix}/${p.slug}`
   // First-class server-owned variants (D-08). When the caller supplies the
   // product's variants we render exactly those, at THEIR prices; otherwise we
   // fall back to the product's own single price so the page can never show a
@@ -115,7 +139,7 @@ export function productDetailPage(d: PdpData, pathPrefix: string) {
             id: 0,
             code: isBook ? 'hardcover' : 'standard',
             label: isBook ? 'Hardcover' : 'Standard',
-            priceMinor: Math.round(p.price * 100),
+            priceMinor: typeof p.priceMinor === 'number' ? p.priceMinor : Math.round(p.price * 100),
             price: p.price,
             compareAtPriceMinor: null,
             compareAtPrice: p.compareAt ?? null,
@@ -127,7 +151,7 @@ export function productDetailPage(d: PdpData, pathPrefix: string) {
   const defaultVariant = variants.find((v) => v.isDefault) || variants[0]
   const coverOptions = variants.map((v) => v.code)
   const coverLabels: Record<string, string> = Object.fromEntries(variants.map((v) => [v.code, v.label]))
-  const coverPrices: Record<string, number> = Object.fromEntries(variants.map((v) => [v.code, v.price]))
+  const coverPricesMinor: Record<string, number> = Object.fromEntries(variants.map((v) => [v.code, v.priceMinor]))
   // THE server-owned personalization contract for this product — the same
   // module values the schema endpoint returns and the API validates against
   // (D-01/D-02/D-03). Rendered into the HTML attributes below AND published
@@ -170,10 +194,18 @@ export function productDetailPage(d: PdpData, pathPrefix: string) {
   const faqs       = d.faqs.length ? d.faqs : fallback.faqs
   const related    = d.related.length ? d.related : fallback.related
 
-  const sale = p.compareAt ? `-${Math.round((1 - p.price / p.compareAt) * 100)}%` : ''
+  const heroMinor = defaultVariant?.priceMinor ?? 0
+  const heroCompareMinor = defaultVariant?.compareAtPriceMinor ?? null
+  const sale = heroCompareMinor && heroCompareMinor > heroMinor ? `-${Math.round((1 - heroMinor / heroCompareMinor) * 100)}%` : ''
   const salePercent = sale || page.banner_badge
 
-  return `<section class="pdp-banner">
+  return `<nav class="breadcrumb" aria-label="Breadcrumb"><ol>
+    <li><a href="/">Home</a></li>
+    <li><a href="${esc(pathPrefix)}">${isSticker ? 'Sticker packs' : 'Storybooks'}</a></li>
+    <li aria-current="page">${esc(p.title)}</li>
+  </ol></nav>
+
+  <section class="pdp-banner">
     <p><strong>${esc(page.banner_text || 'Order 2+ books and save 20% automatically')}</strong></p>
   </section>
 
@@ -196,10 +228,15 @@ export function productDetailPage(d: PdpData, pathPrefix: string) {
 
         <div class="pdp-price-row">
           <div class="pdp-price">
-            <span class="pdp-price-now">${money(p.price)}</span>
-            ${p.compareAt ? `<span class="pdp-price-was"><s>${money(p.compareAt)}</s></span><span class="pdp-save-badge">${esc(page.banner_badge || salePercent || '')}</span>` : ''}
+            <span class="pdp-price-now">${esc(fmt(heroMinor))}</span>
+            ${heroCompareMinor ? `<span class="pdp-price-was"><s>${esc(fmt(heroCompareMinor))}</s></span><span class="pdp-save-badge">${esc(page.banner_badge || salePercent || '')}</span>` : ''}
           </div>
         </div>
+        ${
+          p.availableInCurrency === false
+            ? `<p class="notice" role="status">This title is not offered in the currency you selected. Choose another country or currency to see its price.</p>`
+            : ''
+        }
         <!-- T-04: no card/PayPal marks — this version collects no real payment. -->
 
         <div class="pdp-acc">
@@ -232,7 +269,7 @@ export function productDetailPage(d: PdpData, pathPrefix: string) {
                 <div class="pdp-step-avatar">
                   <!-- S-12/S-13: no real-person photo is shipped as UI artwork;
                        this is the app's own illustration. -->
-                  <img src="/static/img/step-2.webp" alt="Upload your child's picture" class="pdp-step-img step-img-1">
+                  <img src="/static/img/art/step-2.svg" alt="Upload your child's picture" class="pdp-step-img step-img-1">
                 </div>
               </div>
               <div class="pdp-step-label">
@@ -250,7 +287,7 @@ export function productDetailPage(d: PdpData, pathPrefix: string) {
                   <i class="fas fa-check"></i>
                 </div>
                 <div class="pdp-step-avatar book-thumb">
-                  <img src="${p.slug.includes('portugal') ? '/static/img/cover-portugal.webp' : (gallery[0]?.image_url || '/static/img/step-3.webp')}" alt="Review the personalised book" class="pdp-step-img step-img-2">
+                  <img src="${gallery[0]?.image_url || '/static/img/art/step-3.svg'}" alt="Review the personalised book" class="pdp-step-img step-img-2">
                 </div>
               </div>
               <div class="pdp-step-label">
@@ -268,7 +305,7 @@ export function productDetailPage(d: PdpData, pathPrefix: string) {
                   <i class="fas fa-cart-shopping"></i>
                 </div>
                 <div class="pdp-step-avatar">
-                  <img src="/static/img/step-4.webp" alt="Saved to your cart" class="pdp-step-img step-img-3">
+                  <img src="/static/img/art/step-4.svg" alt="Saved to your cart" class="pdp-step-img step-img-3">
                 </div>
               </div>
               <div class="pdp-step-label">
@@ -295,7 +332,8 @@ export function productDetailPage(d: PdpData, pathPrefix: string) {
                   <i class="fas fa-xmark"></i>
                 </button>
               </div>
-              <input id="photo" name="photo" type="file" accept="${contract.photo.accept}" class="sr-only">
+              <input id="photo" name="photo" type="file" accept="${contract.photo.accept}" class="sr-only"
+                     aria-label="Upload your child's photo" aria-describedby="upload-status">
             </div>
 
             <p class="pdp-photo-status" id="upload-status" hidden></p>
@@ -310,7 +348,7 @@ export function productDetailPage(d: PdpData, pathPrefix: string) {
                     (v, i) => `<label class="pdp-cover-option${v.code === defaultCover ? ' active' : ''}" data-cover-type="${esc(v.code)}" data-cover-price="${v.price}">
                   <input type="radio" name="coverType" value="${esc(v.code)}" ${v.code === defaultCover ? 'checked' : ''}>
                   <span>${esc(v.label)}</span>
-                  <span class="pdp-cover-price">${money(v.price)}</span>
+                  <span class="pdp-cover-price">${esc(fmt(v.priceMinor))}</span>
                 </label>`
                   )
                   .join('')}
@@ -322,7 +360,7 @@ export function productDetailPage(d: PdpData, pathPrefix: string) {
               <label for="lang" class="pdp-field-label">Book Language</label>
               <div class="pdp-select-wrapper">
                 <select id="lang" name="language" class="pdp-input pdp-select">
-                  ${languages.map((l, i) => `<option value="${esc(LANGUAGE_CODES[i] || 'en')}" ${l === 'English' ? 'selected' : ''}>${esc(l)}</option>`).join('')}
+                  ${languages.map((l) => `<option value="${esc(l.code)}" ${l.code === 'en' ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}
                 </select>
                 <i class="fas fa-chevron-down pdp-select-arrow" aria-hidden="true"></i>
               </div>
@@ -403,7 +441,7 @@ export function productDetailPage(d: PdpData, pathPrefix: string) {
               <div><dt>Dedication</dt><dd id="preview-dedication">—</dd></div>
               <div><dt>Cover</dt><dd id="preview-cover">${esc(coverLabels[defaultCover] || defaultCover)}</dd></div>
             </dl>
-            <p class="review-note"><i class="fas fa-circle-info"></i> We securely save these details for review. Illustrated pages and a finished preview are prepared in a later step — you'll be notified once that's ready.</p>
+            <p class="review-note"><i class="fas fa-circle-info"></i> These details are saved to your own book so you can review and edit them. This version generates no illustrated pages and sends no notification — nothing is emailed from this build.</p>
           </div>
 
           <!-- Face selection — shown only when analysis finds more than one face -->
@@ -418,7 +456,7 @@ export function productDetailPage(d: PdpData, pathPrefix: string) {
       <footer class="book-modal-footer">
         <div class="book-modal-price">
           <span class="price-label">${esc(coverLabels[defaultCover] || 'Cover')}</span>
-          <span class="price-value">${money(defaultVariant?.price ?? p.price)}</span>
+          <span class="price-value">${esc(fmt(heroMinor))}</span>
         </div>
         <div class="book-modal-actions">
           <button type="button" class="btn btn-outline" id="btn-edit-personalise">Edit Details</button>
@@ -465,39 +503,15 @@ export function productDetailPage(d: PdpData, pathPrefix: string) {
     </div>
   </section>` : ''}
 
-  ${reactions.length ? `
-  <section class="pdp-reactions">
-    <div class="pdp-reactions-inner">
-      <h2>Customer Reactions</h2>
-      <div class="pdp-reactions-grid">
-        ${reactions.map(r => `
-          <article class="pdp-reaction">
-            ${r.image_url ? `<img src="${esc(r.image_url)}" alt="${esc(r.name)} reaction photo">` : `<div class="pdp-reaction-emoji">${'⭐'.repeat(Math.min(5, r.rating))}</div>`}
-            <h4>${esc(r.name)}</h4>
-            <div class="pdp-reaction-stars">${stars(r.rating)}</div>
-            <p>${esc(r.review)}</p>
-          </article>`).join('')}
-      </div>
-    </div>
-  </section>` : ''}
-  <!-- T-06: no review/reactions placeholder is rendered when there is no
-       reviewed record. An empty product page simply shows no reviews — it
-       never renders invented or placeholder social proof. -->
-
-  ${media.length ? `
-  <section class="pdp-media">
-    <div class="pdp-media-inner">
-      <h2>Media links</h2>
-      <div class="pdp-media-grid">
-        ${media.map(m => `<a class="pdp-media-item" href="${esc(m.href || '#')}" target="_blank" rel="noopener">${m.image_url ? `<img src="${esc(m.image_url)}" alt="${esc(m.name)}">` : `<span class="pdp-media-name">${esc(m.name)}</span>`}</a>`).join('')}
-      </div>
-    </div>
-  </section>` : ''}
+  <!-- V2 Phase 2: the fabricated customer-reaction block and the press-logo
+       block are GONE. Genuine customer feedback lives in the moderation-backed
+       section rendered below; there is no fallback testimonial and no invented
+       press coverage anywhere. -->
 
   <section class="pdp-related">
     <div class="pdp-related-inner">
       <h2>You may also like</h2>
-      ${related.length ? `
+      ${(d.relatedProducts.length ? d.relatedProducts : related).length ? `
         <div class="pdp-related-grid">
           ${related.map(r => {
             const href = r.slug.includes('sticker') ? `/stickers/${r.slug}` : `/books/${r.slug}`
@@ -506,11 +520,19 @@ export function productDetailPage(d: PdpData, pathPrefix: string) {
               ${sBadge}
               <div class="pdp-related-cover"><img src="${esc(r.image)}" alt="${esc(r.title)}"></div>
               <h4>${esc(r.title)}</h4>
-              <p class="pdp-related-price">From ${money(r.price)}${r.compareAt ? ` <s class="pdp-related-was">${money(r.compareAt)}</s>` : ''}</p>
+              <p class="pdp-related-price">From ${esc(fmt(Number(r.priceMinor ?? Math.round(r.price * 100))))}${r.compareAtMinor ? ` <s class="pdp-related-was">${esc(fmt(r.compareAtMinor))}</s>` : ''}</p>
             </a>`
           }).join('')}
         </div>` : `<p class="pdp-related-empty">No related products yet — admins can pick any 3 from the editor.</p>`}
     </div>
+  </section>
+
+  <section class="pdp-facts-section">
+    <div class="wrap">${factsList(d.facts)}</div>
+  </section>
+
+  <section class="section pdp-reviews-section">
+    <div class="wrap">${reviewsSection({ summary: d.reviewSummary, reviews: d.reviews, productSlug: p.slug, submitAction: `/api/v1/products/${p.slug}/reviews`, notice: d.reviewNotice })}</div>
   </section>
 
   <section class="pdp-faqs">
@@ -521,6 +543,12 @@ export function productDetailPage(d: PdpData, pathPrefix: string) {
       </div>
     </div>
   </section>
+
+  ${stickyMobileCta({ label: isSticker ? 'Personalise this pack' : 'Personalise this book', href: '#personalise', price: esc(fmt(heroMinor)) })}
+
+  <!-- The PDP interactions (photo upload, cover/format selection, the review
+       modal, add-to-cart) live in their own module, loaded only on this page. -->
+  <script type="module" src="/static/pdp.js"></script>
   `
 }
 

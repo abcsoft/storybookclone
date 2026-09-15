@@ -14,9 +14,41 @@ export type MagicBlock      = { heading: string; left_image: string; left_captio
 export type TrustItem       = { id: number; title: string; body: string; icon: string; sort_order: number }
 export type ReactionItem    = { id: number; name: string; rating: number; review: string; image_url: string; sort_order: number; active: number }
 export type MediaItem       = { id: number; name: string; image_url: string; href: string; sort_order: number }
-export type RelatedItem     = { id: number; slug: string; title: string; image: string; price: number; compareAt?: number; sort_order: number }
+export type RelatedItem     = { id: number; slug: string; title: string; image: string; price: number; compareAt?: number; sort_order: number; /** Integer minor-unit price in the viewer's currency (V2 Phase 2). */ priceMinor?: number; compareAtMinor?: number }
 export type FaqItem         = { id: number; question: string; answer: string; sort_order: number; active: number }
 export type PdpPageRow      = { banner_text: string; banner_code: string; banner_badge: string; preorder_note: string }
+
+/**
+ * The factual specification shown in the PDP "Product facts" table (V2 Phase
+ * 2, SF-09). Every field comes from the product's `product_facts` row; nothing
+ * is derived or invented. `productionEstimateDays` is only populated once a
+ * real print pipeline exists, and the renderer omits the row while it is null.
+ */
+export type PdpFacts = {
+  pageCount: number | null
+  trimSize: string
+  binding: string
+  formatLabel: string
+  productionNote: string
+  productionEstimateDays: number | null
+}
+
+/** Loads the factual spec for a product, or null when no row exists. One query. */
+export async function loadProductFacts(db: D1Database, productId: number): Promise<PdpFacts | null> {
+  const r = await db
+    .prepare('SELECT page_count, trim_size, binding, format_label, production_note, production_estimate_days FROM product_facts WHERE product_id = ?')
+    .bind(productId)
+    .first<Record<string, unknown>>()
+  if (!r) return null
+  return {
+    pageCount: r.page_count == null ? null : Number(r.page_count),
+    trimSize: String(r.trim_size || ''),
+    binding: String(r.binding || ''),
+    formatLabel: String(r.format_label || ''),
+    productionNote: String(r.production_note || ''),
+    productionEstimateDays: r.production_estimate_days == null ? null : Number(r.production_estimate_days)
+  }
+}
 
 // ---------- loader (one round-trip per topic) ----------
 export async function loadPdp(db: D1Database, product: Product) {

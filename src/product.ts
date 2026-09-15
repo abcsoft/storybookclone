@@ -31,4 +31,17 @@ export type Product = {
   newRelease?: boolean
   career?: boolean
   traits: string[]
+  // ---- multi-currency pricing (V2 Phase 2, SF-03 / PLT-07) ----
+  // `price` / `compareAt` above are DERIVED display values. The integer minor
+  // amount for the SELECTED currency is authoritative; these fields carry it so
+  // no consumer has to re-derive it from a float.
+  priceMinor?: number
+  compareAtMinor?: number
+  currency?: string
+  /**
+   * False when the product has no price row for the selected currency. The
+   * catalog/PDP then present it as unavailable instead of showing a price
+   * converted on the fly (there is no live exchange rate in this build).
+   */
+  availableInCurrency?: boolean
 }

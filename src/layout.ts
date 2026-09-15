@@ -1,160 +1,289 @@
-import { brand } from './brand'
+// Page shell (V2 Phase 2).
+//
+// Everything a visitor sees around the page content comes from here, and every
+// piece of it comes from data:
+//   * the identity strings      -> src/brand.ts (env + CMS `site_settings`);
+//   * the announcement banner   -> `announcements` (time-windowed);
+//   * the navigation + footer   -> `cms_nav_items` + `cms_footer_notes`;
+//   * country/currency/language -> `countries` / `currency_settings` /
+//                                  `languages`, resolved server-side;
+//   * SEO head                  -> src/seo.ts, factual values only.
+//
+// ORIGINAL DESIGN SYSTEM: no third-party stylesheet, font or icon font is
+// loaded. The icon glyphs are the project's own SVGs (scripts/generate-icons.mjs)
+// masked onto `currentColor`, and the typography is a system font stack, so a
+// page view makes ZERO cross-origin requests.
 
-export function page(opts: {
-  title: string
-  description?: string
-  active?: string
-  body: string
-  /** True when a session user is rendering this page (shows the POST logout control). */
-  loggedIn?: boolean
-}) {
-  const b = brand()
-  const desc = opts.description || b.description
-  // L-D: the site name is appended HERE, once, from the brand boundary — route
-  // titles never embed a brand literal (a caller that already included it is
-  // not suffixed twice).
-  const title = opts.title.includes(b.name) ? opts.title : `${opts.title} · ${b.name}`
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>${esc(title)}</title>
-  <meta name="description" content="${esc(desc)}">
-  <link rel="icon" href="${b.logoPath}" type="image/png">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700;800;900&family=Just+Me+Again+Down+Here&family=Kalam:wght@400;700&display=swap" rel="stylesheet">
-  <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.5.2/css/all.min.css" rel="stylesheet">
-  <link href="/static/style.css" rel="stylesheet">
-  <link href="/static/pdp.css" rel="stylesheet">
-  <link rel="preload" href="/static/pdp.js" as="script">
-</head>
-<body>
-  <a class="skip-link" href="#main">Skip to content</a>
-  <div class="promo-banner" id="promo-banner">
-    <p>Save 20% on 2+ books using code <span class="promo-code">EXTRA20</span></p>
-  </div>
-  <header class="site-header" id="site-header">
-    <div class="nav-inner">
-      <button class="icon-btn hamburger" id="menu-toggle" aria-label="Open menu" aria-expanded="false">
-        <i class="fas fa-bars"></i>
-      </button>
-      <a class="brand" href="/" aria-label="${esc(b.name)} home">
-        <img src="${b.logoPath}" alt="" width="40" height="40">
-        <span>${esc(b.name)}</span>
-      </a>
-      <nav class="desktop-nav" aria-label="Primary">
-        <a href="/" class="${opts.active === 'home' ? 'active' : ''}">Home</a>
-        <a href="/books" class="${opts.active === 'books' ? 'active' : ''}">Books</a>
-        <a href="/stickers" class="${opts.active === 'stickers' ? 'active' : ''}">Stickers</a>
-        <a href="/my-books" class="${opts.active === 'my-books' ? 'active' : ''}">My Books</a>
-        <a href="/support" class="${opts.active === 'support' ? 'active' : ''}">Support</a>
-      </nav>
-      <div class="nav-actions">
-        <button class="icon-btn" id="search-toggle" aria-label="Search">
-          <i class="fas fa-search"></i>
-        </button>
-        <div class="currency" title="Currency">
-          <span class="flag" aria-hidden="true">🇺🇸</span>
-          <span>USD</span>
-        </div>
-        <a class="icon-btn" href="/cart" aria-label="Cart">
-          <i class="fas fa-bag-shopping"></i>
-          <span class="cart-badge" id="cart-badge" hidden>0</span>
-        </a>
-        <a class="icon-btn" href="/login" aria-label="Account" id="account-link"${opts.loggedIn ? ' hidden' : ''}>
-          <i class="far fa-user"></i>
-        </a>
-        ${/* S-03: logging out is a real POST mutation (GET /logout is a plain
-             redirect), so the signed-in control posts a form — the CSRF token
-             is injected into it by the server-rendered form middleware. */ ''}
-        ${
-          opts.loggedIn
-            ? `<a class="icon-btn" href="/my-books" aria-label="My Books"><i class="fas fa-book-open"></i></a>
-        <form class="logout-form" method="post" action="/logout">
-          <button type="submit" class="icon-btn" id="logout-btn" aria-label="Log out" title="Log out">
-            <i class="fas fa-right-from-bracket"></i>
-          </button>
-        </form>`
-            : ''
-        }
-      </div>
-    </div>
-    <form class="search-bar" id="search-bar" action="/books" method="get" hidden>
-      <label class="sr-only" for="q">Search books</label>
-      <input id="q" name="q" type="search" placeholder="Search stories, stickers, careers…">
-      <button type="submit">Search</button>
-    </form>
-  </header>
-  <div class="mobile-drawer" id="mobile-drawer" hidden>
-    <nav>
-      <a href="/">Home</a>
-      <a href="/books">Books</a>
-      <a href="/stickers">Stickers</a>
-      <a href="/my-books">My Books</a>
-      <a href="/support">Support</a>
-      <a href="/faqs">FAQs</a>
-      <a href="/blog">Blog</a>
-      <a href="/contact">Contact</a>
-      <a href="/login">Login</a>
-    </nav>
-  </div>
-  <main id="main">${opts.body}</main>
-  <footer class="site-footer">
-    <div class="footer-grid">
-      <section>
-        <h2>About ${esc(b.name)}</h2>
-        <ul>
-          <li><a href="/contact">Contact us</a></li>
-          <li><a href="/faqs">FAQs</a></li>
-          <li><a href="/blog">Blog</a></li>
-          <li><a href="/support">Support</a></li>
-        </ul>
-      </section>
-      <section>
-        <h2>Customer Area</h2>
-        <ul>
-          <li><a href="/login">My Account</a></li>
-          <li><a href="/my-books">Orders</a></li>
-          <li><a href="/support/terms-and-conditions">Terms</a></li>
-          <li><a href="/support/privacy-policy">Privacy Policy</a></li>
-        </ul>
-      </section>
-      <section class="footer-subscribe">
-        <h2>Subscribe to Our Newsletter</h2>
-        <p>Don’t miss out on the newest books.</p>
-        <form id="newsletter-form" class="newsletter">
-          <label class="sr-only" for="nl-email">Email</label>
-          <input id="nl-email" name="email" type="email" required placeholder="Your email">
-          <button type="submit">Subscribe</button>
-        </form>
-        <p class="nl-msg" id="nl-msg" hidden></p>
-      </section>
-    </div>
-    <div class="footer-bottom">
-      <!-- T-04: no card/PayPal/Apple-Pay marks. This version collects no real
-           payment (checkout states that on the page), so no payment brands are
-           advertised anywhere in the storefront. -->
-      <p>Test storefront — no real payments, printing or shipping in this version.</p>
-      <p>${esc(b.name)} © ${b.copyrightYear} All rights reserved</p>
-    </div>
-  </footer>
-  <script type="module" src="/static/app.js"></script>
-  <script type="module" src="/static/pdp.js"></script>
-</body>
-</html>`
-}
+import { brand, type BrandConfig } from './brand'
+import type { StoreShell } from './cms'
+import type { StoreContext } from './locale'
 
-export function esc(s: string) {
-  return s
+export function esc(s: unknown) {
+  return String(s ?? '')
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
 }
 
-export function stars(n: number) {
-  const full = Math.round(n)
-  return `<span class="stars" aria-label="${n} out of 5">${'★'.repeat(full)}${'☆'.repeat(5 - full)}</span>`
+/** Attribute-safe escaping (same as esc; kept separate so the intent is explicit). */
+export function attr(s: unknown) {
+  return esc(s)
+}
+
+/**
+ * Accessible star rendering. The stars are decorative; the meaning is carried
+ * by a text label as well, so nothing depends on colour or glyph shape alone.
+ */
+export function stars(n: number, opts: { label?: string } = {}) {
+  const value = Math.max(0, Math.min(5, Number(n) || 0))
+  const full = Math.round(value)
+  const text = opts.label || `${value} out of 5`
+  return `<span class="stars"><span class="stars-glyphs" aria-hidden="true">${'★'.repeat(full)}${'☆'.repeat(5 - full)}</span><span class="sr-only">${esc(text)}</span></span>`
+}
+
+export type JsonLd = object
+
+export type PageMeta = {
+  description?: string
+  canonical?: string
+  robots?: string
+  ogImage?: string
+  ogImageAlt?: string
+  ogType?: 'website' | 'article' | 'product'
+  alternates?: Array<{ hreflang: string; href: string }>
+  jsonLd?: JsonLd[]
+}
+
+export type PageOptions = {
+  title: string
+  body: string
+  description?: string
+  active?: string
+  loggedIn?: boolean
+  cartCount?: number
+  shell?: StoreShell
+  store?: StoreContext
+  meta?: PageMeta
+  /** Current request path, so the locale form can return the visitor here. */
+  path?: string
+  /** True when this is the 404 page. */
+  notFound?: boolean
+}
+
+function jsonLdScript(nodes: JsonLd[] | undefined): string {
+  if (!nodes || !nodes.length) return ''
+  // JSON.stringify already escapes `"` and `\`; `<` is escaped as well so the
+  // payload can never terminate the script element early.
+  const payload = JSON.stringify(nodes.length === 1 ? nodes[0] : nodes).replace(/</g, '\\u003c')
+  return `<script type="application/ld+json">${payload}</script>`
+}
+
+function icon(name: string): string {
+  return `<i class="fa-${esc(name)}" aria-hidden="true"></i>`
+}
+
+function announcementBar(shell: StoreShell | undefined): string {
+  const a = shell?.announcements?.[0]
+  if (!a) return ''
+  const link = a.href ? ` <a class="promo-link" href="${esc(a.href)}">See the offer</a>` : ''
+  const code = a.code ? ` <span class="promo-code">${esc(a.code)}</span>` : ''
+  return `
+  <div class="promo-banner" id="promo-banner" role="region" aria-label="Site announcement">
+    <p>${esc(a.message)}${code}${link}</p>
+  </div>`
+}
+
+function navLink(item: { label: string; href: string }, active: string | undefined): string {
+  const isActive = !!active && (item.href === active || (item.href !== '/' && String(active).startsWith(item.href)))
+  return `<a href="${esc(item.href)}"${isActive ? ' class="active" aria-current="page"' : ''}>${esc(item.label)}</a>`
+}
+
+function desktopNav(shell: StoreShell | undefined, active: string | undefined): string {
+  const items = shell?.primaryNav?.length
+    ? shell.primaryNav
+    : [
+        { label: 'Storybooks', href: '/books' },
+        { label: 'Stickers', href: '/stickers' },
+        { label: 'Support', href: '/support' }
+      ]
+  return `<nav class="desktop-nav" aria-label="Primary">${items.map((i) => navLink(i, active)).join('')}</nav>`
+}
+
+function mobileDrawer(shell: StoreShell | undefined, store: StoreContext | undefined, path: string): string {
+  const items = shell?.mobileNav?.length ? shell.mobileNav : shell?.primaryNav || []
+  return `
+  <div class="mobile-drawer" id="mobile-drawer" hidden>
+    <nav aria-label="Mobile">
+      ${items.map((i) => `<a href="${esc(i.href)}">${esc(i.label)}</a>`).join('')}
+      <a href="/login">Login</a>
+    </nav>
+    ${store && store.countries.length ? `<div class="drawer-locale">${localeSelector(store, path)}</div>` : ''}
+  </div>`
+}
+
+function localeSelector(store: StoreContext | undefined, path: string): string {
+  if (!store || !store.countries.length) return ''
+  const options = store.countries
+    .map((c) => `<option value="${esc(c.code)}"${c.code === store.country ? ' selected' : ''}>${esc(c.name)} — ${esc(c.currency)}</option>`)
+    .join('')
+  return `
+  <form class="locale-form" method="post" action="/locale" aria-label="Country and currency">
+    <input type="hidden" name="next" value="${esc(path)}">
+    <label class="sr-only" for="country-select">Country and currency</label>
+    <span class="locale-flag" aria-hidden="true">${icon('globe')}</span>
+    <select id="country-select" name="country">${options}</select>
+    <button type="submit" class="locale-submit">Update</button>
+  </form>`
+}
+
+function searchOverlay(): string {
+  return `
+  <div class="search-overlay" id="search-overlay" role="dialog" aria-modal="true" aria-labelledby="search-overlay-title" hidden>
+    <div class="search-panel">
+      <h2 id="search-overlay-title" class="sr-only">Search the catalogue</h2>
+      <form class="search-form" id="search-form" action="/books" method="get" role="search">
+        <label class="sr-only" for="search-input">Search storybooks and sticker packs</label>
+        <input id="search-input" name="q" type="search" autocomplete="off" placeholder="Search titles, themes, ages…"
+               aria-describedby="search-hint" aria-controls="search-suggestions" aria-expanded="false" role="combobox" aria-autocomplete="list">
+        <button type="submit" class="btn btn-primary">Search</button>
+      </form>
+      <p class="tiny" id="search-hint">Suggestions come from the live catalogue.</p>
+      <ul class="search-suggestions" id="search-suggestions" role="listbox" aria-label="Search suggestions" hidden></ul>
+      <button type="button" class="icon-btn search-close" id="search-close" aria-label="Close search">${icon('xmark')}</button>
+    </div>
+  </div>`
+}
+
+function footer(shell: StoreShell | undefined, b: BrandConfig): string {
+  const columns = shell?.footerColumns?.length
+    ? shell.footerColumns
+    : [
+        {
+          key: 'legal',
+          title: 'Legal',
+          items: [
+            { label: 'Privacy policy', href: '/support/privacy-policy' },
+            { label: 'Terms & conditions', href: '/support/terms-and-conditions' }
+          ]
+        }
+      ]
+  const notes = shell?.footerNotes?.length ? shell.footerNotes : []
+  const social = Object.entries(b.social).filter(([, v]) => !!v)
+  return `
+  <footer class="site-footer">
+    <div class="footer-grid">
+      <section class="footer-brand">
+        <h2>About ${esc(b.name)}</h2>
+        <p>${esc(b.tagline)}</p>
+        ${
+          social.length
+            ? `<ul class="footer-social">${social.map(([k, v]) => `<li><a href="${esc(v)}" rel="noopener noreferrer">${esc(k)}</a></li>`).join('')}</ul>`
+            : ''
+        }
+      </section>
+      ${columns
+        .map(
+          (col) => `
+      <section>
+        <h2>${esc(col.title)}</h2>
+        <ul>${col.items.map((i) => `<li><a href="${esc(i.href)}">${esc(i.label)}</a></li>`).join('')}</ul>
+      </section>`
+        )
+        .join('')}
+      <section class="footer-subscribe">
+        <h2>Newsletter</h2>
+        <p>An email when a new title is added. Nothing else.</p>
+        <form id="newsletter-form" class="newsletter" method="post" action="/api/newsletter">
+          <label class="sr-only" for="nl-email">Email address</label>
+          <input id="nl-email" name="email" type="email" required placeholder="you@example.com" autocomplete="email">
+          <button type="submit" class="btn btn-primary">Subscribe</button>
+        </form>
+        <p class="nl-msg tiny" role="status" aria-live="polite" hidden></p>
+      </section>
+    </div>
+    <div class="footer-bottom">
+      ${notes.map((n) => `<p>${esc(n)}</p>`).join('')}
+      <p class="footer-copy">${esc(b.name)} © ${esc(String(b.copyrightYear))} All rights reserved</p>
+      <p class="footer-contact">Contact: <a href="mailto:${esc(b.contactEmail)}">${esc(b.contactEmail)}</a></p>
+    </div>
+  </footer>`
+}
+
+export function page(opts: PageOptions): string {
+  const b = brand()
+  const store = opts.store
+  const shell = opts.shell
+  const path = opts.path || '/'
+  const desc = opts.meta?.description || opts.description || b.description
+  const title = opts.title.includes(b.name) ? opts.title : `${opts.title} · ${b.name}`
+  const canonical = opts.meta?.canonical || ''
+  const cartCount = Math.max(0, Number(opts.cartCount) || 0)
+  const robots = opts.meta?.robots || 'index,follow'
+  const ogImage = opts.meta?.ogImage || '/static/img/art/og-default.svg'
+
+  return `<!DOCTYPE html>
+<html lang="${esc(store?.htmlLang || 'en')}"${store?.dir === 'rtl' ? ' dir="rtl"' : ''}>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>${esc(title)}</title>
+  <meta name="description" content="${esc(desc)}">
+  ${canonical ? `<link rel="canonical" href="${esc(canonical)}">` : ''}
+  <meta name="robots" content="${esc(robots)}">
+  ${(opts.meta?.alternates || []).map((a) => `<link rel="alternate" hreflang="${esc(a.hreflang)}" href="${esc(a.href)}">`).join('\n  ')}
+  <meta property="og:site_name" content="${esc(b.name)}">
+  <meta property="og:type" content="${esc(opts.meta?.ogType || 'website')}">
+  <meta property="og:title" content="${esc(title)}">
+  <meta property="og:description" content="${esc(desc)}">
+  ${canonical ? `<meta property="og:url" content="${esc(canonical)}">` : ''}
+  <meta property="og:image" content="${esc(ogImage)}">
+  <meta property="og:image:alt" content="${esc(opts.meta?.ogImageAlt || 'Illustrated storefront artwork')}">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link href="/static/style.css" rel="stylesheet">
+  <link href="/static/storefront.css" rel="stylesheet">
+  <link href="/static/icons.css" rel="stylesheet">
+  ${jsonLdScript(opts.meta?.jsonLd)}
+</head>
+<body data-currency="${esc(store?.currency || 'USD')}" data-currency-symbol="${esc(store?.currencySettings.symbol || '$')}" data-country="${esc(store?.country || 'US')}">
+  <a class="skip-link" href="#main">Skip to content</a>
+  ${announcementBar(shell)}
+  <header class="site-header" id="site-header">
+    <div class="nav-inner">
+      <button class="icon-btn hamburger" id="menu-toggle" aria-label="Open menu" aria-expanded="false" aria-controls="mobile-drawer">
+        ${icon('bars')}
+      </button>
+      <a class="brand" href="/" aria-label="${esc(b.name)} home">
+        <img src="${esc(b.logoPath)}" alt="" width="40" height="40">
+        <span>${esc(b.name)}</span>
+      </a>
+      ${desktopNav(shell, opts.active)}
+      <div class="nav-actions">
+        <button class="icon-btn" id="search-toggle" aria-label="Search" aria-expanded="false" aria-controls="search-overlay">
+          ${icon('search')}
+        </button>
+        ${localeSelector(store, path)}
+        <a class="icon-btn cart-control" href="/cart" id="cart-link" aria-label="${cartCount === 1 ? 'Cart, 1 item' : `Cart, ${cartCount} items`}">
+          ${icon('bag-shopping')}
+          <span class="cart-badge" id="cart-badge" aria-hidden="true"${cartCount === 0 ? ' hidden' : ''}>${cartCount > 0 ? esc(String(cartCount)) : ''}</span>
+        </a>
+        ${
+          opts.loggedIn
+            ? `<a class="icon-btn my-books-link" href="/my-books" aria-label="My Books">${icon('book-open')}</a>
+        <form class="logout-form" method="post" action="/logout">
+          <button type="submit" class="icon-btn" id="logout-btn" aria-label="Log out" title="Log out">${icon('right-from-bracket')}</button>
+        </form>`
+            : `<a class="icon-btn" href="/login" aria-label="Account" id="account-link">${icon('user')}</a>`
+        }
+      </div>
+    </div>
+  </header>
+  ${mobileDrawer(shell, store, path)}
+  ${searchOverlay()}
+  <main id="main"${opts.active ? ` data-active="${esc(opts.active)}"` : ''}>${opts.body}</main>
+  ${footer(shell, b)}
+  <script type="module" src="/static/app.js"></script>
+</body>
+</html>`
 }

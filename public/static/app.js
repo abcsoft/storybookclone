@@ -1,6 +1,8 @@
 // --- app.js (Storefront & Cart interactive logic) — ES module ---
 import { readCart, writeCart, addItem, removeItem, setQty, cartCount } from './cart.js'
 import { quote as fetchQuote, subscribeNewsletter } from './api.js'
+import { money as formatMoney } from './format.js'
+import { initMobileNav, initSearch, initLocaleForm } from './shell.js'
 
 function updateCartBadge() {
   const badge = document.getElementById('cart-badge')
@@ -10,6 +12,10 @@ function updateCartBadge() {
     badge.textContent = count > 0 ? String(count) : ''
     badge.hidden = count === 0
   }
+  // Keep the accessible label in step with the visible badge, so a screen
+  // reader hears the real count rather than a stale one.
+  const cartLink = document.getElementById('cart-link')
+  if (cartLink) cartLink.setAttribute('aria-label', count === 1 ? 'Cart, 1 item' : `Cart, ${count} items`)
   if (countEl) {
     countEl.textContent = String(count)
   }
@@ -23,37 +29,17 @@ function escH(s) {
     .replace(/"/g, '&quot;')
 }
 
-function money(n) {
-  return '$' + (Number(n) || 0).toFixed(2)
+// Amounts come from the server quote in integer minor units for the SELECTED
+// currency; the old hard-coded "$" is gone.
+function money(minor) {
+  return formatMoney(minor)
 }
 
-// Mobile Menu Toggle
-const menuBtn = document.getElementById('menu-toggle')
-const mobileNav = document.getElementById('mobile-drawer') // was '#mobile-nav' — no such id exists, so the hamburger button did nothing at all
-menuBtn?.addEventListener('click', () => {
-  const open = mobileNav?.hasAttribute('hidden')
-  if (open) {
-    mobileNav.removeAttribute('hidden')
-    menuBtn.setAttribute('aria-expanded', 'true')
-  } else {
-    mobileNav?.setAttribute('hidden', '')
-    menuBtn?.setAttribute('aria-expanded', 'false')
-  }
-})
-
-// Search toggle — the icon button existed with no listener at all (another
-// dead interaction found during the frontend audit).
-const searchToggle = document.getElementById('search-toggle')
-const searchBar = document.getElementById('search-bar')
-searchToggle?.addEventListener('click', () => {
-  const isHidden = searchBar?.hasAttribute('hidden')
-  if (isHidden) {
-    searchBar.removeAttribute('hidden')
-    searchBar.querySelector('input')?.focus()
-  } else {
-    searchBar?.setAttribute('hidden', '')
-  }
-})
+// Shell interactions (mobile drawer, search overlay, country selector) live in
+// their own module so the accessible behaviour is reviewable in one place.
+initMobileNav()
+initSearch()
+initLocaleForm()
 
 // Newsletter
 const nl = document.getElementById('newsletter-form')
@@ -105,9 +91,11 @@ async function renderCart() {
   // Fetch verified quote — server-authoritative, never trust local prices.
   const quoteResult = await fetchQuote(cart)
   const q = quoteResult.ok ? quoteResult.data : null
-  const subtotal = q?.subtotal ?? null
-  const discount = q?.discount ?? 0
-  const orderTotal = q?.total ?? null
+  // Server-authoritative minor units; the decimal twins are only a fallback
+  // for an older response shape.
+  const subtotal = q ? (q.subtotalMinor ?? Math.round((q.subtotal || 0) * 100)) : null
+  const discount = q ? (q.discountMinor ?? Math.round((q.discount || 0) * 100)) : 0
+  const orderTotal = q ? (q.totalMinor ?? Math.round((q.total || 0) * 100)) : null
 
   // Generate Left Column HTML (Items + Cross-Sell Recommendation Bubble)
   const itemsHtml = cart.map(i => {
@@ -122,7 +110,7 @@ async function renderCart() {
     return `
       <div class="cart-item-card" data-id="${escH(i.id)}">
         <div class="cart-item-thumb">
-          <img src="${escH(i.image || (isSticker ? '/static/img/stickers-girl.webp' : '/static/img/cover-princess.webp'))}" alt="${escH(i.title)}">
+          <img src="${escH(i.image || (isSticker ? '/static/img/art/cover-star-sticker-sheet.svg' : '/static/img/art/cover-the-lantern-and-the-long-night.svg'))}" alt="${escH(i.title)}">
         </div>
         <div class="cart-item-info">
           <h3 class="cart-item-name">${escH(i.title)}</h3>
@@ -157,7 +145,7 @@ async function renderCart() {
         <div class="cart-cross-sell-bubble" id="btn-add-cross-sell-sticker">
           <span class="cart-bubble-dot"></span>
           <div class="cart-cross-sell-avatar">
-            <img src="/static/img/cart-sticker-avatar.webp" alt="Matching Stickers" onerror="this.src='/static/img/stickers-boy.webp'">
+            <img src="/static/img/art/cover-meadow-sticker-sheet.svg" alt="Matching Stickers" onerror="this.src='/static/img/art/cover-space-sticker-sheet.svg'">
           </div>
           <div class="cart-cross-sell-text">
             <span class="cross-sell-title">Add matching stickers<br>for extra fun.</span>
@@ -279,7 +267,7 @@ async function renderCart() {
         slug: 'girls-sticker-pack',
         title: `${primaryItem.childName || 'Matching'} Sticker Pack`,
         kind: 'sticker',
-        image: '/static/img/stickers-girl.webp',
+        image: '/static/img/art/cover-star-sticker-sheet.svg',
         userBookId: primaryItem.userBookId,
         childName: primaryItem.childName,
         childAge: primaryItem.childAge,

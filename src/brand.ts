@@ -61,7 +61,7 @@ export const DEFAULT_BRAND: BrandConfig = {
   legalName: 'Storybook Studio',
   contactEmail: 'support@storybook-studio.example',
   social: {},
-  logoPath: '/static/img/logo.png',
+  logoPath: '/static/img/art/logo.svg',
   copyrightYear: 2026
 }
 
@@ -115,9 +115,54 @@ export function resolveBrand(env: BrandEnv | undefined): BrandConfig {
 // per-REQUEST data in module state; this is the opposite case).
 let active: BrandConfig = DEFAULT_BRAND
 
+/**
+ * The `site_settings` keys the CMS writes (migration 0021). A setting is only
+ * applied when it is NON-BLANK, so clearing a field in admin falls back to the
+ * environment value rather than rendering an empty brand string.
+ */
+export const BRAND_SETTING_KEYS: Record<string, keyof BrandConfig> = {
+  'brand.name': 'name',
+  'brand.tagline': 'tagline',
+  'brand.description': 'description',
+  'brand.legal_name': 'legalName',
+  'brand.contact_email': 'contactEmail',
+  'brand.logo_path': 'logoPath'
+}
+
+const SOCIAL_SETTING_KEYS: Record<string, keyof BrandSocial> = {
+  'brand.instagram': 'instagram',
+  'brand.facebook': 'facebook',
+  'brand.tiktok': 'tiktok',
+  'brand.youtube': 'youtube',
+  'brand.x': 'x'
+}
+
+/**
+ * Overlays the CMS `site_settings` rows on top of the environment-resolved
+ * brand. This is the SECOND (and last) input to the identity boundary: the
+ * templates still read `brand()` and nothing else, so an operator renaming the
+ * site in admin needs no deploy and no code edit.
+ */
+export function applyBrandSettings(env: BrandEnv | undefined, settings: Record<string, string> | undefined): BrandConfig {
+  const base = resolveBrand(env)
+  if (!settings) return base
+  const next: BrandConfig = { ...base, social: { ...base.social } }
+  for (const [key, field] of Object.entries(BRAND_SETTING_KEYS)) {
+    const value = String(settings[key] ?? '').trim()
+    if (value) (next as Record<string, unknown>)[field] = value
+  }
+  for (const [key, field] of Object.entries(SOCIAL_SETTING_KEYS)) {
+    const value = String(settings[key] ?? '').trim()
+    if (value) next.social[field] = value
+  }
+  const year = Number(String(settings['brand.copyright_year'] ?? '').trim())
+  if (Number.isFinite(year) && year > 2000) next.copyrightYear = Math.floor(year)
+  return next
+}
+
 /** Applies the deployment's brand configuration. Called once per request by the app middleware. */
-export function configureBrand(env: BrandEnv | undefined): BrandConfig {
-  active = resolveBrand(env)
+export function configureBrand(env: BrandEnv | undefined, settings?: Record<string, string>): BrandConfig {
+  active = applyBrandSettings(env, settings)
   return active
 }
 

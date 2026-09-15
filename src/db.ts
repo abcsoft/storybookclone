@@ -257,12 +257,50 @@ export type QuotePriceMeta = {
 // Server-side pricing: recompute totals from the products/variants tables in
 // INTEGER minor units, never trust the client (D-08/D-09). Pure function —
 // all per-quote state is local, so concurrent quotes can never interleave.
-export async function quoteCart(db: D1Database, lines: CartLine[], code?: string) {
+export async function quoteCart(db: D1Database, lines: CartLine[], code?: string, currency?: string) {
   const slugs = [...new Set(lines.map((l) => String(l.slug)))]
   const productVariants = new Map<string, { product: Product; currency: string; variants: ProductVariant[] }>()
   for (const slug of slugs) {
     const pv = await getProductVariants(db, slug)
     if (pv) productVariants.set(slug, pv)
+  }
+
+  // V2 Phase 2 (SF-03 / PLT-07): when a currency is supplied — always from the
+  // SERVER's resolved store context, never from the request body — every line
+  // is priced from that currency's own price rows. A title with no row for the
+  // currency is reported as unavailable instead of being converted, because
+  // this build holds no exchange-rate feed.
+  //
+  // The lookup is ONE query for the whole cart (no per-line round trip).
+  const currencyOverride = currency ? String(currency).toUpperCase() : null
+  const overridePrices = new Map<string, { priceMinor: number; variantId: number; variantCode: string }>()
+  if (currencyOverride) {
+    const ids = [...productVariants.values()].map((pv) => pv.product.id as number).filter((id) => Number.isFinite(id))
+    if (ids.length) {
+      const placeholders = ids.map(() => '?').join(',')
+      const rows =
+        (
+          await db
+            .prepare(
+              `SELECT v.product_id, v.id AS variant_id, v.code AS variant_code,
+                      COALESCE(vp.price_minor, pp.price_minor, CASE WHEN v.currency = ? THEN v.price_minor END) AS price_minor
+                 FROM product_variants v
+                 LEFT JOIN variant_prices vp ON vp.variant_id = v.id AND vp.currency = ?
+                 LEFT JOIN product_prices pp ON pp.product_id = v.product_id AND pp.currency = ?
+                WHERE v.active = 1 AND v.product_id IN (${placeholders})`
+            )
+            .bind(currencyOverride, currencyOverride, currencyOverride, ...ids)
+            .all<{ product_id: number; variant_id: number; variant_code: string; price_minor: number | null }>()
+        ).results || []
+      for (const r of rows) {
+        if (r.price_minor == null) continue
+        overridePrices.set(`${r.product_id}:${r.variant_code}`, {
+          priceMinor: Number(r.price_minor),
+          variantId: Number(r.variant_id),
+          variantCode: String(r.variant_code)
+        })
+      }
+    }
   }
 
   const priceMap = new Map<string, QuotePriceMeta>()
@@ -288,7 +326,14 @@ export async function quoteCart(db: D1Database, lines: CartLine[], code?: string
       invalid.push(slug)
       continue
     }
-    const priceMinor = variant.priceMinor
+    const override = currencyOverride ? overridePrices.get(`${pv.product.id}:${variant.code}`) : undefined
+    if (currencyOverride && !override) {
+      // Not offered in the selected currency: an honest "unavailable" line,
+      // never a converted price.
+      invalid.push(slug)
+      continue
+    }
+    const priceMinor = override ? override.priceMinor : variant.priceMinor
     subtotalMinor += priceMinor * qty
     if (pv.product.category === 'book') {
       bookCount += qty
@@ -300,8 +345,8 @@ export async function quoteCart(db: D1Database, lines: CartLine[], code?: string
       kind: pv.product.category,
       price: minorToMajor(priceMinor),
       priceMinor,
-      currency: variant.currency || pv.currency,
-      variantId: variant.id,
+      currency: currencyOverride || variant.currency || pv.currency,
+      variantId: override ? override.variantId : variant.id,
       variantCode: variant.code
     }
     lineMeta.push(meta)
@@ -326,13 +371,13 @@ export async function quoteCart(db: D1Database, lines: CartLine[], code?: string
     }
   }
 
-  const currency = lineMeta[0]?.currency || 'USD'
+  const resolvedCurrency = currencyOverride || lineMeta[0]?.currency || 'USD'
   return {
     subtotal: minorToMajor(subtotalMinor),
     discount: minorToMajor(discountMinor),
     subtotalMinor,
     discountMinor,
-    currency,
+    currency: resolvedCurrency,
     appliedCode,
     bookCount,
     invalid,
@@ -341,13 +386,38 @@ export async function quoteCart(db: D1Database, lines: CartLine[], code?: string
   }
 }
 
+/**
+ * Shipping methods, priced per currency (V2 Phase 2). The labels deliberately
+ * state no delivery window: this build schedules no delivery, so a timeframe
+ * would be an unsupported promise.
+ */
 export const SHIPPING_METHODS: Record<string, { label: string; price: number; priceMinor: number }> = {
-  standard: { label: 'Standard (10–30 business days)', price: 12, priceMinor: 1200 },
-  express: { label: 'Express (7–20 business days)', price: 28, priceMinor: 2800 }
+  standard: { label: 'Standard — recorded only, not scheduled', price: 12, priceMinor: 1200 },
+  express: { label: 'Express — recorded only, not scheduled', price: 28, priceMinor: 2800 }
 }
 
 export function shippingFor(method: string) {
   return SHIPPING_METHODS[method] || SHIPPING_METHODS.standard
+}
+
+/**
+ * The priced shipping method for a currency, from `shipping_rates`. Falls back
+ * to the USD table so a storefront with no rate rows still quotes the same
+ * amounts the checkout page shows.
+ */
+export async function shippingForCurrency(
+  db: D1Database,
+  method: string,
+  currency: string
+): Promise<{ label: string; priceMinor: number; price: number; currency: string }> {
+  const code = String(currency || 'USD').toUpperCase()
+  const row = await db
+    .prepare('SELECT method, label, price_minor, currency FROM shipping_rates WHERE method = ? AND currency = ? AND active = 1')
+    .bind(method, code)
+    .first<{ method: string; label: string; price_minor: number; currency: string }>()
+  if (row) return { label: String(row.label), priceMinor: Number(row.price_minor), price: minorToMajor(Number(row.price_minor)), currency: String(row.currency) }
+  const fallback = shippingFor(method)
+  return { label: fallback.label, priceMinor: fallback.priceMinor, price: fallback.price, currency: 'USD' }
 }
 
 export function round2(n: number) {

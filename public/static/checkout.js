@@ -4,6 +4,7 @@
 // form submit to nowhere.
 import { readCart, clearCart } from './cart.js'
 import { quote as fetchQuote, placeOrder } from './api.js'
+import { money as formatMoney } from './format.js'
 
 const IDEMPOTENCY_STORAGE_KEY = 'ww_checkout_idempotency_key'
 
@@ -20,8 +21,8 @@ function clearIdempotencyKey() {
   sessionStorage.removeItem(IDEMPOTENCY_STORAGE_KEY)
 }
 
-function money(n) {
-  return '$' + (Number(n) || 0).toFixed(2)
+function money(minor) {
+  return formatMoney(minor)
 }
 
 async function renderSummary(cart, shippingMethod) {
@@ -36,10 +37,10 @@ async function renderSummary(cart, shippingMethod) {
   el.innerHTML = `
     <div class="checkout-summary-card">
       <h2>Order summary</h2>
-      <div class="checkout-summary-row"><span>Subtotal</span><span>${money(q.subtotal)}</span></div>
-      ${q.discount > 0 ? `<div class="checkout-summary-row"><span>Discount${q.code ? ` (${q.code})` : ''}</span><span>−${money(q.discount)}</span></div>` : ''}
-      <div class="checkout-summary-row"><span>Shipping</span><span>${money(q.shipping)}</span></div>
-      <div class="checkout-summary-row total"><span>Total</span><span>${money(q.total)}</span></div>
+      <div class="checkout-summary-row"><span>Subtotal</span><span>${formatMoney(q.subtotalMinor ?? Math.round((q.subtotal || 0) * 100))}</span></div>
+      ${q.discount > 0 ? `<div class="checkout-summary-row"><span>Discount${q.code ? ` (${q.code})` : ''}</span><span>−${formatMoney(q.discountMinor ?? Math.round((q.discount || 0) * 100))}</span></div>` : ''}
+      <div class="checkout-summary-row"><span>Shipping</span><span>${formatMoney(q.shippingMinor ?? Math.round((q.shipping || 0) * 100))}</span></div>
+      <div class="checkout-summary-row total"><span>Total</span><span>${formatMoney(q.totalMinor ?? Math.round((q.total || 0) * 100))}</span></div>
       <p class="tiny muted">Prices are calculated on our server — nothing your browser sends is trusted as-is.</p>
     </div>
   `
