@@ -12,8 +12,11 @@
 -- from these products on the first request, exactly as migrations 0020/0023 do
 -- for an existing database. test/unit/phase2-catalogue-seed.test.ts asserts
 -- that this file and src/data.ts stay in sync.
-INSERT OR IGNORE INTO discounts (code, percent, min_books, applies_to, auto_apply, active)
-VALUES ('EXTRA20', 20, 2, 'books', 1, 1);
+-- `percent_bps` is the authoritative integer rate (2000 basis points = 20%);
+-- `percent` is the legacy display mirror. Migration 0026's trigger refuses a row
+-- without a whole basis-point rate, so no pricing path can read a REAL value.
+INSERT OR IGNORE INTO discounts (code, percent, percent_bps, min_books, applies_to, scope, auto_apply, active, stackable, priority)
+VALUES ('EXTRA20', 20, 2000, 2, 'books', 'books', 1, 1, 0, 100);
 
 INSERT OR IGNORE INTO products (slug, title, tagline, description, story, price, compare_at, image, gender, category, ages, age_min, age_max, pages, reviews, rating, bestseller, new_release, career, traits_json, active, price_minor, compare_at_price_minor) VALUES
 ('the-lantern-and-the-long-night', 'The Lantern and the Long Night', 'A small light carried a long way home', 'A child sets out before dawn with one lantern and a list of neighbours to check on.', 'The night is longer than it should be, and the path home keeps folding back on itself. One lantern, one careful step at a time, and a village that is still awake when the morning finally comes.', 34.99, NULL, '/static/img/art/cover-the-lantern-and-the-long-night.svg', 'girl', 'book', '4–8', 4, 8, 32, 0, 0, 1, 0, 0, '["A quiet bravery story","32 illustrated pages","Review every page before ordering"]', 1, 3499, NULL),
