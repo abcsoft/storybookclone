@@ -80,11 +80,11 @@ Routes added: `/collections`, `/collections/:slug`, `/support/:slug` (content/le
 | Command | Exit | Result |
 |---|---|---|
 | `npm run typecheck` | 0 | 0 errors |
-| `npm run test` | 0 | **491 passed / 491** across 30 files (baseline 428/26; **+63 new tests in 4 new files**) |
+| `npm run test` | 0 | **492 passed / 492** across 30 files (baseline 428/26; **+64 new tests in 4 new files**) |
 | `npm run test:integration` | 0 | 10/10 scenarios incl. the new `[phase2 upgrade]` (67 tables; 0020-0023 over existing rows; 5 currency prices; legacy aggregates neutralised; order untouched; CMS defaults stable across a re-apply) |
 | `npm run secrets:scan` | 0 | git mode, no matches |
 | `npm run secrets:scan -- --mode=archive` | 0 | archive mode, no matches |
-| `npm run build` | 0 | `dist/_worker.js` 421.20 kB (gzip 117.15 kB) |
+| `npm run build` | 0 | `dist/_worker.js` 423.35 kB (gzip 117.64 kB) |
 | `npm run test:e2e` | 0 | 11 journey groups, incl. the new `phase2-storefront-cms` group (18 assertions) |
 | `npm run audit:frontend -- phase2-storefront-cms` | 0 | **0 findings** across 29 public + 21 admin routes at **360 / 390 / 768 / 1024 / 1440 / 1920** plus the accessibility pass |
 | `npm audit --omit=dev` | 0 | 0 vulnerabilities |

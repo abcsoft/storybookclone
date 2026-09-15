@@ -63,18 +63,18 @@ portions of PLT-06 (readiness), PLT-07, PLT-08, PLT-09, PLT-16.
 | Command | Exit | Result |
 |---|---|---|
 | `npm run typecheck` | `0` | 0 errors |
-| `npm run test` | `0` | **491 passed / 491** across 30 files (baseline 428/26; **+63 tests in 4 new files**) |
+| `npm run test` | `0` | **492 passed / 492** across 30 files (baseline 428/26; **+64 tests in 4 new files**) |
 | `npm run test:integration` | `0` | 10/10 scenarios including the new `[phase2 upgrade]` (67 expected tables; 0020-0023 applied over existing rows; 5 currency prices derived; legacy aggregates neutralised; existing order untouched and unpaid; CMS defaults stable across a re-apply) |
 | `npm run secrets:scan` | `0` | no matches |
 | `npm run secrets:scan -- --mode=archive` | `0` | no matches |
-| `npm run build` | `0` | `dist/_worker.js` 421.20 kB (gzip 117.15 kB) |
+| `npm run build` | `0` | `dist/_worker.js` 423.35 kB (gzip 117.64 kB) |
 | `npm run test:e2e` | `0` | 11 journey groups incl. the new `phase2-storefront-cms` group |
 | `npm run audit:frontend -- phase2-storefront-cms` | `0` | **0 findings** across 29 public + 21 admin routes at 360/390/768/1024/1440/1920 + the accessibility pass |
 | `npm audit --omit=dev` | `0` | 0 vulnerabilities |
 | `npm audit` | `1` | 3 high, dev-only `sharp <0.35.4` ← `miniflare` ← `wrangler`; pre-existing, not in the worker bundle (**unchanged**) |
 
 New test files: `phase2-catalog.test.ts` (15), `phase2-cms-catalog-content.test.ts`
-(25), `phase2-authz-original-content.test.ts` (18), `phase2-catalogue-seed.test.ts` (5).
+(25), `phase2-authz-original-content.test.ts` (19), `phase2-catalogue-seed.test.ts` (5).
 
 ## 5. Browser journeys (real Chromium, local D1 + R2, zero external calls)
 
