@@ -221,3 +221,47 @@ security and truth recovery) result. As of the Phase 1
 - **Last Updated**: 2026-09-15 (Phase 1)
 
 # storybookclone
+
+## V2 Phase 3 — generation configuration and the companion Worker
+
+Generation is driven by durable job rows in D1 and consumed by a companion
+Cloudflare Worker (`src/worker.ts` + `wrangler.generation-worker.jsonc`). The
+web app itself still deploys to Pages exactly as before; see
+`docs/V2_ARCHITECTURE_BASELINE.md` for the full deployment decision.
+
+**A capability is configured only when BOTH its URL and key are present, and a
+non-HTTPS endpoint is refused outside `ENVIRONMENT=development`.** Nothing here
+is required for local development: with no configuration, the published prompt
+versions use the deterministic offline providers and the app makes zero
+external calls.
+
+| Variable | Purpose |
+|---|---|
+| `GENERATION_STORY_API_URL` / `GENERATION_STORY_API_KEY` | story-text provider (real adapter) |
+| `GENERATION_ILLUSTRATION_API_URL` / `GENERATION_ILLUSTRATION_API_KEY` | illustration provider (real adapter) |
+| `GENERATION_TRANSLATION_API_URL` / `GENERATION_TRANSLATION_API_KEY` | translation provider (real adapter) |
+| `GENERATION_VALIDATION_API_URL` / `GENERATION_VALIDATION_API_KEY` | output validation provider (real adapter) |
+| `GENERATION_DISABLED` | `1` force-disables every generation capability, including face analysis |
+| `GENERATION_QUEUE` | the Queue producer binding (Worker config only) |
+| `GENERATION_INLINE_DISPATCH` | `1` drains due jobs in the same request. Requires `ENVIRONMENT=development`; never the production architecture |
+| `GENERATION_DISPATCH_MAX_JOBS` | bounds one cron sweep (default 10) |
+
+Which adapter actually runs is decided by the **pinned prompt version's**
+`provider` column (`/admin/generation/prompts`), not by an environment flag
+alone — so a template's lineage always names the model that produced it.
+
+```bash
+npm run db:migrate:local   # applies 0024/0025 locally
+npm run worker:dev         # companion Worker: queue consumer + recovery cron (local)
+npm run test:e2e           # includes the phase3-generation-preview journey
+```
+
+Deploying the consumer is an owner action (it needs real D1/R2 ids):
+
+```bash
+npx wrangler deploy --config wrangler.generation-worker.jsonc
+```
+
+Both deployments must bind the **same** D1 database and the **same** private R2
+bucket: the durable job rows in D1 are the source of truth, and a consumer bound
+to a different database would simply find no work.

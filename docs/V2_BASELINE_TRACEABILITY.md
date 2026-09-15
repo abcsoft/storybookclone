@@ -623,3 +623,31 @@ stays the Phase-0/1 baseline registry. Two of its entries change status here:
   `products.reviews`/`rating`, and `seed_pdp.sql`) is removed; migration `0022`
   neutralises the legacy aggregate columns and every review now comes from the
   moderated `reviews` table.
+
+---
+
+## Phase 3 (templates, generation and previews) — see `docs/V2_PHASE3_TRACEABILITY.md`
+
+Phase 3's requirement rows (GEN-01…GEN-12, PER-06/07/09 and ADM-08/09/10/11) are
+tracked in their own file so this document stays the Phase-0/1 baseline
+registry. Entries here that change status:
+
+* **GEN-01…GEN-12** move from "open — owner phase 3" to **delivered**, each with
+  a code path, a test and (for the customer and admin surfaces) a browser
+  journey. `docs/V2_PHASE3_TRACEABILITY.md` states the honest limitation on each
+  row, including the two that remain owner-gated: **no real AI provider is
+  configured** (the adapters exist, are health-reported and are fail-closed) and
+  **retention is not yet scheduled** (PLT-10, Phase 8).
+* **PER-06/07/09** are extended from the Phase-2 personalization domain onto the
+  new pipeline: the face/photo integrity re-check before spending, the exact
+  input revision recorded on every job and asset, and consent version +
+  retention deadline recorded, enforced at generation time and honoured by the
+  retention sweep.
+* **ADM-08/09/10/11** move from "open" to **foundations delivered**.
+* **`/api/generate-book`** (the Phase-1 endpoint that returned an honest 501)
+  is unchanged and still honest: generation is now a real, asynchronous,
+  audited pipeline at `/api/v1/user-books/:id/generations`, and that legacy
+  endpoint remains a truthful 501 rather than a second, divergent path.
+* **S-11 (retention not scheduled)** stays **open** for Phase 8, but the sweep
+  it refers to now also purges generated originals and previews, with retryable
+  tombstones and a regression test — see PER-09.

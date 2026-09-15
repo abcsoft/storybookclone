@@ -473,3 +473,36 @@ breadcrumb; `offers` appears **only** when a price row exists for the selected
 currency, `aggregateRating`/`review` only from published reviews, and there is
 no `availability` claim (this build holds no inventory). `hreflang` alternates
 are emitted only for languages with published content.
+
+---
+
+## V2 Phase 3 — generation, previews, revisions and approvals
+
+All of these require ownership of the user book (an authenticated account or the
+guest prospect capability cookie). A non-owner gets the same generic `404` the
+rest of the personalization domain returns.
+
+| Method | Path | Purpose |
+|---|---|---|
+| `POST` | `/api/v1/user-books/:id/generations` | Request generation for the book's current revision. `202` when a job was created, `200` when an existing job for the same revision is returned (idempotent). Rate-limited and quota-checked; `429` with `error.code = "quota_exceeded"` beyond the limit. |
+| `GET` | `/api/v1/user-books/:id/generation` | The live job state the progress panel polls: `status`, `phase`, scene progress, cost, last error, `canRetry`/`canCancel`, the ready preview for the current revision, and honest provider health. |
+| `GET` | `/api/v1/user-books/:id/previews` | Every ready preview version for the book, newest revision first, with watermarked page URLs. |
+| `GET` | `/api/v1/user-books/:id/previews/:version` | One preview version (`:version` is the input revision), with `isCurrentRevision`, `approved` and `canApprove`. |
+| `POST` | `/api/v1/user-books/:id/revisions` | Record a revision request against an exact preview version. Body `{ note, previewVersion }`; `note` is required. Moves the book to `revision_requested`. |
+| `POST` | `/api/v1/user-books/:id/approvals` | Approve an EXACT preview version. Body `{ previewVersion }`. `409 stale_preview` when the version is not the current revision. |
+| `POST` | `/api/v1/user-books/:id/generation/cancel` | Cancel the latest job. Idempotent; `409` once it has succeeded. |
+| `POST` | `/api/v1/user-books/:id/generation/retry` | Retry a `failed_permanent`/`dead_letter` job with a fresh attempt budget. Quota-checked. |
+| `GET` | `/previews/:key{.+}` | Stream a private watermarked preview. Only keys under `gen/preview/` are ever considered; the ORIGINAL namespace (`gen/original/`) returns 404 even for the owner. `Cache-Control: private, no-store`, `X-Robots-Tag: noindex`, `Referrer-Policy: no-referrer`. |
+| `GET` | `/api/v1/admin/generation/providers` | Admin only. Provider configuration status and the watermark label — never a key, an endpoint or a payload. |
+
+Admin HTML surfaces: `/admin/generation/templates(/:id)`,
+`/admin/generation/jobs(/:id)`, `/admin/generation/previews`, plus the
+generation-coverage table on `/admin/localization`.
+
+### Error shape
+
+Every endpoint returns the canonical personalization error body:
+
+```json
+{ "error": { "code": "quota_exceeded", "message": "…", "fields": {}, "requestId": "…" } }
+```

@@ -377,3 +377,89 @@ its product-grid blocks from ONE query over the union of their collections, and
 the catalog computes its count, facets, audience/format/age distributions and
 page rows from ONE shared WHERE clause — so the result count can never disagree
 with the rows.
+
+---
+
+# Phase 3 additions (generation, queue orchestration and previews)
+
+## Deployment decision — can the current Pages deployment host the Queue consumer?
+
+**No — not as it stands, and the smallest Cloudflare-compatible adjustment is a
+companion Worker.**
+
+| Question | Answer, with evidence |
+|---|---|
+| What deploys today? | A **Cloudflare Pages** project: `wrangler.jsonc` has `"pages_build_output_dir": "./dist"` and `npm run deploy` is `wrangler pages deploy dist`. The app itself is the Hono SSR bundle `dist/_worker.js` produced by `@hono/vite-build`. |
+| Can Pages host this app? | Yes — unchanged. Every existing route, binding (`DB`, `PHOTOS`) and behaviour is untouched by Phase 3. |
+| Can Pages host a **Queue consumer**? | **No.** A `queue()` handler is a Worker entry point, and a Queue consumer (batch size, retry policy, dead-letter queue) is configured under `queues.consumers` on a **Worker**, not on a Pages project. Pages Functions expose `fetch`/`scheduled`-style handlers only. |
+| Can Pages be a Queue **producer**? | Same limitation: `queues.producers` is Worker configuration. Without it the app cannot send a wake-up message. |
+| What did we change? | **One new file plus one new config file.** `src/worker.ts` is a companion Worker exporting `queue()`, `scheduled()` and a deliberately minimal `fetch()` (a `/healthz` probe and 404 for everything else). `wrangler.generation-worker.jsonc` declares it with `queues.consumers` (batch 5, 5 retries, a dead-letter queue), a `GENERATION_QUEUE` producer binding and a `* * * * *` cron. **No framework change**: Hono, TypeScript, D1 and R2 are exactly as before, and the companion Worker imports the *same* domain modules (`src/generation/*`) as the web app. |
+| Why is this safe? | **The durable job rows in D1 — not the messages — are the source of truth.** A queue message carries nothing but `{ jobId, jobPublicId, correlationId }`; the consumer re-reads the job and every step is a guarded compare-and-swap. A lost, duplicated, reordered or delayed message can therefore only change *when* work happens, never *what* happens. The companion Worker and the Pages app MUST bind the same D1 database and the same private R2 bucket. |
+| What if the producer binding is unavailable? | Nothing is lost and nothing is faked. `queueProducerFor()` returns a `NullQueueProducer` that reports `not_configured` truthfully, and the companion Worker's **cron** (`scheduled()`) reclaims dead leases, promotes due retries and drains every job that is ready — so generation still completes without a producer, at cron granularity. The admin screen `/admin/generation/jobs` also offers an audited "Run a dispatch sweep now". |
+| Local/E2E? | `GENERATION_INLINE_DISPATCH=1` (gated on `ENVIRONMENT=development` AND that exact flag) drains due jobs in the same request, so the whole pipeline is exercised through the real HTTP surface against real local D1/R2 with no second process. It can never silently become the production architecture. |
+
+Runbook:
+
+```bash
+npm run db:migrate:local           # apply 0024/0025 locally
+npm run worker:dev                 # companion Worker (queue consumer + cron), wrangler dev --local --test-scheduled
+npx wrangler deploy --config wrangler.generation-worker.jsonc   # deploy the consumer (owner action)
+npx wrangler queues create webapp-generation webapp-generation-dlq   # if they do not exist yet
+```
+
+## Generation architecture (Phase 3)
+
+```
+Browser (personalization panel + /static/generation.js)
+        |  POST /api/v1/user-books/:id/generations
+        v
+Hono routes (src/generation/routes.ts) -- ownership, rate limit, quota, state machine
+        |                                   |
+        |  durable job row (D1)             |  quota window (D1, atomic upsert)
+        v                                   v
+generation_jobs / generation_tasks  ---->  GENERATION_QUEUE (producer, optional)
+        |                                                  |
+        |  (no producer? the cron drains due jobs)         v
+        +----------------------------------->  companion Worker src/worker.ts
+                                               queue() / scheduled()
+                                                        |
+                                                        v
+                                        consumeGenerationMessage -> processJob
+                                        (lease CAS -> provider -> validate -> store -> finalize)
+```
+
+| Concern | Implementation |
+|---|---|
+| Durable work | `generation_jobs` (one row per book+revision+template, enforced by a unique index) and `generation_tasks` (one per scene+kind, unique index) |
+| Lease / heartbeat | `claimJob` is `UPDATE ... WHERE status='queued' AND available_at<=?`; only the caller whose UPDATE changed one row proceeds. `heartbeatJob` renews `lease_expires_at` before and after every provider call. |
+| Recovery | `recoverExpiredLeases` reclaims a lease past its expiry, records a `lease_expired` attempt, and either requeues with backoff or dead-letters once the budget is spent |
+| Retry | `retry_wait` + `available_at = now + exponential backoff with bounded jitter`; `promoteDueRetries` moves a due row back to `queued` |
+| Dead letter | `generation_dead_letters` with a reason code, an attempt count and an explicit resolution (`retried`/`cancelled`/`discarded`) written by an operator action |
+| Idempotency | `idx_generation_jobs_idempotent` (one job per unit of work), `idx_generation_tasks_unique`, `idx_generation_attempts_unique`, `idx_generation_usage_idempotent` (a replayed attempt cannot double-bill) |
+| Cost and tokens | `generation_usage_events`, append-only, integer minor units; summed per job and per window |
+| Quota | `generation_quota_windows` (atomic increment-and-read, same shape as `rate_limit_windows`) driven by operator-editable `generation_limits` |
+| Providers | `src/generation/providers/*`: face, story-text, translation, illustration, validation and storage interfaces, each with a deterministic offline fake AND a real environment-configured HTTP adapter |
+| Output validation | real decode (the project's one image decoder) → dimensions, aspect, effective PPI at the declared print size; then the ValidationProvider's identity/face-count, semantic and safety verdicts. `passed` is the AND of both, and a safety rejection is dead-lettered immediately. |
+| Watermark | `src/generation/watermark.ts` paints a visible tiled label AND writes a provenance marker into the pixels; `preview_assets.is_watermarked` is trigger-enforced, and every stored preview is re-verified by reading its marker back from R2 before it is published |
+| Private namespaces | `gen/original/...` (never served) and `gen/preview/...` (served only through `GET /previews/:key`, entitlement-checked, `Cache-Control: private, no-store`, `X-Robots-Tag: noindex`). The `StorageProvider` refuses a key outside the namespace its method implies. |
+
+### Boundary rules Phase 3 makes explicit
+
+1. **The queue is a hint, never the truth.** Consumers re-read the job from D1.
+2. **Money comes from a ledger.** Cost is recorded per attempt behind a unique
+   index, so duplicate delivery cannot double-bill.
+3. **A provider call is only ever made for a real, leased task** on a book whose
+   input revision is still current — checked before spending and again before
+   publishing.
+4. **Nothing is published until it is verified**: a preview version exists only
+   once every scene's watermarked derivative has been re-read from private
+   storage and its provenance marker re-checked.
+5. **A stale completion is discarded, not published.** The book's compare-and-
+   swap is `WHERE current_revision = <the job's revision>`; when it loses, the
+   preview rows and R2 objects this call created are removed again and the job
+   is marked `superseded`.
+6. **Providers cannot be enabled by accident**: the deterministic fakes require
+   `ENVIRONMENT=development`, a real adapter requires both a URL and a key over
+   HTTPS, and `GENERATION_DISABLED=1` force-disables every capability including
+   face analysis.
+
