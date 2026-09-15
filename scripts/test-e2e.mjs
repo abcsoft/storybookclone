@@ -16,6 +16,7 @@
 // API-level coverage of tampering/idempotency/atomicity edge cases a UI
 // click can't exercise cleanly.
 import { chromium } from 'playwright'
+import { runPhase2Journeys } from './e2e-phase2.mjs'
 import jpegCodec from 'jpeg-js'
 import { spawn, execFileSync } from 'node:child_process'
 import { writeFileSync, mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs'
@@ -329,7 +330,7 @@ async function runGuestJourney(browser, photoPath) {
 
   // 2-3. Personalize and upload a real image (never logging in).
   log('guest.2', 'personalize + upload a real photo, still anonymous')
-  const guestUserBookPublicId = await personalizeAndAddToCart(page, { slug: 'the-portugals-new-legend', childName, photoPath })
+  const guestUserBookPublicId = await personalizeAndAddToCart(page, { slug: 'the-quiet-drum', childName, photoPath })
 
   // 4. Complete checkout as a guest.
   log('guest.3', 'complete checkout as a guest (no account)')
@@ -395,7 +396,7 @@ async function runGuestJourney(browser, photoPath) {
   log('guest.8', 'verify this order\'s guest token does not expose a second, different order')
   const context2 = await browser.newContext()
   const page2 = await context2.newPage()
-  await personalizeAndAddToCart(page2, { slug: 'the-portugals-new-legend', childName: `${childName}B`, photoPath })
+  await personalizeAndAddToCart(page2, { slug: 'the-quiet-drum', childName: `${childName}B`, photoPath })
   const second = await fillAndSubmitCheckout(page2, { fullName: 'Guest Shopper Two', email: `e2e-guest2-${runId}@example.com` })
   await context2.close()
   if (second.orderId === orderId) fail('guest.8', 'second guest checkout reused the first order id — journeys did not isolate')
@@ -451,7 +452,7 @@ async function runGuestJourney(browser, photoPath) {
 
   const otherPdfRes = await page.request.post(`${BASE}/api/v1/books/pdf-requests`, {
     headers: { 'Content-Type': 'application/json', Origin: BASE },
-    data: { email: `e2e-other-pdf-${runId}@example.com`, bookSlug: 'the-portugals-new-legend' }
+    data: { email: `e2e-other-pdf-${runId}@example.com`, bookSlug: 'the-quiet-drum' }
   })
   if (otherPdfRes.status() !== 200) fail('guest.11d', `creating the second PDF request failed: ${otherPdfRes.status()}`)
   const otherPdf = await otherPdfRes.json()
@@ -501,7 +502,7 @@ async function runAuthenticatedJourney(browser, photoPath) {
   await page.waitForURL(`${BASE}/my-books`)
 
   log('auth.2', 'personalize + upload + add to cart while logged in')
-  const authUserBookPublicId = await personalizeAndAddToCart(page, { slug: 'the-portugals-new-legend', childName, photoPath })
+  const authUserBookPublicId = await personalizeAndAddToCart(page, { slug: 'the-quiet-drum', childName, photoPath })
 
   log('auth.3', 'complete a SEPARATE order as this logged-in account')
   const { orderId } = await fillAndSubmitCheckout(page, { fullName: 'E2E Customer', email })
@@ -608,7 +609,7 @@ async function runMultiFaceJourney(browser, tmpDir) {
   const multiFacePhotoPath = join(tmpDir, 'multi-face-photo.jpg')
   writeFileSync(multiFacePhotoPath, buildRealJpegWithFaceCount(900, 900, 3))
 
-  await page.goto(`${BASE}/books/the-portugals-new-legend`)
+  await page.goto(`${BASE}/books/the-quiet-drum`)
   await page.waitForSelector('#personalise-form')
   await page.fill('#child-name', childName)
   await page.fill('#child-age', '6')
@@ -700,7 +701,7 @@ async function runDoubleSubmissionTest(browser, photoPath) {
 
   const email = `e2e-double-${runId}@example.com`
   const childName = `DoubleChild${runLetters}`
-  await personalizeAndAddToCart(page, { slug: 'the-portugals-new-legend', childName, photoPath })
+  await personalizeAndAddToCart(page, { slug: 'the-quiet-drum', childName, photoPath })
 
   await page.click('a[href="/checkout"]')
   await page.waitForURL(`${BASE}/checkout`)
@@ -939,7 +940,7 @@ async function runUploadAttackJourney(browser, photoPath) {
   // any OTHER 4xx/5xx or console error still fails the run.
   const diag = attachDiagnostics(page, [/\/api\/v1\/orders$/, /\/api\/v1\/uploads\/photo\/initiate$/])
 
-  const slug = 'the-portugals-new-legend'
+  const slug = 'the-quiet-drum'
   const email = `e2e-attack-${runId}@example.com`
   const child = `Attack${runLetters}`
   let idemSeq = 0
@@ -1047,7 +1048,7 @@ async function runCartThumbnailJourney(browser, photoPath) {
   const page = await context.newPage()
   const diag = attachDiagnostics(page, [])
 
-  await personalizeAndAddToCart(page, { slug: 'the-portugals-new-legend', childName: `Reload${runLetters}`, photoPath })
+  await personalizeAndAddToCart(page, { slug: 'the-quiet-drum', childName: `Reload${runLetters}`, photoPath })
 
   log('cart-reload.1', 'reload the cart page: the item and its thumbnail must survive')
   await page.reload()
@@ -1354,7 +1355,7 @@ async function runDisabledCapabilityJourney(browser) {
     /Dr\. Emily/i,
     /award-winning/i
   ]
-  for (const route of ['/', '/books', '/books/the-portugals-new-legend', '/checkout', '/faqs', '/support', '/contact', '/blog']) {
+  for (const route of ['/', '/books', '/books/the-quiet-drum', '/checkout', '/faqs', '/support', '/contact', '/blog']) {
     await page.goto(BASE + route)
     // page.content() reflects the DOM AFTER client scripts ran, which is what a
     // visitor actually sees.
@@ -1365,7 +1366,7 @@ async function runDisabledCapabilityJourney(browser) {
   }
 
   log('disabled-claims.1', 'the reader states plainly that PDFs are unavailable')
-  await page.goto(`${BASE}/my/books/the-portugals-new-legend`)
+  await page.goto(`${BASE}/my/books/the-quiet-drum`)
   const reader = await page.content()
   if (!/PDF copies aren’t available yet/i.test(reader)) fail('disabled-claims.1', 'the reader does not state that PDF copies are unavailable')
 
@@ -1379,7 +1380,7 @@ async function runDisabledCapabilityJourney(browser) {
 
   const pdf = await page.request.post(`${BASE}/api/v1/books/pdf-requests`, {
     headers: { 'Content-Type': 'application/json', Origin: BASE },
-    data: { email: `e2e-claims-${runId}@example.com`, bookSlug: 'the-portugals-new-legend' }
+    data: { email: `e2e-claims-${runId}@example.com`, bookSlug: 'the-quiet-drum' }
   })
   const pdfBody = await pdf.json().catch(() => ({}))
   if (pdfBody.status !== 'unavailable') fail('disabled-claims.2', `PDF request status is not "unavailable": ${JSON.stringify(pdfBody)}`)
@@ -1441,7 +1442,20 @@ async function main() {
     await runAdminJourney(browser)
     await runDisabledCapabilityJourney(browser)
 
-    console.log('\n[e2e] ALL JOURNEYS PASSED (guest, authenticated, double-submission, multi-face, upload-attack, cart-reload, cover-agreement, csrf, admin, disabled-claims)\n')
+    // V2 Phase 2: storefront / CMS / catalog / reviews / locale / keyboard
+    // journeys. Uses the same task-supplied admin fixture as runAdminJourney.
+    await runPhase2Journeys({
+      browser,
+      base: BASE,
+      log,
+      fail,
+      attachDiagnostics,
+      assertClean,
+      admin: { email: ADMIN_EMAIL, password: ADMIN_PASSWORD },
+      queryD1
+    })
+
+    console.log('\n[e2e] ALL JOURNEYS PASSED (guest, authenticated, double-submission, multi-face, upload-attack, cart-reload, cover-agreement, csrf, admin, disabled-claims, phase2-storefront-cms)\n')
   } catch (err) {
     // Surface the local server log on failure only — never written to a file.
     if (logs.value) console.error(`\n[e2e] server log:\n${logs.value}`)

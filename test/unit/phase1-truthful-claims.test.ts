@@ -23,7 +23,7 @@ const imgDir = join(__dirname, '..', '..', 'public', 'static', 'img')
 async function seedBook(slug = 'truth-book', price = 34.99) {
   await env.DB.prepare(
     `INSERT INTO products (slug, title, tagline, description, price, price_minor, image, category, age_min, age_max, pages, reviews, rating, active)
-     VALUES (?, 'Truthful Book', 'A tagline', 'A description', ?, ?, '/static/img/cover-dragon.webp', 'book', 4, 8, 32, 0, 0, 1)`
+     VALUES (?, 'Truthful Book', 'A tagline', 'A description', ?, ?, '/static/img/art/cover-the-quiet-drum.svg', 'book', 4, 8, 32, 0, 0, 1)`
   )
     .bind(slug, price, Math.round(price * 100))
     .run()

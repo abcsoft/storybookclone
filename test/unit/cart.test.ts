@@ -19,11 +19,11 @@ class FakeStorage {
 // the authoritative personalization reference. No photoKey, no blob.
 const validItem = (overrides: Record<string, unknown> = {}) => ({
   id: 'a1',
-  slug: 'the-portugals-new-legend',
-  title: "The Portugal's New Legend",
+  slug: 'the-quiet-drum',
+  title: "The Quiet Drum",
   kind: 'book',
   coverType: 'hardcover',
-  image: '/static/img/cover-portugal.webp',
+  image: '/static/img/art/cover-the-quiet-drum.svg',
   userBookId: 'ub_abc123',
   childName: 'Maya',
   childAge: '6',

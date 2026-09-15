@@ -18,7 +18,7 @@ const ctx = (overrides: Partial<{ userId: number | null; uploadOwnerToken: strin
   ...overrides
 })
 
-async function seedProduct(db: D1Database, slug = 'the-portugals-new-legend', price = 34.99) {
+async function seedProduct(db: D1Database, slug = 'the-quiet-drum', price = 34.99) {
   await db
     .prepare(
       `INSERT INTO products (slug, title, tagline, description, story, price, price_minor, image, gender, category, ages, age_min, age_max, pages, reviews, rating, active)
@@ -34,7 +34,7 @@ async function seedUpload(db: D1Database, key = 'uploads/test-photo.jpg', ownerT
 
 function baseInput(overrides: Partial<CreateOrderInput> = {}): CreateOrderInput {
   return {
-    items: [{ slug: 'the-portugals-new-legend', qty: 1, childName: 'Gando', childAge: 6, language: 'English', photoKey: 'uploads/test-photo.jpg' }],
+    items: [{ slug: 'the-quiet-drum', qty: 1, childName: 'Gando', childAge: 6, language: 'English', photoKey: 'uploads/test-photo.jpg' }],
     fullName: 'Jane Doe',
     email: 'jane@example.com',
     address: '123 Main St',
@@ -49,7 +49,7 @@ function baseInput(overrides: Partial<CreateOrderInput> = {}): CreateOrderInput 
 describe('createOrder — server-authoritative pricing', () => {
   it('ignores any client-supplied price/subtotal/discount/total and computes from the catalog', async () => {
     const db = migratedFakeD1()
-    await seedProduct(db, 'the-portugals-new-legend', 34.99)
+    await seedProduct(db, 'the-quiet-drum', 34.99)
     await seedUpload(db)
 
     const tampered: any = baseInput()
@@ -81,7 +81,7 @@ describe('createOrder — upload key validation', () => {
   it('rejects a missing/unknown upload key', async () => {
     const db = migratedFakeD1()
     await seedProduct(db)
-    const result = await createOrder(db, baseInput({ items: [{ slug: 'the-portugals-new-legend', childName: 'Gando', photoKey: 'uploads/never-uploaded.jpg' }] }), ctx())
+    const result = await createOrder(db, baseInput({ items: [{ slug: 'the-quiet-drum', childName: 'Gando', photoKey: 'uploads/never-uploaded.jpg' }] }), ctx())
     expect(result.ok).toBe(false)
     if (!result.ok) expect(result.error).toMatch(/not found/i)
   })

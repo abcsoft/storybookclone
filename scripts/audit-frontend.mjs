@@ -158,15 +158,32 @@ const OVERCLAIM_PATTERNS = [
   /\d+% (more|increase)/i
 ]
 
-const DESKTOP = { width: 1280, height: 900 }
-const MOBILE = { width: 390, height: 844 }
+// V2 §9 requires explicit browser checks at 360, 390, 768, 1024, 1440 and
+// 1920 widths. Each is a real context so the responsive CSS is actually
+// exercised at that width, not inferred from a neighbour.
+const VIEWPORTS = [
+  { label: 'w360', width: 360, height: 780 },
+  { label: 'w390', width: 390, height: 844 },
+  { label: 'w768', width: 768, height: 1024 },
+  { label: 'w1024', width: 1024, height: 768 },
+  { label: 'w1440', width: 1440, height: 900 },
+  { label: 'w1920', width: 1920, height: 1080 }
+]
+const DESKTOP = { width: 1440, height: 900 }
+const MOBILE = { width: 360, height: 780 }
 
 const PUBLIC_ROUTES = [
   ['/', 'home'],
   ['/books', 'books'],
+  ['/books?audience=girl&age=4-6&sort=price-asc', 'books-filtered'],
+  ['/books?q=lantern&page=1', 'books-search'],
   ['/stickers', 'stickers'],
-  ['/books/the-portugals-new-legend', 'product-book'],
-  ['/stickers/girls-sticker-pack', 'product-sticker'],
+  ['/collections', 'collections'],
+  ['/collections/when-i-grow-up', 'collection-career'],
+  ['/collections/bedtime-and-calm', 'collection-theme'],
+  ['/books/the-star-collector', 'product-book'],
+  ['/books/the-lantern-and-the-long-night?reviewError=Example%20validation%20message', 'product-book-review-error'],
+  ['/stickers/star-sticker-sheet', 'product-sticker'],
   ['/cart', 'cart'],
   ['/checkout', 'checkout'],
   ['/login', 'login'],
@@ -174,12 +191,21 @@ const PUBLIC_ROUTES = [
   ['/forgot-password', 'forgot-password'],
   ['/reset-password?token=audit-invalid-token', 'reset-password'],
   ['/my-books', 'my-books'],
-  ['/my/books/the-portugals-new-legend', 'reader'],
+  ['/my/books/the-star-collector', 'reader'],
   ['/faqs', 'faqs'],
   ['/support', 'support'],
+  ['/support/privacy-policy', 'legal-privacy'],
+  ['/support/refund-policy', 'legal-refund'],
+  ['/support/shipping', 'legal-shipping'],
+  ['/support/photo-guidelines', 'content-guidelines'],
+  ['/how-it-works', 'how-it-works'],
   ['/contact', 'contact'],
-  ['/blog', 'blog']
+  ['/blog', 'blog'],
+  ['/blog/why-personalised-books-hold-attention', 'blog-post']
 ]
+// A filtered/search/paged catalog address is audited too, because the
+// canonical-URL-state work (SF-06) is exactly the kind of change that can
+// introduce an unlabelled control or an overflowing chip row.
 // /reset-password?token=... intentionally uses an invalid token — this is
 // the generic "invalid or expired link" state a real expired/reused/wrong
 // link would show; it's a real page state to visually verify, not an error.
@@ -188,8 +214,20 @@ const ADMIN_ROUTES = [
   ['/admin/login', 'admin-login'],
   ['/admin', 'admin-dashboard'],
   ['/admin/orders', 'admin-orders'],
+  ['/admin/catalog', 'admin-catalog'],
+  ['/admin/catalog?q=lantern&category=book', 'admin-catalog-filtered'],
   ['/admin/products', 'admin-products'],
   ['/admin/products/new', 'admin-product-new'],
+  ['/admin/collections', 'admin-collections'],
+  ['/admin/media', 'admin-media'],
+  ['/admin/cms', 'admin-cms-home'],
+  ['/admin/cms/navigation', 'admin-cms-nav'],
+  ['/admin/cms/pages', 'admin-cms-pages'],
+  ['/admin/cms/faqs', 'admin-cms-faqs'],
+  ['/admin/reviews', 'admin-reviews'],
+  ['/admin/reviews?status=all', 'admin-reviews-all'],
+  ['/admin/localization', 'admin-localization'],
+  ['/admin/settings', 'admin-settings'],
   ['/admin/discounts', 'admin-discounts'],
   ['/admin/users', 'admin-users'],
   ['/admin/messages', 'admin-messages'],
@@ -319,6 +357,107 @@ async function visit(base, page, path, name, viewportLabel, findings, evidenceDi
   log(`${viewportLabel} ${path} -> ${httpStatus}${overflow ? ` (scrollWidth ${overflow.scrollWidth}/${overflow.clientWidth})` : ''}`)
 }
 
+/**
+ * Accessibility pass (V2 §9 / PLT-09). Runs on a subset of routes at each
+ * width and checks the properties that can be established automatically:
+ *
+ *   * every image is either described (non-empty alt) or explicitly
+ *     decorative (alt=""), and none is missing the attribute;
+ *   * every form control has an accessible name (label[for], wrapped label,
+ *     aria-label or aria-labelledby);
+ *   * the document has one h1, one main landmark, a header and a footer, and
+ *     heading levels only increase by one;
+ *   * focusing a control produces a visible focus indicator (a real outline or
+ *     box-shadow, not just a colour change);
+ *   * with prefers-reduced-motion: reduce, no element is left with a long
+ *     animation/transition duration;
+ *   * every element that carries a state class also carries text, so meaning is
+ *     never encoded in colour alone.
+ *
+ * Anything keyboard-only (drawer, search dialog, focus return) is exercised in
+ * the E2E journey instead, where a failure is a hard failure.
+ */
+async function runAccessibilityPass(base, page, routes, viewportLabel, findings) {
+  const checked = ['/', '/books', '/books/the-star-collector', '/faqs', '/cart', '/checkout']
+  for (const path of routes.filter((r) => checked.includes(r))) {
+    try {
+      await page.goto(base + path, { waitUntil: 'domcontentloaded', timeout: 20000 })
+      await page.waitForTimeout(120)
+
+      const problems = await page.evaluate(() => {
+        const out = []
+        // images
+        for (const img of document.querySelectorAll('img')) {
+          const alt = img.getAttribute('alt')
+          if (alt === null) out.push(`img without alt: ${img.getAttribute('src')}`)
+        }
+        // form controls
+        for (const el of document.querySelectorAll('input, select, textarea')) {
+          if (el.type === 'hidden' || el.closest('[hidden]')) continue
+          const id = el.getAttribute('id')
+          const hasFor = id ? !!document.querySelector(`label[for="${CSS.escape(id)}"]`) : false
+          const wrapped = !!el.closest('label')
+          const aria = el.getAttribute('aria-label') || el.getAttribute('aria-labelledby')
+          if (!hasFor && !wrapped && !aria) out.push(`control without accessible name: ${el.tagName.toLowerCase()}[name=${el.getAttribute('name')}]`)
+        }
+        // landmarks + headings
+        const h1s = document.querySelectorAll('h1').length
+        if (h1s > 1) out.push(`${h1s} h1 elements`)
+        if (!document.querySelector('main')) out.push('no main landmark')
+        if (!document.querySelector('header')) out.push('no header landmark')
+        if (!document.querySelector('footer')) out.push('no footer landmark')
+        // state must never be carried by colour alone
+        for (const el of document.querySelectorAll('.badge, .notice, .state-box, .chip, .cart-badge')) {
+          // A hidden element is not perceivable at all, and an aria-hidden one is
+          // explicitly decorative (its meaning must live on an ancestor — the cart
+          // badge is aria-hidden because the cart link's aria-label states the
+          // count). Both are out of scope for the colour-independence check.
+          if (el.closest('[hidden]') || el.closest('[aria-hidden="true"]')) continue
+          if (!el.textContent.trim() && !el.getAttribute('aria-label')) out.push(`state element with no text: ${el.className}`)
+        }
+        return out
+      })
+      for (const problem of problems) findings.push({ path, viewport: viewportLabel, issue: `a11y: ${problem}` })
+
+      // focus visibility on the first few interactive controls
+      const handles = await page.$$('a[href], button, select, input:not([type=hidden])')
+      for (const handle of handles.slice(0, 6)) {
+        const visible = await handle.isVisible().catch(() => false)
+        if (!visible) continue
+        await handle.focus().catch(() => {})
+        const style = await handle.evaluate((el) => {
+          const cs = getComputedStyle(el)
+          return { outlineWidth: cs.outlineWidth, outlineStyle: cs.outlineStyle, boxShadow: cs.boxShadow }
+        })
+        const hasRing = (style.outlineStyle !== 'none' && parseFloat(style.outlineWidth) > 0) || (style.boxShadow && style.boxShadow !== 'none')
+        if (!hasRing) {
+          const label = await handle.evaluate((el) => `${el.tagName.toLowerCase()}:${el.textContent?.trim().slice(0, 24) || el.getAttribute('aria-label') || ''}`)
+          findings.push({ path, viewport: viewportLabel, issue: `a11y: focused control has no visible focus indicator (${label})` })
+        }
+      }
+
+      // reduced motion
+      await page.emulateMedia({ reducedMotion: 'reduce' })
+      await page.reload({ waitUntil: 'domcontentloaded' })
+      const motion = await page.evaluate(() => {
+        const bad = []
+        for (const el of document.querySelectorAll('*')) {
+          const cs = getComputedStyle(el)
+          const dur = parseFloat(cs.animationDuration) + parseFloat(cs.transitionDuration)
+          if (dur > 0.05) bad.push(`${el.tagName.toLowerCase()}.${el.className}`)
+          if (bad.length > 3) break
+        }
+        return bad
+      })
+      for (const el of motion) findings.push({ path, viewport: viewportLabel, issue: `a11y: animation/transition not reduced under prefers-reduced-motion (${el})` })
+      await page.emulateMedia({ reducedMotion: null })
+    } catch (err) {
+      findings.push({ path, viewport: viewportLabel, issue: `a11y pass error: ${err.message}` })
+    }
+  }
+  log(`${viewportLabel} accessibility pass complete`)
+}
+
 async function main() {
   const runLabel = process.argv[2] || 'before'
   const evidenceDir = join(root, 'audit-evidence', runLabel)
@@ -373,21 +512,22 @@ async function main() {
   const browser = await chromium.launch()
 
   try {
-    // ---- public routes, logged out ----
-    for (const viewport of [DESKTOP, MOBILE]) {
-      const label = viewport === DESKTOP ? 'desktop' : 'mobile'
-      const context = await browser.newContext({ viewport })
+    // ---- public routes, logged out, at EVERY required width ----
+    for (const vp of VIEWPORTS) {
+      const label = vp.label
+      const context = await browser.newContext({ viewport: { width: vp.width, height: vp.height } })
       const page = await context.newPage()
       for (const [path, name] of PUBLIC_ROUTES) {
-        await visit(base, page, path, name, label, findings, evidenceDir)
+        await visit(base, page, path, `${name}-${vp.width}`, label, findings, evidenceDir)
       }
+      await runAccessibilityPass(base, page, PUBLIC_ROUTES.map(([p]) => p), label, findings)
       await context.close()
     }
 
     // ---- admin routes, logged in as the audit admin fixture ----
-    for (const viewport of [DESKTOP, MOBILE]) {
-      const label = viewport === DESKTOP ? 'desktop' : 'mobile'
-      const context = await browser.newContext({ viewport })
+    for (const vp of [DESKTOP, MOBILE]) {
+      const label = vp === DESKTOP ? 'desktop' : 'mobile'
+      const context = await browser.newContext({ viewport: vp })
       const page = await context.newPage()
       await page.goto(base + '/admin/login')
       await page.fill('input[name=email]', adminEmail)

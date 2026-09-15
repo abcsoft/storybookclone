@@ -85,7 +85,7 @@ describe('quote — canonical + both legacy aliases', () => {
     for (const path of paths) {
       const res = await app.request(
         path,
-        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: [{ slug: 'girls-sticker-pack', qty: 1 }] }) },
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: [{ slug: 'star-sticker-sheet', qty: 1 }] }) },
         env
       )
       expect(res.status).toBe(200)
@@ -106,7 +106,7 @@ describe('order creation + guest access — full HTTP flow', () => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey, ...jar.headers() },
         body: JSON.stringify({
-          items: [{ slug: 'girls-sticker-pack', qty: 1, childName: 'Gando', childAge: 6, language: 'English', photoKey: key }],
+          items: [{ slug: 'star-sticker-sheet', qty: 1, childName: 'Gando', childAge: 6, language: 'English', photoKey: key }],
           fullName: 'Jane Doe',
           email: 'jane-guest@example.com',
           address: '123 Main St',
@@ -150,7 +150,7 @@ describe('order creation + guest access — full HTTP flow', () => {
     const uploadRes = await uploadPhoto('/api/v1/uploads/photo', jar)
     const { key } = await uploadRes.json()
     const requestBody = JSON.stringify({
-      items: [{ slug: 'girls-sticker-pack', qty: 1, childName: 'Gando', childAge: 6, language: 'English', photoKey: key }],
+      items: [{ slug: 'star-sticker-sheet', qty: 1, childName: 'Gando', childAge: 6, language: 'English', photoKey: key }],
       fullName: 'Jane Doe',
       email: 'jane-guest-2@example.com',
       address: '123 Main St',
@@ -181,7 +181,7 @@ describe('my/orders — ownership and cross-user denial (canonical + legacy alia
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'owner-a-order', ...jarA.headers() },
         body: JSON.stringify({
-          items: [{ slug: 'girls-sticker-pack', qty: 1, childName: 'Kid A', childAge: 5, photoKey: keyA }],
+          items: [{ slug: 'star-sticker-sheet', qty: 1, childName: 'Kid A', childAge: 5, photoKey: keyA }],
           fullName: 'Customer A',
           email: 'customer-a@example.com',
           address: '1 A St',
@@ -257,7 +257,7 @@ describe('pdf-requests — canonical + legacy alias, honest status, secured agai
   it('records the request as UNAVAILABLE (no PDF worker exists) and never promises a delivery', async () => {
     const res = await app.request(
       '/api/v1/books/pdf-requests',
-      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'reader@example.com', bookSlug: 'girls-sticker-pack', childName: 'Gando', childAge: 6, coverType: 'hardcover' }) },
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'reader@example.com', bookSlug: 'star-sticker-sheet', childName: 'Gando', childAge: 6, coverType: 'hardcover' }) },
       env
     )
     expect(res.status).toBe(200)
@@ -282,7 +282,7 @@ describe('pdf-requests — canonical + legacy alias, honest status, secured agai
   it('denies status access with no token and with a tampered token — never a bare sequential id', async () => {
     const res = await app.request(
       '/api/v1/books/pdf-requests',
-      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'reader3@example.com', bookSlug: 'girls-sticker-pack' }) },
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'reader3@example.com', bookSlug: 'star-sticker-sheet' }) },
       env
     )
     const created = await res.json()
@@ -299,7 +299,7 @@ describe('pdf-requests — canonical + legacy alias, honest status, secured agai
     const jarOwner = await registerAndLogin('pdfowner@example.com')
     const res = await app.request(
       '/api/v1/books/pdf-requests',
-      { method: 'POST', headers: { 'Content-Type': 'application/json', ...jarOwner.headers() }, body: JSON.stringify({ email: 'pdfowner@example.com', bookSlug: 'girls-sticker-pack' }) },
+      { method: 'POST', headers: { 'Content-Type': 'application/json', ...jarOwner.headers() }, body: JSON.stringify({ email: 'pdfowner@example.com', bookSlug: 'star-sticker-sheet' }) },
       env
     )
     const created = await res.json()
@@ -315,7 +315,7 @@ describe('pdf-requests — canonical + legacy alias, honest status, secured agai
   it('legacy alias POST /api/books/pdf-request no longer 500s (confirmed baseline defect: missing cover_type column)', async () => {
     const res = await app.request(
       '/api/books/pdf-request',
-      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'reader2@example.com', bookSlug: 'girls-sticker-pack', coverType: 'softcover' }) },
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'reader2@example.com', bookSlug: 'star-sticker-sheet', coverType: 'softcover' }) },
       env
     )
     expect(res.status).toBe(200)
@@ -334,7 +334,7 @@ describe('pdf-requests — creation validation, expiry, ownership, admin endpoin
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey, ...jar.headers() },
         body: JSON.stringify({
-          items: [{ slug: 'girls-sticker-pack', qty: 1, childName: 'Gando', childAge: 6, language: 'English', photoKey: key }],
+          items: [{ slug: 'star-sticker-sheet', qty: 1, childName: 'Gando', childAge: 6, language: 'English', photoKey: key }],
           fullName: 'Jane Doe',
           email: 'pdf-owner@example.com',
           address: '123 Main St',
@@ -355,7 +355,7 @@ describe('pdf-requests — creation validation, expiry, ownership, admin endpoin
   it('rejects an invalid coverType', async () => {
     const res = await app.request(
       '/api/v1/books/pdf-requests',
-      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'x@example.com', bookSlug: 'girls-sticker-pack', coverType: 'deluxe-leather' }) },
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'x@example.com', bookSlug: 'star-sticker-sheet', coverType: 'deluxe-leather' }) },
       env
     )
     expect(res.status).toBe(400)
@@ -376,7 +376,7 @@ describe('pdf-requests — creation validation, expiry, ownership, admin endpoin
 
     const ownRes = await app.request(
       '/api/v1/books/pdf-requests',
-      { method: 'POST', headers: { 'Content-Type': 'application/json', ...jarOwner.headers() }, body: JSON.stringify({ email: 'x@example.com', bookSlug: 'girls-sticker-pack', orderItemId }) },
+      { method: 'POST', headers: { 'Content-Type': 'application/json', ...jarOwner.headers() }, body: JSON.stringify({ email: 'x@example.com', bookSlug: 'star-sticker-sheet', orderItemId }) },
       env
     )
     expect(ownRes.status).toBe(200)
@@ -384,7 +384,7 @@ describe('pdf-requests — creation validation, expiry, ownership, admin endpoin
     const jarStranger = await registerAndLogin(`pdf-item-stranger-${Date.now()}@example.com`)
     const foreignRes = await app.request(
       '/api/v1/books/pdf-requests',
-      { method: 'POST', headers: { 'Content-Type': 'application/json', ...jarStranger.headers() }, body: JSON.stringify({ email: 'x@example.com', bookSlug: 'girls-sticker-pack', orderItemId }) },
+      { method: 'POST', headers: { 'Content-Type': 'application/json', ...jarStranger.headers() }, body: JSON.stringify({ email: 'x@example.com', bookSlug: 'star-sticker-sheet', orderItemId }) },
       env
     )
     expect(foreignRes.status).toBe(400)
@@ -394,7 +394,7 @@ describe('pdf-requests — creation validation, expiry, ownership, admin endpoin
     const jar = await registerAndLogin(`pdf-item-nonexist-${Date.now()}@example.com`)
     const res = await app.request(
       '/api/v1/books/pdf-requests',
-      { method: 'POST', headers: { 'Content-Type': 'application/json', ...jar.headers() }, body: JSON.stringify({ email: 'x@example.com', bookSlug: 'girls-sticker-pack', orderItemId: 999999 }) },
+      { method: 'POST', headers: { 'Content-Type': 'application/json', ...jar.headers() }, body: JSON.stringify({ email: 'x@example.com', bookSlug: 'star-sticker-sheet', orderItemId: 999999 }) },
       env
     )
     expect(res.status).toBe(400)
@@ -406,21 +406,21 @@ describe('pdf-requests — creation validation, expiry, ownership, admin endpoin
 
     const noTokenRes = await app.request(
       '/api/v1/books/pdf-requests',
-      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'x@example.com', bookSlug: 'girls-sticker-pack', orderItemId }) },
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'x@example.com', bookSlug: 'star-sticker-sheet', orderItemId }) },
       env
     )
     expect(noTokenRes.status).toBe(400)
 
     const wrongTokenRes = await app.request(
       '/api/v1/books/pdf-requests',
-      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'x@example.com', bookSlug: 'girls-sticker-pack', orderItemId, guestOrderToken: 'not-a-real-token' }) },
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'x@example.com', bookSlug: 'star-sticker-sheet', orderItemId, guestOrderToken: 'not-a-real-token' }) },
       env
     )
     expect(wrongTokenRes.status).toBe(400)
 
     const validRes = await app.request(
       '/api/v1/books/pdf-requests',
-      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'x@example.com', bookSlug: 'girls-sticker-pack', orderItemId, guestOrderToken: guestToken }) },
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'x@example.com', bookSlug: 'star-sticker-sheet', orderItemId, guestOrderToken: guestToken }) },
       env
     )
     expect(validRes.status).toBe(200)
@@ -432,7 +432,7 @@ describe('pdf-requests — creation validation, expiry, ownership, admin endpoin
     for (let i = 0; i < 6; i++) {
       const res = await app.request(
         '/api/v1/books/pdf-requests',
-        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, bookSlug: 'girls-sticker-pack' }) },
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, bookSlug: 'star-sticker-sheet' }) },
         env
       )
       lastStatus = res.status
@@ -443,7 +443,7 @@ describe('pdf-requests — creation validation, expiry, ownership, admin endpoin
   it('an expired capability token is denied (404) even though it was valid at creation', async () => {
     const res = await app.request(
       '/api/v1/books/pdf-requests',
-      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'expiry@example.com', bookSlug: 'girls-sticker-pack' }) },
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'expiry@example.com', bookSlug: 'star-sticker-sheet' }) },
       env
     )
     const created = await res.json()
@@ -459,7 +459,7 @@ describe('pdf-requests — creation validation, expiry, ownership, admin endpoin
   it('a bare sequential/adjacent request id with no token is denied (enumeration-safe)', async () => {
     const res = await app.request(
       '/api/v1/books/pdf-requests',
-      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'adjacent@example.com', bookSlug: 'girls-sticker-pack' }) },
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'adjacent@example.com', bookSlug: 'star-sticker-sheet' }) },
       env
     )
     const created = await res.json()
@@ -478,7 +478,7 @@ describe('pdf-requests — creation validation, expiry, ownership, admin endpoin
     it('an admin can look up ANY request by id, including full fields (email/child_name) — never accessible to a customer/guest', async () => {
       const res = await app.request(
         '/api/v1/books/pdf-requests',
-        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'admin-visible@example.com', bookSlug: 'girls-sticker-pack', childName: 'Gando' }) },
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'admin-visible@example.com', bookSlug: 'star-sticker-sheet', childName: 'Gando' }) },
         env
       )
       const created = await res.json()
@@ -522,7 +522,7 @@ describe('pdf-requests — creation validation, expiry, ownership, admin endpoin
       expect(res.status).toBe(200)
       const created = await res.json()
       const row = await env.DB.prepare('SELECT book_slug, child_name, child_age FROM pdf_requests WHERE id = ?').bind(created.id).first<{ book_slug: string; child_name: string; child_age: number }>()
-      expect(row!.book_slug).toBe('girls-sticker-pack') // the REAL slug from order_items, not the forged one
+      expect(row!.book_slug).toBe('star-sticker-sheet') // the REAL slug from order_items, not the forged one
       expect(row!.child_name).toBe('Gando') // the REAL child name from order_items
       expect(row!.child_age).not.toBe(99)
     })
@@ -534,7 +534,7 @@ describe('pdf-requests — creation validation, expiry, ownership, admin endpoin
       // Hide the product from the storefront AFTER the purchase — exactly
       // the scenario getProductBySlug()'s `active = 1` filter would
       // otherwise wrongly block.
-      await env.DB.prepare("UPDATE products SET active = 0 WHERE slug = 'girls-sticker-pack'").run()
+      await env.DB.prepare("UPDATE products SET active = 0 WHERE slug = 'star-sticker-sheet'").run()
 
       const res = await app.request(
         '/api/v1/books/pdf-requests',
@@ -546,7 +546,7 @@ describe('pdf-requests — creation validation, expiry, ownership, admin endpoin
       expect(created.success).toBe(true)
 
       // Restore for any later test in this file that relies on the product being active.
-      await env.DB.prepare("UPDATE products SET active = 1 WHERE slug = 'girls-sticker-pack'").run()
+      await env.DB.prepare("UPDATE products SET active = 1 WHERE slug = 'star-sticker-sheet'").run()
     })
   })
 
@@ -557,7 +557,7 @@ describe('pdf-requests — creation validation, expiry, ownership, admin endpoin
       // for ownership BEFORE any rate limit is touched.
       const forged = await app.request(
         '/api/v1/books/pdf-requests',
-        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: victimEmail, bookSlug: 'girls-sticker-pack', orderItemId: 999999 }) },
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: victimEmail, bookSlug: 'star-sticker-sheet', orderItemId: 999999 }) },
         env
       )
       expect(forged.status).toBe(400)
@@ -567,7 +567,7 @@ describe('pdf-requests — creation validation, expiry, ownership, admin endpoin
       for (let i = 0; i < 5; i++) {
         const res = await app.request(
           '/api/v1/books/pdf-requests',
-          { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: victimEmail, bookSlug: 'girls-sticker-pack' }) },
+          { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: victimEmail, bookSlug: 'star-sticker-sheet' }) },
           env
         )
         lastStatus = res.status
@@ -586,7 +586,7 @@ describe('pdf-requests — creation validation, expiry, ownership, admin endpoin
       const requests = Array.from({ length: 10 }, () =>
         app.request(
           '/api/v1/books/pdf-requests',
-          { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, bookSlug: 'girls-sticker-pack' }) },
+          { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, bookSlug: 'star-sticker-sheet' }) },
           env
         )
       )
@@ -692,7 +692,7 @@ describe('admin AI settings — no provider key ever stored in D1, honest "test 
   it('POST /api/generate-book is honestly disabled — no fabricated success, no fake book/cover/pricing', async () => {
     const res = await app.request(
       '/api/generate-book',
-      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ childName: 'Gando', bookSlug: 'girls-sticker-pack' }) },
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ childName: 'Gando', bookSlug: 'star-sticker-sheet' }) },
       env
     )
     expect(res.status).toBe(501)

@@ -36,7 +36,14 @@ const EXPECTED_TABLES = [
   // Phase 1 integrity/security recovery (migration 0015)
   'order_state_events', 'admin_audit_events',
   // Phase 1 correction (migration 0018): ISO-4217 currency allowlist
-  'iso_currencies'
+  'iso_currencies',
+  // V2 Phase 2 (migrations 0020-0023): catalog, CMS, reviews, locale/pricing/SEO
+  'collections', 'collection_products', 'collection_faqs',
+  'media_assets', 'product_media', 'product_facts',
+  'cms_blocks', 'cms_nav_items', 'cms_footer_notes', 'cms_faqs', 'cms_pages',
+  'announcements', 'site_settings', 'reviews',
+  'currency_settings', 'countries', 'product_prices', 'variant_prices',
+  'shipping_rates', 'cms_page_localizations', 'redirects', 'seo_metadata'
 ]
 
 const EXPECTED_NEW_COLUMNS = [
@@ -369,6 +376,90 @@ const ACCEPTED_PHASE_1_0009_MIGRATIONS = [
   )
 
   console.log('OK [money/variant backfill]: legacy REAL rows backfilled to exact minor units + cover variants seeded; reconciliation left the order unpaid; 0018 triggers reject NULL/negative/invalid-currency money.')
+}
+
+// 2g) V2 Phase 2 upgrade (0020-0023) from the accepted Phase-1 schema with
+//     EXISTING catalogue/order rows: the new tables must arrive, the derived
+//     rows must be produced from the products that are already there, the CMS
+//     defaults must exist exactly once, and NO existing row may change.
+{
+  const db = new DatabaseSync(':memory:')
+  const phase1 = allFiles.filter((f) => f < '0020_')
+  const phase2 = allFiles.filter((f) => f >= '0020_')
+  if (!phase2.length) {
+    console.error('FAIL [phase2 upgrade]: no 0020+ migrations found')
+    process.exit(1)
+  }
+  applyMigrationSet(db, phase1, 'phase2-upgrade (baseline 0001-0019)')
+
+  // Pre-existing catalogue + order rows, inserted the way a real Phase-1
+  // deployment would have them.
+  db.exec(`
+    INSERT INTO products (slug, title, tagline, description, story, price, price_minor, currency, image, gender, category, ages, age_min, age_max, pages, reviews, rating, bestseller, new_release, career, traits_json, active)
+    VALUES ('legacy-book', 'Legacy Book', 't', 'd', 's', 34.99, 3499, 'USD', '/static/img/art/cover-the-quiet-drum.svg', 'unisex', 'book', '4-8', 4, 8, 32, 2924, 4.9, 0, 0, 0, '[]', 1);
+    INSERT INTO product_variants (product_id, code, label, price_minor, currency, is_default, sort_order)
+      SELECT id, 'hardcover', 'Hardcover', 3499, 'USD', 1, 0 FROM products WHERE slug = 'legacy-book';
+    INSERT INTO orders (full_name, email, address, city, country, subtotal, discount, shipping, total, subtotal_minor, discount_minor, shipping_minor, total_minor, currency, status)
+      VALUES ('Legacy', 'legacy@example.com', 'a', 'c', 'US', 34.99, 0, 0, 34.99, 3499, 0, 0, 3499, 'USD', 'pending_preview');
+  `)
+
+  applyMigrationSet(db, phase2, 'phase2-upgrade (apply 0020-0023)')
+  assertTables(db, 'phase2 upgrade')
+  assertTriggers(db, 'phase2 upgrade')
+
+  const fail = (msg) => {
+    console.error(`FAIL [phase2 upgrade]: ${msg}`)
+    process.exit(1)
+  }
+
+  // The product-derived rows were created for the EXISTING product.
+  const memberships = db.prepare("SELECT COUNT(*) AS n FROM collection_products cp JOIN products p ON p.id = cp.product_id WHERE p.slug = 'legacy-book'").get().n
+  if (memberships < 1) fail('no collection membership was derived for the pre-existing product')
+  const prices = db.prepare("SELECT pp.currency AS currency FROM product_prices pp JOIN products p ON p.id = pp.product_id WHERE p.slug = 'legacy-book' ORDER BY pp.currency").all().map((r) => r.currency)
+  for (const code of ['AUD', 'CAD', 'EUR', 'GBP', 'USD']) {
+    if (!prices.includes(code)) fail(`the upgrade did not produce a ${code} price row (got ${prices.join(',') || 'none'})`)
+  }
+  const facts = db.prepare("SELECT page_count, production_estimate_days FROM product_facts pf JOIN products p ON p.id = pf.product_id WHERE p.slug = 'legacy-book'").get()
+  if (!facts) fail('no product_facts row was created for the pre-existing product')
+  if (facts.production_estimate_days !== null) fail('a production estimate was invented for a build with no print pipeline')
+  const cover = db.prepare("SELECT COUNT(*) AS n FROM product_media pm JOIN products p ON p.id = pm.product_id WHERE p.slug = 'legacy-book' AND pm.role = 'cover'").get().n
+  if (cover !== 1) fail(`expected exactly one cover media row, got ${cover}`)
+
+  // The legacy invented aggregates were neutralised, and nothing else on the
+  // product changed.
+  const product = db.prepare("SELECT price_minor, reviews, rating FROM products WHERE slug = 'legacy-book'").get()
+  if (product.price_minor !== 3499) fail(`the upgrade changed the price (${product.price_minor})`)
+  if (product.reviews !== 0 || product.rating !== 0) fail('the legacy invented review aggregate was not neutralised')
+
+  // The existing order is untouched and still unpaid.
+  const order = db.prepare("SELECT status, total_minor, currency FROM orders WHERE email = 'legacy@example.com'").get()
+  if (order.status !== 'pending_preview') fail(`the upgrade changed the order status to ${order.status}`)
+  if (order.total_minor !== 3499) fail(`the upgrade changed the order total (${order.total_minor})`)
+
+  // No review rows were invented, and the CMS defaults exist exactly once.
+  const reviews = db.prepare('SELECT COUNT(*) AS n FROM reviews').get().n
+  if (reviews !== 0) fail(`the upgrade seeded ${reviews} fabricated review row(s)`)
+  const blocks = db.prepare('SELECT COUNT(*) AS n FROM cms_blocks').get().n
+  const navItems = db.prepare('SELECT COUNT(*) AS n FROM cms_nav_items').get().n
+  const faqs = db.prepare('SELECT COUNT(*) AS n FROM cms_faqs').get().n
+  if (blocks < 5 || navItems < 5 || faqs < 5) fail('the CMS defaults were not seeded')
+  const brandSettings = db.prepare("SELECT COUNT(*) AS n FROM site_settings WHERE key LIKE 'brand.%'").get().n
+  if (brandSettings < 1) fail('the brand override keys were not created')
+
+  // Re-applying the Phase-2 files must not duplicate any seeded CMS row.
+  applyMigrationSet(db, phase2, 'phase2-upgrade (re-apply 0020-0023)')
+  const blocks2 = db.prepare('SELECT COUNT(*) AS n FROM cms_blocks').get().n
+  const navItems2 = db.prepare('SELECT COUNT(*) AS n FROM cms_nav_items').get().n
+  const faqs2 = db.prepare('SELECT COUNT(*) AS n FROM cms_faqs').get().n
+  const media2 = db.prepare('SELECT COUNT(*) AS n FROM media_assets').get().n
+  const mediaOnce = db.prepare("SELECT COUNT(*) AS n FROM media_assets WHERE public_path = '/static/img/art/hero.svg'").get().n
+  if (blocks2 !== blocks || navItems2 !== navItems || faqs2 !== faqs) fail('re-applying the Phase-2 migrations duplicated CMS content')
+  if (mediaOnce !== 1) fail('re-applying the Phase-2 migrations duplicated a media asset')
+  const memberships2 = db.prepare('SELECT COUNT(*) AS n FROM collection_products').get().n
+  const membershipDupes = db.prepare('SELECT COUNT(*) AS n FROM (SELECT collection_id, product_id FROM collection_products GROUP BY collection_id, product_id HAVING COUNT(*) > 1)').get().n
+  if (membershipDupes !== 0) fail('re-applying produced duplicate collection memberships')
+
+  console.log(`OK [phase2 upgrade]: 0020-0023 applied over existing rows; ${prices.length} currency prices, facts + cover derived, legacy aggregates neutralised, order untouched and unpaid, ${blocks} CMS blocks / ${navItems} nav entries / ${faqs} FAQs / ${media2} media rows stable across a re-apply.`)
 }
 
 // 3) Repeated migration behavior — `wrangler d1 migrations apply` tracks
