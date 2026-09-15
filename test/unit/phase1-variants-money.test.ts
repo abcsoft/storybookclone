@@ -55,7 +55,7 @@ describe('D-09 integer minor-unit money is the authority', () => {
   it('rounds a percentage discount at the minor-unit (cent) boundary, half-up', async () => {
     // 14.99 (1499 minor) at 20% = 299.8 minor -> 300 (exactly $3.00).
     await seedBook('variant-book', 14.99)
-    await env.DB.prepare(`INSERT INTO discounts (code, percent, min_books, applies_to, auto_apply, active) VALUES ('T20', 20, 1, 'all', 0, 1)`).run()
+    await env.DB.prepare(`INSERT INTO discounts (code, percent, percent_bps, min_books, applies_to, scope, auto_apply, active) VALUES ('T20', 20, 2000, 1, 'all', 'all', 0, 1)`).run()
     const quote = await quoteCart(env.DB, [{ slug: 'variant-book', qty: 1 }], 'T20')
     expect(quote.discountMinor).toBe(300)
     expect(quote.discount).toBeCloseTo(3, 2)

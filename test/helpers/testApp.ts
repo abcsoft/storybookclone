@@ -48,6 +48,19 @@ export type TestEnv = {
   GENERATION_VALIDATION_API_KEY?: string
   /** M-2: only `cloudflare` (in a production environment) arms the trusted-proxy boundary. */
   TRUSTED_PROXY?: string
+  /**
+   * V2 Phase 4 payments. `PAYMENT_PROVIDER=deterministic-fake` selects the
+   * OFFLINE test provider, which is additionally gated on
+   * ENVIRONMENT=development. Tests that exercise the "no provider configured"
+   * path simply do not set it — which is also what a real deployment defaults to.
+   */
+  PAYMENTS_DISABLED?: string
+  PAYMENT_PROVIDER?: string
+  PAYMENT_FAKE_WEBHOOK_SECRET?: string
+  STRIPE_SECRET_KEY?: string
+  STRIPE_WEBHOOK_SECRET?: string
+  STRIPE_API_BASE?: string
+  STRIPE_WEBHOOK_TOLERANCE_SECONDS?: string
   /** L-D: overrides for the single brand/identity boundary (src/brand.ts). */
   BRAND_NAME?: string
   BRAND_TAGLINE?: string
