@@ -67,6 +67,11 @@ import { PHOTO_POLICY, photoPolicySummary } from './photo-policy'
 import { requestPasswordReset, resetPassword } from './password-reset'
 import { consumeRateLimit } from './rate-limit'
 import { registerPersonalizationRoutes } from './personalization/routes'
+import { registerGenerationRoutes } from './generation/routes'
+import { getGenerationProviders } from './generation/providers'
+import { loadJob, latestVisibleJobForBook } from './generation/jobs'
+import { jobView, previewAssetUrl } from './generation/routes'
+import { renderGenerationPanel, type GenerationPanelState } from './pages_generation'
 import { transitionOrderStatus, transitionPreviewStatus } from './orders-status'
 import { brand, configureBrand } from './brand'
 import { createProduct, updateProduct } from './product-variants'
@@ -86,6 +91,7 @@ import {
 import { consumeRateLimit as durableRateLimit } from './rate-limit'
 import { recordAdminAudit } from './admin-audit'
 import { resolveOwner as resolvePersonalizationOwner } from './personalization/ownership'
+import { getActiveApproval } from './personalization/approvals'
 import { ownerToken as personalizationOwnerToken } from './personalization/uploads'
 
 export type Bindings = {
@@ -126,6 +132,35 @@ export type Bindings = {
   FACE_ANALYSIS_PROVIDER?: string
   FACE_ANALYSIS_API_URL?: string
   FACE_ANALYSIS_API_KEY?: string
+  // ---- V2 Phase 3 generation configuration (src/generation/providers/*) ----
+  // Which adapter a generation step uses is decided by the PINNED PROMPT
+  // VERSION's `provider` column ('http' | 'deterministic-fake' | 'disabled');
+  // these variables supply the real adapters' credentials. A capability is
+  // configured only when BOTH its URL and key are present, and a non-HTTPS
+  // endpoint is refused outside an explicit development environment.
+  //   GENERATION_STORY_API_URL / _API_KEY          story text
+  //   GENERATION_ILLUSTRATION_API_URL / _API_KEY   illustrations
+  //   GENERATION_TRANSLATION_API_URL / _API_KEY    translations
+  //   GENERATION_VALIDATION_API_URL / _API_KEY     output validation
+  GENERATION_STORY_API_URL?: string
+  GENERATION_STORY_API_KEY?: string
+  GENERATION_ILLUSTRATION_API_URL?: string
+  GENERATION_ILLUSTRATION_API_KEY?: string
+  GENERATION_TRANSLATION_API_URL?: string
+  GENERATION_TRANSLATION_API_KEY?: string
+  GENERATION_VALIDATION_API_URL?: string
+  GENERATION_VALIDATION_API_KEY?: string
+  // The Cloudflare Queue producer binding. Absent -> no wake-up is delivered
+  // (the durable job row plus the scheduled recovery sweep are the fallback);
+  // see docs/V2_ARCHITECTURE_BASELINE.md for the deployment decision.
+  GENERATION_QUEUE?: Queue<{ jobId: number; jobPublicId: string; correlationId: string }>
+  // Development-only convenience: drain due jobs in the same request. Requires
+  // ENVIRONMENT=development AND an explicit '1', so it can never silently
+  // become the production architecture.
+  GENERATION_INLINE_DISPATCH?: string
+  // Deployment-wide kill switch: '1' makes every generation capability resolve
+  // to its fail-closed adapter.
+  GENERATION_DISABLED?: string
   // M-2: the ONLY way to arm the trusted-proxy boundary that makes the
   // `CF-Connecting-IP` header authoritative for rate-limit identity. Set it
   // to exactly `cloudflare` in a deployed Cloudflare environment; leave it
@@ -486,6 +521,11 @@ app.use('*', async (c, next) => {
 // analysis, personalization revisions) — see src/personalization/*.
 registerPersonalizationRoutes(app)
 
+// V2 Phase 3 generation domain (queue-driven generation, watermarked previews,
+// revisions and approvals) plus the private preview-asset route — see
+// src/generation/*.
+registerGenerationRoutes(app)
+
 // Every browser (guest or logged-in) gets a stable, opaque, httpOnly upload
 // ownership token. It has nothing to do with login — it's what lets order
 // creation reject a photo upload key that belongs to a DIFFERENT browser
@@ -715,6 +755,14 @@ app.post('/reset-password', async (c) => {
     const bookPrice = defaultVariant?.price ?? Number(p?.price ?? 0)
     const languages = (await c.env.DB.prepare('SELECT code, name FROM languages WHERE active = 1 ORDER BY name').all<{ code: string; name: string }>()).results || []
 
+    // GEN-09: the generation panel is SERVER-RENDERED from the real job and
+    // preview rows, so a refresh always shows the truth and the page never
+    // depends on a client-side cache. public/static/generation.js then polls
+    // the same API to keep an in-flight job live.
+    const generationPanelHtml = book
+      ? renderGenerationPanel(await loadGenerationPanelState(c.env as never, book))
+      : ''
+
     const readerHtml = personalizedBookReaderPage({
       slug,
       title,
@@ -739,11 +787,83 @@ app.post('/reset-password', async (c) => {
       userBookId: book?.public_id ?? undefined,
       userBookVersion: book?.version,
       readOnly,
-      orderItemId: q.orderItemId ? Number(q.orderItemId) : undefined
+      orderItemId: q.orderItemId ? Number(q.orderItemId) : undefined,
+      generationPanelHtml
     })
 
     return html(c, `${title} - Customizer`, readerHtml, 'my-books')
   })
+
+/**
+ * Everything the customer's generation panel needs, read fresh from the
+ * database: the latest visible job for THIS book, and the ready preview for the
+ * book's CURRENT revision only (an older revision's preview is history, not
+ * something to present as "your preview").
+ */
+async function loadGenerationPanelState(
+  env: { DB: D1Database; PHOTOS?: R2Bucket; ENVIRONMENT?: string },
+  book: { id: number; public_id: string; state: string; current_revision: number }
+): Promise<GenerationPanelState> {
+  const job = await latestVisibleJobForBook(env.DB, book.id)
+  const preview = await env.DB
+    .prepare("SELECT * FROM preview_versions WHERE user_book_id = ? AND input_revision = ? AND status = 'ready' ORDER BY id DESC LIMIT 1")
+    .bind(book.id, book.current_revision)
+    .first<{ id: number; input_revision: number; scene_count: number; watermark_label: string | null; manifest_checksum: string | null; finalized_at: string | null }>()
+
+  let previewView: GenerationPanelState['preview'] = null
+  if (preview) {
+    const assets = await env.DB.prepare('SELECT * FROM preview_assets WHERE preview_version_id = ? ORDER BY id').bind(preview.id).all<{
+      asset_type: string
+      object_key: string
+      checksum: string
+      scene_id: number | null
+      is_watermarked: number
+      width: number | null
+      height: number | null
+    }>()
+    const order = await env.DB
+      .prepare('SELECT id, sort_order FROM book_scenes WHERE id IN (SELECT scene_id FROM preview_assets WHERE preview_version_id = ?)')
+      .bind(preview.id)
+      .all<{ id: number; sort_order: number }>()
+    const sortOrder = new Map((order.results || []).map((r) => [r.id, r.sort_order]))
+    const pages = (assets.results || [])
+      .filter((a) => a.asset_type === 'page_preview' && a.is_watermarked === 1)
+      .sort((a, b) => (sortOrder.get(a.scene_id ?? 0) ?? 0) - (sortOrder.get(b.scene_id ?? 0) ?? 0))
+      .map((a) => ({
+        sceneId: a.scene_id,
+        checksum: a.checksum,
+        width: a.width,
+        height: a.height,
+        watermarked: a.is_watermarked === 1,
+        // An opaque, entitlement-checked app route — never an R2 URL.
+        url: previewAssetUrl(a.object_key)
+      }))
+    const approvalRow = await getActiveApproval(env.DB, book.id)
+    const approval = approvalRow?.preview_version_id === preview.id
+    previewView = {
+      version: preview.input_revision,
+      id: preview.id,
+      status: 'ready',
+      sceneCount: preview.scene_count,
+      watermarkLabel: preview.watermark_label,
+      manifestChecksum: preview.manifest_checksum,
+      finalizedAt: preview.finalized_at,
+      pages,
+      isCurrentRevision: true,
+      approved: approval,
+      canApprove: !approval
+    }
+  }
+
+  return {
+    userBookId: book.public_id,
+    bookState: book.state,
+    currentRevision: book.current_revision,
+    job: await jobView(env.DB, job),
+    preview: previewView,
+    providers: getGenerationProviders(env as never, env.PHOTOS).health()
+  }
+}
 
 // Guest order confirmation. The order id in the URL is not itself an
 // authorization check — the token query param (an HMAC over the order id,

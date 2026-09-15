@@ -168,6 +168,49 @@ export function pdfRequestStatus(id) {
   return request('/api/v1/books/pdf-requests/' + encodeURIComponent(id))
 }
 
+// ---- V2 Phase 3: generation, previews, revisions and approvals ----
+
+function jsonInit(body) {
+  return { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) }
+}
+
+/** Ask for a watermarked preview to be created for this book's current revision. */
+export function requestGeneration(id) {
+  return request(`/api/v1/user-books/${encodeURIComponent(id)}/generations`, jsonInit({}))
+}
+
+/** The real job/preview state — the source of truth the progress panel polls. */
+export function generationStatus(id) {
+  return request(`/api/v1/user-books/${encodeURIComponent(id)}/generation`)
+}
+
+/** Every stored preview version for this book, newest revision first. */
+export function generationPreviews(id) {
+  return request(`/api/v1/user-books/${encodeURIComponent(id)}/previews`)
+}
+
+export function previewVersion(id, version) {
+  return request(`/api/v1/user-books/${encodeURIComponent(id)}/previews/${encodeURIComponent(version)}`)
+}
+
+export function cancelGeneration(id, reason) {
+  return request(`/api/v1/user-books/${encodeURIComponent(id)}/generation/cancel`, jsonInit({ reason }))
+}
+
+export function retryGeneration(id) {
+  return request(`/api/v1/user-books/${encodeURIComponent(id)}/generation/retry`, jsonInit({}))
+}
+
+/** Approves an EXACT preview version, not "the latest". */
+export function approvePreview(id, previewVersion) {
+  return request(`/api/v1/user-books/${encodeURIComponent(id)}/approvals`, jsonInit({ previewVersion }))
+}
+
+/** Requests changes to an exact preview version, with a required note. */
+export function requestRevision(id, note, previewVersion) {
+  return request(`/api/v1/user-books/${encodeURIComponent(id)}/revisions`, jsonInit({ note, previewVersion }))
+}
+
 export function subscribeNewsletter(email) {
   return request('/api/newsletter', {
     method: 'POST',

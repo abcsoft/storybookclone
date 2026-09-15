@@ -22,6 +22,8 @@ export type ProspectRow = {
   id: string
   capability_hash: string
   consent_at: string | null
+  /** PER-09: the consent wording version this guest accepted, if it was recorded. */
+  consent_version?: string | null
   retention_deadline: number | null
   expires_at: number
   claimed_by_user_id: number | null

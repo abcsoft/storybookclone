@@ -10,12 +10,31 @@
 // `manual_photo_review` is the ONE honest modelled outcome when no
 // production face-analysis provider is configured: the book is explicitly
 // flagged for human review and checkout is allowed (see C-01/C-02/C-03).
+//
+// V2 Phase 3 EXTENDED this list (never rewrote it) with the generation half of
+// the canonical state contract in §7 of the coding pack: generation_queued,
+// generating, preview_ready, revision_requested, approved, production_queued,
+// production_ready and the companion terminal states photo_rejected,
+// generation_failed and production_failed. Only the states up to
+// `revision_requested` are reachable in Phase 3; the production states are
+// declared here so the contract is complete and Phase 7 does not have to
+// invent them.
 export type UserBookState =
   | 'draft'
   | 'awaiting_photo_analysis'
   | 'awaiting_face_selection'
   | 'ready_to_generate'
   | 'manual_photo_review'
+  | 'generation_queued'
+  | 'generating'
+  | 'preview_ready'
+  | 'revision_requested'
+  | 'approved'
+  | 'production_queued'
+  | 'production_ready'
+  | 'photo_rejected'
+  | 'generation_failed'
+  | 'production_failed'
   | 'expired'
   | 'cancelled'
 
@@ -25,6 +44,16 @@ export const USER_BOOK_STATES: readonly UserBookState[] = [
   'awaiting_face_selection',
   'ready_to_generate',
   'manual_photo_review',
+  'generation_queued',
+  'generating',
+  'preview_ready',
+  'revision_requested',
+  'approved',
+  'production_queued',
+  'production_ready',
+  'photo_rejected',
+  'generation_failed',
+  'production_failed',
   'expired',
   'cancelled'
 ]
@@ -44,6 +73,9 @@ export type UserBookRow = {
   selected_face_id: string | null
   idempotency_key: string | null
   consent_at: string | null
+  // PER-09: the consent wording version the owner accepted. NULL means the
+  // book predates consent versioning — never back-filled with a guess.
+  consent_version: string | null
   retention_deadline: number | null
   version: number
   created_at: string

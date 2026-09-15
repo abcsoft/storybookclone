@@ -20,6 +20,7 @@
 
 import { esc } from './layout'
 import { adminPage } from './admin'
+import { generationLanguageCompleteness } from './generation/admin'
 import { BLOCK_KINDS, type BlockKind } from './cms'
 
 type Row = Record<string, any>
@@ -704,7 +705,8 @@ export async function adminLocalization(db: D1Database): Promise<string> {
   </tbody></table>
   <p class="a-inline-note">Currency availability is a price-row question: a title appears in a currency only when it has a price for it, which you set on the product's Variants &amp; prices screen.</p>
   `
-  return adminPage({ title: 'Localization', active: 'localization', body })
+  const generationCoverage = await generationLanguageCompleteness(db)
+  return adminPage({ title: 'Localization', active: 'localization', body: body + generationCoverage })
 }
 
 export { pageHead, notice }

@@ -7,8 +7,9 @@ import { PHOTO_POLICY, photoPolicySummary } from '../photo-policy'
 import { DomainError, type UserBookRow, type PersonalizationInputRow } from './types'
 import { type Owner, loadOwnedUserBook } from './ownership'
 import { getOwnedCompletedUpload, getOwnedUpload } from './uploads'
-import { attachInitialPhoto, beginPhotoAnalysis, resetForNewPhoto, loadUserBook, type TransitionContext } from './state-machine'
+import { attachInitialPhoto, beginPhotoAnalysis, resetForNewPhoto, noteRevisionAfterPreview, loadUserBook, type TransitionContext } from './state-machine'
 import { getActiveApproval, buildInvalidateActiveApprovalStmt } from './approvals'
+import { DEFAULT_RETENTION_DAYS, getPublishedConsent, recordConsent } from './consent'
 
 // Centralized limits — the SAME constants src/orders.ts's legacy snapshot
 // truncation uses (see the Phase 2 integration edit there), so the
@@ -278,6 +279,19 @@ export async function patchPersonalization(db: D1Database, owner: Owner, publicI
   } else if (fresh.state === 'draft' && !fresh.selected_upload_key) {
     fresh = await attachInitialPhoto(db, fresh, ctx, effective.photoUploadKey)
     fresh = await beginPhotoAnalysis(db, fresh, ctx)
+  } else {
+    // Editing the details of a book that already HAS a preview is a revision:
+    // the contract's preview_ready -> revision_requested edge. The active
+    // approval was already invalidated atomically above.
+    fresh = await noteRevisionAfterPreview(db, fresh, ctx, { revision: newRevision })
+  }
+
+  // PER-09: the photo has just been attached or replaced, which is the moment
+  // consent genuinely applies. Recording it here — and only here — anchors the
+  // retention deadline to a real event rather than to whichever request happens
+  // to arrive first.
+  if (photoChanged || (latest === null && effective.photoUploadKey)) {
+    fresh = await recordConsent(db, fresh, ctx)
   }
 
   return { book: fresh, revision: revisionRow, created: true }
@@ -298,9 +312,24 @@ export async function getPersonalizationSchema(db: D1Database, productSlug: stri
   const product = await db.prepare('SELECT age_min, age_max FROM products WHERE slug = ? AND active = 1').bind(productSlug).first<{ age_min: number; age_max: number }>()
   if (!product) throw new DomainError('unknown_product', 'Unknown or inactive product.', 404)
   const languages = await db.prepare('SELECT code, name, native_name, direction FROM languages WHERE active = 1 ORDER BY name').all<{ code: string; name: string; native_name: string; direction: string }>()
+  const consent = await getPublishedConsent(db)
 
   return {
     productSlug,
+    // PER-09: the exact consent wording version this environment operates
+    // under, so the UI can name it and the customer's agreement is recorded
+    // against a specific version rather than against "the terms".
+    consent: consent
+      ? {
+          version: consent.version,
+          title: consent.title,
+          summary: consent.summary,
+          pageSlug: consent.pageSlug,
+          // The window the retention deadline is derived from — the same value
+          // the retention sweep actually enforces.
+          retentionDays: DEFAULT_RETENTION_DAYS
+        }
+      : null,
     ageRange: { min: product.age_min, max: product.age_max, behaviour: AGE_BEHAVIOUR },
     languages: languages.results || [],
     childName: {

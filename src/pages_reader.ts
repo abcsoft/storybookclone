@@ -32,6 +32,11 @@ export type PersonalizedBookData = {
   /** Post-order viewer: hide "continue to cart", show order context for the PDF request. */
   readOnly?: boolean
   orderItemId?: number
+  /**
+   * V2 Phase 3: the server-rendered generation/preview panel (GEN-09). Already
+   * escaped by src/pages_generation.ts — it is markup, not a user value.
+   */
+  generationPanelHtml?: string
 }
 
 export function personalizedBookReaderPage(data: PersonalizedBookData) {
@@ -208,6 +213,8 @@ export function personalizedBookReaderPage(data: PersonalizedBookData) {
       </div>
 
     </section>
+
+    ${data.generationPanelHtml || ''}
 
     <!-- Floating Bottom Navigation Bar -->
     <nav class="reader-floating-footer" id="reader-floating-footer">

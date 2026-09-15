@@ -36,13 +36,24 @@ import {
   PAGE_KINDS
 } from './admin_cms'
 import { adminReviews } from './admin_reviews'
+import {
+  adminGenerationJobDetail,
+  adminGenerationJobs,
+  adminGenerationPreviews,
+  adminGenerationTemplateDetail,
+  adminGenerationTemplates
+} from './generation/admin'
+import { bindDraftPrompt, clonePromptVersionToDraft, cloneTemplateToDraft, publishPromptVersion, publishTemplate, retireTemplate, saveDraftScene } from './generation/templates'
+import { cancelJob, retryJob } from './generation/jobs'
+import { drainDueJobs } from './generation/pipeline'
+import { getGenerationProviders } from './generation/providers'
 import { parseReviewFilters } from './reviews'
 import { adminPage } from './admin'
 import { adminActor } from './auth'
 import { recordAdminAudit } from './admin-audit'
 import { BLOCK_KINDS } from './cms'
 
-type AdminEnv = { Bindings: { DB: D1Database }; Variables: { user: { id?: number; email?: string } | null } }
+type AdminEnv = { Bindings: { DB: D1Database; PHOTOS?: R2Bucket; ENVIRONMENT?: string }; Variables: { user: { id?: number; email?: string } | null } }
 type AdminCtx = Context<AdminEnv>
 
 function actorOf(c: AdminCtx): { id: number | null; email: string | null } {
@@ -84,7 +95,187 @@ function optionalInt(value: unknown, min: number, max: number): number | null {
   return intParam(raw, min, max)
 }
 
+/**
+ * ADM-08/ADM-10/ADM-11 routes. Registered from inside
+ * registerAdminStoreRoutes(), which src/index.tsx calls AFTER the central
+ * `/admin/*` authorization guard — so every route here is admin-only by
+ * construction, and each mutation additionally validates its input, writes one
+ * audit event and redirects (so a refresh cannot replay a write).
+ */
+function registerGenerationAdminRoutes(app: Hono<any>) {
+  // ---------------------------------------------------------------- ADM-08
+  app.get('/admin/generation/templates', async (c: AdminCtx) =>
+    c.html(await adminGenerationTemplates(c.env.DB, { flash: c.req.query('saved'), error: c.req.query('error'), productId: optionalInt(c.req.query('product'), 1, Number.MAX_SAFE_INTEGER) ?? undefined }))
+  )
+
+  app.get('/admin/generation/templates/:id', async (c: AdminCtx) => {
+    const id = intParam(c.req.param('id'), 1, Number.MAX_SAFE_INTEGER)
+    if (id == null) return c.html(adminPage({ title: 'Not found', active: 'templates', body: '<p class="a-notice error">Invalid template id.</p>' }), 404)
+    return c.html(await adminGenerationTemplateDetail(c.env.DB, id, { flash: c.req.query('saved'), error: c.req.query('error') }))
+  })
+
+  app.post('/admin/generation/templates/:id/clone', async (c: AdminCtx) => {
+    const id = intParam(c.req.param('id'), 1, Number.MAX_SAFE_INTEGER)
+    if (id == null) return c.redirect(flashRedirect('/admin/generation/templates', 'Invalid template id.', true))
+    try {
+      const draft = await cloneTemplateToDraft(c.env.DB, id)
+      await audit(c, 'generation.template.clone', 'book_template', draft.id, { fromTemplateId: id, version: draft.version })
+      return c.redirect(flashRedirect(`/admin/generation/templates/${draft.id}`, `Cloned into draft v${draft.version}. Published versions are immutable, so this is the only way to change one.`))
+    } catch (err) {
+      return c.redirect(flashRedirect(`/admin/generation/templates/${id}`, err instanceof Error ? err.message : 'Could not clone the template.', true))
+    }
+  })
+
+  app.post('/admin/generation/templates/:id/publish', async (c: AdminCtx) => {
+    const id = intParam(c.req.param('id'), 1, Number.MAX_SAFE_INTEGER)
+    if (id == null) return c.redirect(flashRedirect('/admin/generation/templates', 'Invalid template id.', true))
+    try {
+      const published = await publishTemplate(c.env.DB, id)
+      await audit(c, 'generation.template.publish', 'book_template', id, { version: published.version })
+      return c.redirect(flashRedirect(`/admin/generation/templates/${id}`, `Published v${published.version}. The previous published version for this product and language was retired in the same atomic step.`))
+    } catch (err) {
+      return c.redirect(flashRedirect(`/admin/generation/templates/${id}`, err instanceof Error ? err.message : 'Could not publish the template.', true))
+    }
+  })
+
+  app.post('/admin/generation/templates/:id/retire', async (c: AdminCtx) => {
+    const id = intParam(c.req.param('id'), 1, Number.MAX_SAFE_INTEGER)
+    if (id == null) return c.redirect(flashRedirect('/admin/generation/templates', 'Invalid template id.', true))
+    const form = await c.req.parseBody()
+    const reason = str(form.reason, 200)
+    if (reason.length < 3) return c.redirect(flashRedirect(`/admin/generation/templates/${id}`, 'A retirement needs a short reason.', true))
+    try {
+      await retireTemplate(c.env.DB, id)
+      await audit(c, 'generation.template.retire', 'book_template', id, { reason })
+      return c.redirect(flashRedirect(`/admin/generation/templates/${id}`, 'Template retired.'))
+    } catch (err) {
+      return c.redirect(flashRedirect(`/admin/generation/templates/${id}`, err instanceof Error ? err.message : 'Could not retire the template.', true))
+    }
+  })
+
+  app.post('/admin/generation/templates/:id/scenes/:sceneId', async (c: AdminCtx) => {
+    const id = intParam(c.req.param('id'), 1, Number.MAX_SAFE_INTEGER)
+    const sceneId = intParam(c.req.param('sceneId'), 1, Number.MAX_SAFE_INTEGER)
+    if (id == null || sceneId == null) return c.redirect(flashRedirect('/admin/generation/templates', 'Invalid id.', true))
+    const form = await c.req.parseBody()
+    const scene = await c.env.DB.prepare('SELECT * FROM book_scenes WHERE id = ? AND template_id = ?').bind(sceneId, id).first<Record<string, any>>()
+    if (!scene) return c.redirect(flashRedirect(`/admin/generation/templates/${id}`, 'That scene is not on this template.', true))
+    const sortOrder = intParam(form.sortOrder, 0, 999)
+    if (sortOrder == null) return c.redirect(flashRedirect(`/admin/generation/templates/${id}`, 'The scene order must be a whole number between 0 and 999.', true))
+    let layout: Record<string, any> = {}
+    try {
+      layout = JSON.parse(String(scene.layout_json))
+    } catch {
+      layout = {}
+    }
+    layout.subject = str(form.subject, 300)
+    try {
+      await saveDraftScene(c.env.DB, id, { sceneKey: String(scene.scene_key), sortOrder, kind: String(scene.kind) as never, layout })
+      await audit(c, 'generation.scene.update', 'book_scene', sceneId, { templateId: id, sortOrder })
+      return c.redirect(flashRedirect(`/admin/generation/templates/${id}`, 'Scene saved.'))
+    } catch (err) {
+      // The layout validator's message names the exact problem, so surface it.
+      return c.redirect(flashRedirect(`/admin/generation/templates/${id}`, err instanceof Error ? err.message : 'Could not save the scene.', true))
+    }
+  })
+
+  app.post('/admin/generation/templates/:id/bindings', async (c: AdminCtx) => {
+    const id = intParam(c.req.param('id'), 1, Number.MAX_SAFE_INTEGER)
+    if (id == null) return c.redirect(flashRedirect('/admin/generation/templates', 'Invalid template id.', true))
+    const form = await c.req.parseBody()
+    const kind = str(form.kind, 20)
+    const promptVersionId = intParam(form.promptVersionId, 1, Number.MAX_SAFE_INTEGER)
+    if (promptVersionId == null || !['story_text', 'illustration', 'translation'].includes(kind)) {
+      return c.redirect(flashRedirect(`/admin/generation/templates/${id}`, 'Pick a prompt version for a supported kind.', true))
+    }
+    try {
+      await bindDraftPrompt(c.env.DB, id, kind as never, promptVersionId)
+      await audit(c, 'generation.template.bind_prompt', 'book_template', id, { kind, promptVersionId })
+      return c.redirect(flashRedirect(`/admin/generation/templates/${id}`, `${kind} prompt pinned.`))
+    } catch (err) {
+      return c.redirect(flashRedirect(`/admin/generation/templates/${id}`, err instanceof Error ? err.message : 'Could not pin the prompt.', true))
+    }
+  })
+
+  app.post('/admin/generation/prompts/:id/clone', async (c: AdminCtx) => {
+    const id = intParam(c.req.param('id'), 1, Number.MAX_SAFE_INTEGER)
+    if (id == null) return c.redirect(flashRedirect('/admin/generation/templates', 'Invalid prompt id.', true))
+    try {
+      const draft = await clonePromptVersionToDraft(c.env.DB, id)
+      await audit(c, 'generation.prompt.clone', 'prompt_version', draft.id, { fromPromptVersionId: id, version: draft.version })
+      return c.redirect(flashRedirect('/admin/generation/templates', `Cloned ${draft.prompt_key} v${draft.version} as a draft.`))
+    } catch (err) {
+      return c.redirect(flashRedirect('/admin/generation/templates', err instanceof Error ? err.message : 'Could not clone the prompt.', true))
+    }
+  })
+
+  app.post('/admin/generation/prompts/:id/publish', async (c: AdminCtx) => {
+    const id = intParam(c.req.param('id'), 1, Number.MAX_SAFE_INTEGER)
+    if (id == null) return c.redirect(flashRedirect('/admin/generation/templates', 'Invalid prompt id.', true))
+    try {
+      const published = await publishPromptVersion(c.env.DB, id)
+      await audit(c, 'generation.prompt.publish', 'prompt_version', id, { provider: published.provider, model: published.model })
+      return c.redirect(flashRedirect('/admin/generation/templates', `Published ${published.prompt_key} v${published.version} (${published.provider}). Note: a template that has already left draft keeps the version it pinned.`))
+    } catch (err) {
+      return c.redirect(flashRedirect('/admin/generation/templates', err instanceof Error ? err.message : 'Could not publish the prompt.', true))
+    }
+  })
+
+  // ---------------------------------------------------------------- ADM-10
+  app.get('/admin/generation/jobs', async (c: AdminCtx) =>
+    c.html(await adminGenerationJobs(c.env.DB, { status: str(c.req.query('status'), 20), flash: c.req.query('saved'), error: c.req.query('error') }))
+  )
+
+  app.get('/admin/generation/jobs/:id', async (c: AdminCtx) => {
+    const id = intParam(c.req.param('id'), 1, Number.MAX_SAFE_INTEGER)
+    if (id == null) return c.html(adminPage({ title: 'Not found', active: 'generation', body: '<p class="a-notice error">Invalid job id.</p>' }), 404)
+    return c.html(await adminGenerationJobDetail(c.env.DB, id, { flash: c.req.query('saved'), error: c.req.query('error') }))
+  })
+
+  app.post('/admin/generation/jobs/:id/retry', async (c: AdminCtx) => {
+    const id = intParam(c.req.param('id'), 1, Number.MAX_SAFE_INTEGER)
+    if (id == null) return c.redirect(flashRedirect('/admin/generation/jobs', 'Invalid job id.', true))
+    const outcome = await retryJob(c.env.DB, id, { type: 'admin', id: actorOf(c).id == null ? null : String(actorOf(c).id) })
+    if (!outcome.retried) return c.redirect(flashRedirect('/admin/generation/jobs', `That job cannot be retried (${outcome.reason ?? 'unknown'}).`, true))
+    await audit(c, 'generation.job.retry', 'generation_job', id)
+    return c.redirect(flashRedirect(`/admin/generation/jobs/${id}`, 'Job requeued with a fresh attempt budget.'))
+  })
+
+  app.post('/admin/generation/jobs/:id/cancel', async (c: AdminCtx) => {
+    const id = intParam(c.req.param('id'), 1, Number.MAX_SAFE_INTEGER)
+    if (id == null) return c.redirect(flashRedirect('/admin/generation/jobs', 'Invalid job id.', true))
+    const form = await c.req.parseBody()
+    const reason = str(form.reason, 200)
+    if (reason.length < 3) return c.redirect(flashRedirect(`/admin/generation/jobs/${id}`, 'A cancellation needs a reason.', true))
+    const outcome = await cancelJob(c.env.DB, id, { type: 'admin', id: actorOf(c).id == null ? null : String(actorOf(c).id) }, reason)
+    if (!outcome.cancelled && !outcome.alreadyCancelled) {
+      return c.redirect(flashRedirect(`/admin/generation/jobs/${id}`, outcome.reason === 'already_succeeded' ? 'This job already succeeded.' : 'That job can no longer be cancelled.', true))
+    }
+    await audit(c, 'generation.job.cancel', 'generation_job', id, { reason })
+    return c.redirect(flashRedirect(`/admin/generation/jobs/${id}`, 'Job cancelled.'))
+  })
+
+  app.post('/admin/generation/dispatch', async (c: AdminCtx) => {
+    const providers = getGenerationProviders(c.env, c.env.PHOTOS)
+    const report = await drainDueJobs(c.env.DB, { providers }, { maxJobs: 10 })
+    await audit(c, 'generation.dispatch', 'generation_job', null, {
+      claimed: report.claimed,
+      promotedRetries: report.promotedRetries,
+      leasesReclaimed: report.recovered.leasesExpired,
+      outcomes: report.outcomes
+    })
+    const summary = `claimed ${report.claimed}, reclaimed ${report.recovered.leasesExpired} lease(s), promoted ${report.promotedRetries} retry/retries`
+    return c.redirect(flashRedirect('/admin/generation/jobs', `Dispatch sweep complete: ${summary}.`))
+  })
+
+  // ---------------------------------------------------------------- ADM-11
+  app.get('/admin/generation/previews', async (c: AdminCtx) =>
+    c.html(await adminGenerationPreviews(c.env.DB, { status: str(c.req.query('status'), 30), flash: c.req.query('saved'), error: c.req.query('error') }))
+  )
+}
+
 export function registerAdminStoreRoutes(app: Hono<any>) {
+  registerGenerationAdminRoutes(app)
   // ---------------------------------------------------------------- ADM-06
   app.get('/admin/catalog', async (c: AdminCtx) => {
     const url = new URL(c.req.url)
