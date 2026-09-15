@@ -353,14 +353,14 @@ report is `docs/V2_PHASE1_COMPLETION_REPORT.md`.
 | S-03 | **closed** | POST-only logout + storefront header control | unit; e2e logout helper | — |
 | S-04 | **closed** | `corsGuard` allowlist-only | unit deny/allowlist/preflight | — |
 | S-05 | **closed** | `securityHeaders` | unit (public + private routes) | CSP hardening (nonces) Phase 8 |
-| S-06 | **closed** | durable limiter on login/register/admin-login/contact/newsletter/upload x2/user-book create/order create | unit (block + hashed key); e2e | Distributed edge rate limiting Phase 8 (PLT-02) |
-| S-07 | **closed** | `src/orders-status.ts` + `order_state_events` (0015) | `test/unit/phase1-admin.test.ts`; e2e admin.4 | Full order machine Phase 4 |
+| S-06 | **closed** (corrected by M-2) | durable limiter on login/register/admin-login/contact/newsletter/upload x2/user-book create/order create; client identity now honours `CF-Connecting-IP` **only** at a verified trusted-proxy boundary (`TRUSTED_PROXY=cloudflare` in production), otherwise one shared bucket | unit (block + hashed key + rotating forged headers cannot split the bucket); e2e | Distributed edge rate limiting Phase 8 (PLT-02) |
+| S-07 | **closed** (corrected by M-1) | `src/orders-status.ts` + `order_state_events` (0015); the CAS UPDATE and the history INSERT are now one logical atomic operation (`INSERT … SELECT … WHERE changes() = 1`), so a zero-row CAS writes **no** event | `test/unit/phase1-admin.test.ts`; **`test/unit/phase1-transition-atomicity.test.ts`** (real concurrent double transition, both services); e2e admin.4 | Full order machine Phase 4 |
 | S-08 | **deferred** | single `admin` role today | — | RBAC/permission matrix Phase 6 (ADM-02) |
 | S-09 | **partial** (audit exists; re-auth deferred) | `admin_audit_events`, `recordAdminAudit` | `test/unit/phase1-admin.test.ts` | High-risk re-auth + full audit UI Phase 6 |
 | S-10 | **closed** (dashboard shows order value) | `src/index.tsx` (`SUM(total_minor)`, non-cancelled, labelled value) | `test/unit/phase1-admin.test.ts` | Ledger-backed paid/net revenue Phase 4 |
 | S-11 | **documented, not scheduled** | `src/personalization/retention.ts` exists; **no** `triggers.crons` / `scheduled` export | unit retention tests | Deployed Cron + observation Phase 8 (PLT-10) |
 | S-12 | **closed for the working tree** | real-person photos deleted; neutral placeholders; no dump/PII tracked | unit truthful-claims (files absent + unreferenced); `git ls-files` review | **History still contains the removed photos** — owner decision (rewrite vs accept) |
-| S-13 | **partial** (rendered reference assets/copy removed) | reference screenshots + reader mockups deleted; PDP banner advertises only the real discount (0017) | unit truthful-claims | Catalog artwork + brand replacement Phase 2 (SF-01) |
+| S-13 | **partial — not complete** (corrected wording; the earlier "rendered reference assets removed" claim overclaimed) | reference screenshots/reader mockups and the two remaining unreferenced reference images deleted; the owner's brand string no longer renders anywhere (single `src/brand.ts` boundary, neutral `Storybook Studio` default; `0019` neutralises the brand-derived `ai_settings` row); PDP banner advertises only the real discount (0017). **Still outstanding: the catalog cover/marketing artwork shipped by the original clone remains in place and is still the reference site's artwork.** | unit truthful-claims; `test/unit/phase1-brand-boundary.test.ts`; e2e identity gate | Owner must supply the final brand (name/logo/tagline/contact/legal entity) **and** replacement catalog artwork + CMS-backed content — Phase 2 (SF-01) |
 | S-14 | **closed as draft (owner/legal review required)** | `legalPage` draft banner + section copy | unit truthful-claims | Jurisdiction-aware content/workflows Phase 2/8 |
 | S-15 | **closed** (Phase 0) | `scripts/secrets-scan.mjs` | `test/unit/secrets-scan.test.ts`; both scan modes pass | — |
 | S-16 | **closed** (Phase 0) | migrations are the only schema authority | `test/unit/admin-bootstrap.test.ts` | — |
@@ -371,17 +371,20 @@ with the limitation named above.
 
 ## 7. Verification state captured in Phase 0
 
-| Command | Baseline | After Phase 0 | After Phase 1 |
-|---|---|---|---|
-| `npm run typecheck` | 0 errors | 0 errors | 0 errors |
-| `npm run test` | 204/204 (11 files) | 226/226 (13 files) | **343/343 (19 files)** |
-| `npm run test:integration` | 8/8 migration scenarios | 8/8 | **9/9** |
-| `npm run secrets:scan` | PASS git mode only | PASS git + archive | PASS git (176 files) + archive (177 files) |
-| `npm run build` | 261.25 kB / 76.20 kB gz | 258.80 kB / 75.94 kB gz | 283.06 kB / 84.52 kB gz |
-| `npm run test:e2e` | **BLOCKED** (`db:reset` lock) | PASS (guest/auth/double-submit/multi-face) | **PASS** (10 journey groups, above) |
-| `npm run audit:frontend` | see §16 report | see §16 report | **PASS, 0 findings** |
-| `npm audit --omit=dev` | 0 vulnerabilities | 0 vulnerabilities | 0 vulnerabilities |
-| `npm audit` | 3 high (dev: sharp←miniflare←wrangler) | 3 high (unchanged) | 3 high (unchanged; dev-tool chain only) |
+| Command | Baseline | After Phase 0 | After Phase 1 | After audit correction |
+|---|---|---|---|---|
+| `npm run typecheck` | 0 errors | 0 errors | 0 errors | 0 errors |
+| `npm run test` | 204/204 (11 files) | 226/226 (13 files) | 343/343 (19 files) | **428/428 (26 files)** |
+| `npm run test:integration` | 8/8 migration scenarios | 8/8 | 9/9 | **9/9** (45 tables + 12 columns; 0018 triggers asserted) |
+| `npm run secrets:scan` | PASS git mode only | PASS git + archive | PASS git (176) + archive (177) | **PASS git (186) + archive (187)** |
+| `npm run build` | 261.25 kB / 76.20 kB gz | 258.80 kB / 75.94 kB gz | 283.06 kB / 84.52 kB gz | **291.75 kB / 87.40 kB gz** |
+| `npm run test:e2e` | **BLOCKED** (`db:reset` lock) | PASS (guest/auth/double-submit/multi-face) | PASS (10 journey groups) | **PASS** (10 journey groups) |
+| `npm run audit:frontend` | see §16 report | see §16 report | PASS, 0 findings | **PASS, 0 findings** (`phase1-correction`) |
+| `npm audit --omit=dev` | 0 vulnerabilities | 0 vulnerabilities | 0 vulnerabilities | **0 vulnerabilities** |
+| `npm audit` | 3 high (dev: sharp←miniflare←wrangler) | 3 high (unchanged) | 3 high (unchanged) | **3 high (unchanged; dev-tool chain only)** |
+
+The final column is the V2 Phase-1 Independent Audit correction cycle
+(§11 below).
 
 Phase-1 closure status per ID, with code proof, test/browser proof, remaining
 limitation and next owning phase, is recorded in §6.6 below and in the
@@ -579,3 +582,27 @@ partial-upgrade recovery tests.
 | Supersede notice | `STORYBOOKCLONE_COMPLETION_CODING_PACK.md` | traceability hygiene |
 | Baseline docs | `docs/V2_BASELINE_TRACEABILITY.md`, `docs/V2_ARCHITECTURE_BASELINE.md`, `docs/V2_PHASE0_COMPLETION_REPORT.md` | traceability contract |
 | V2 pack tracked | `STORYBOOKCLONE_COMPLETE_CODING_PACK_V2.md` | authoritative spec |
+
+## 11. V2 Phase-1 Independent Audit — finding status (M-1…M-3, L-A…L-E)
+
+The audit was performed against `f6f9873` on `fix/phase2-critical-recovery`.
+Every item below is fixed by new commits on top of that point (no amend/rebase/
+rewrite) with a real regression test; nothing here is a documentation-only
+claim. Full detail, exact commands and observed output are in
+`docs/V2_PHASE1_COMPLETION_REPORT.md` §13.
+
+| ID | Severity | Status | Code proof | Regression proof |
+|---|---|---|---|---|
+| M-1 | blocker | **fixed** | `src/orders-status.ts` (`guardedEventInsert`, `resolveCasOutcome`): the history INSERT is `… SELECT … WHERE changes() = 1` inside the CAS batch, so a zero-row CAS writes no event and returns 409 | `test/unit/phase1-transition-atomicity.test.ts` (6) — real concurrent double transition for `transitionOrderStatus` **and** `transitionPreviewStatus`, one-sided lost CAS, append-only triggers |
+| M-2 | major | **fixed** | `src/security.ts` (`cloudflareBoundaryVerified`, `isIpLiteral`, `SHARED_RATE_LIMIT_BUCKET`, `clientIp`) + `TRUSTED_PROXY` binding | `test/unit/phase1-client-identity.test.ts` (11) — rotating forged headers cannot split buckets; constant identity honoured only at the verified boundary; local dev + boundary route-level limits |
+| M-3 | major | **fixed** | `src/personalization/face-analysis.ts` (`HttpFaceAnalysisAdapter`): HTTPS-only outside local/test, `AbortSignal` deadline, 1 MiB cap, JSON content type, max 20 faces, contained normalized boxes, clamped confidence, unknown-category mapping, duplicate-id rejection, secret/body redaction | `test/unit/phase1-face-provider-hardening.test.ts` (21, mocked fetch) |
+| L-A | lesser | **fixed** | `src/security.ts::csrfGuard`: guest-credentialed (prospect/upload cookie) mutations now require same-origin proof; foreign proof always rejected; documented no-cookie/safe-method exceptions preserved | `test/unit/phase1-guest-origin.test.ts` (9) |
+| L-B | lesser | **fixed** | `migrations/0018_money_invariants.sql` (`iso_currencies` allowlist, deterministic reconcile that never marks an order paid, NULL/negative/currency/arithmetic triggers on orders/order_items/products/product_variants) + service validation in `src/product-variants.ts` | `test/unit/phase1-money-invariants.test.ts` (14, raw-SQL negatives); `scripts/test-integration.mjs` (legacy order still unpaid; triggers reject NULL/negative/invalid currency) |
+| L-C | lesser | **fixed** | `src/product-variants.ts` (atomic product+default-variant creation, activation gate, replacement-required removal, atomic default move); admin product routes wired to it; misleading "exactly one default variant per product" wording corrected (0016's index only bounds the count from above) | `test/unit/phase1-variant-invariant.test.ts` (15) |
+| L-D | lesser | **fixed** | `src/brand.ts` (single configuration boundary; neutral default `Storybook Studio`; `BRAND_*` overrides) consumed by layout/pages/admin/PDP-editor/emails/titles; `migrations/0019_neutral_ai_settings_defaults.sql`; two unreferenced reference-content images deleted; fabricated "millions" claim replaced; legacy `wonderwraps_cart` storage key deliberately kept and documented | `test/unit/phase1-brand-boundary.test.ts` (9, rendered-route sweep); `scripts/test-e2e.mjs` identity gate derives the brand from `src/brand.ts` |
+| L-E | lesser | **fixed** | `public/static/pdp.css` (`.btn-paypal-express`, `.btn-paypal-later`, `.cart-express-pay-grid` removed), `public/static/style.css` (`.pay-marks` removed) | `test/unit/phase1-brand-boundary.test.ts` (dead-selector assertions) |
+
+**Additional defect found in the L-C repair path** (not in the audit list):
+`src/index.tsx`'s admin product create/update handlers had a column/argument
+arity defect that made the admin product form unable to create or save a
+product at all. Fixed by routing both handlers through `src/product-variants.ts`.

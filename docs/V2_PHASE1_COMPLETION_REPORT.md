@@ -2,13 +2,24 @@
 
 **Verdict: COMPLETE** (with explicitly-enumerated deferrals — see §9 and §10)
 
+> **Correction cycle.** The V2 Phase-1 Independent Audit raised three
+> blocker/major findings (M-1…M-3) and five lesser findings (L-A…L-E) against
+> the state recorded in the sections below. All eight are fixed on this branch
+> by new commits, each with real regression tests. **§13 is the authoritative,
+> current record**; where a figure below differs from §13, §13 is newer.
+
 **Branch:** `fix/phase2-critical-recovery`
 
 **Baseline HEAD:** `e9640b3` (parent chain `6e080e8` audited Phase-0 tip → `f76f446`); `main` = obsolete `4d76779`, untouched.
 
-**Final HEAD:** recorded in §11 (this report is committed with the work).
+**Final HEAD:** recorded in §11 (this report is committed with the work) and in
+`docs/V2_AUTONOMOUS_COMPLETION_PROGRESS.md`.
 
-**Migrations added:** `0017_truthful_pdp_banner.sql` this run (`0015_integrity_security_recovery.sql`, `0016_phase1_variants_money.sql` were added by the earlier Phase-1 commits). `0001`–`0014` are untouched — verified by `git log --follow`/diff on `migrations/`.
+**Migrations added:** `0017_truthful_pdp_banner.sql` this run
+(`0015_integrity_security_recovery.sql`, `0016_phase1_variants_money.sql` were
+added by the earlier Phase-1 commits), plus — in the §13 correction cycle —
+`0018_money_invariants.sql` and `0019_neutral_ai_settings_defaults.sql`.
+`0001`–`0017` are untouched — verified by `git log --follow`/diff on `migrations/`.
 
 ---
 
@@ -209,6 +220,10 @@ owner-authored banner text untouched.
 
 ## 6. Verification
 
+> **Superseded by §13.** The figures below are the pre-correction snapshot
+> (`343/343` unit tests, 19 files). The current numbers after the audit
+> correction cycle are `428/428` in 26 files — see §13.
+
 | Command | Result | Exact figures |
 |---|---|---|
 | `npm run typecheck` | **PASS** (exit 0) | 0 errors |
@@ -339,3 +354,223 @@ plan's numbering — note our local `0016` is already taken by
 - No test was weakened, skipped or deleted. No gate is reported as passed that
   did not actually run — all ten gates above were executed in this session with
   the exit codes and counts shown.
+
+---
+
+# 13. Correction cycle — V2 Phase-1 Independent Audit (M-1…M-3, L-A…L-E)
+
+**This section supersedes §6's numbers.** The audit was performed against this
+branch at `f6f9873`. Every finding was fixed with new commits on top of
+`f6f9873` (no amend/rebase/rewrite) and a real regression test.
+
+## 13.1 Findings, fixes, evidence
+
+### M-1 (blocker) — a lost compare-and-swap wrote a permanent false history event
+
+*Defect.* `transitionOrderStatus` / `transitionPreviewStatus` ran
+`db.batch([UPDATE … WHERE id=? AND status=?, INSERT INTO order_state_events …])`.
+A guarded UPDATE that matched **zero** rows still committed the event INSERT, so
+the loser of a concurrent race appended a permanent false row to an append-only
+table (0015 triggers reject UPDATE/DELETE, so it could never be cleaned up).
+Demonstrated directly against the real migrated schema:
+
+```
+PRE-FIX  loser update.changes = 0 | false events written = 1 | total events = 2
+```
+
+*Fix (`src/orders-status.ts`).* The history INSERT is now conditional on the CAS
+having actually changed a row, evaluated in the same batch/transaction:
+
+```sql
+INSERT INTO order_state_events (…) SELECT ?, 'admin', ?, 'order', 'status_change', ?, ?, ?, ?
+WHERE changes() = 1
+```
+
+plus a shared `guardedEventInsert()` / `resolveCasOutcome()` pair; the loser is
+detected from the batch's own per-statement `meta.changes` (UPDATE index 0,
+guarded INSERT index 1) and returns 409. No post-hoc cleanup exists because the
+false row is never created.
+
+*Test:* `test/unit/phase1-transition-atomicity.test.ts` (6 tests) drives a real
+double transition for **both** services using a read barrier that holds both
+callers after they have observed the same `from` state (so it is a genuine lost
+update, not a timing guess), plus a one-sided lost CAS where the row moves
+between the service's read and its CAS.
+
+*Observed evidence (quoted from the run):*
+
+```
+EVIDENCE results: [{"ok":true,"from":"pending_preview","to":"preview_sent","noop":false},
+                   {"ok":false,"status":409,"error":"This order was updated by another request. Reload and try again."}]
+EVIDENCE rows changed: preview_sent | events written: 1
+```
+
+i.e. exactly one winner, exactly one event, the loser's status code is **409**,
+and no extra event. The same file also asserts the 0015 append-only triggers
+still reject UPDATE/DELETE on `order_state_events`.
+
+### M-2 (major) — `CF-Connecting-IP` was trusted unconditionally
+
+*Fix (`src/security.ts`).* `clientIp()` now honours the header **only** at a
+verified Cloudflare production boundary: an explicit `TRUSTED_PROXY=cloudflare`
+opt-in in a non-development environment (`cloudflareBoundaryVerified()`), and
+only when the value parses as a real IPv4/IPv6 literal (`isIpLiteral()`).
+Everywhere else — local dev, preview, a non-Cloudflare deploy, a malformed
+header — all callers share ONE `SHARED_RATE_LIMIT_BUCKET`, so rotating a forged
+header cannot manufacture identities. `X-Forwarded-For`/`X-Real-IP` are never
+trusted (no configured trusted-proxy chain exists to validate them).
+`TRUSTED_PROXY` is declared in `Bindings`.
+
+*Test:* `test/unit/phase1-client-identity.test.ts` (11 tests) — rotating forged
+headers collapse to one bucket for every real limiter key
+(login/register/contact/newsletter/upload/order), a constant CF identity is
+honoured only at the verified boundary, and route-level newsletter/login limits
+are exercised in local dev and at the boundary.
+
+### M-3 (major) — unsafe face-provider output
+
+*Fix (`src/personalization/face-analysis.ts`).* `HttpFaceAnalysisAdapter` now:
+HTTPS-only outside an explicit local/test mode; an `AbortSignal` deadline;
+a JSON content-type requirement; a 1 MiB response cap (streamed, not
+post-buffered); a maximum of 20 faces; finite, normalized, **contained** boxes
+with positive width/height; confidence validated and clamped to 0..1;
+missing/unrecognised categories mapped to `unknown` (**never** `child`);
+duplicate/empty ids and malformed records rejected; and every error message
+stripped of the endpoint, its query token, the bearer key and the provider body.
+The deterministic fake remains gated to `ENVIRONMENT=development`.
+
+*Test:* `test/unit/phase1-face-provider-hardening.test.ts` (21 tests, mocked
+fetch only — no real network) covering timeout, HTTP failure, oversized body,
+wrong content type, malformed JSON, invalid boxes, invalid confidence, unknown
+category, excessive faces, duplicate ids and secret redaction.
+
+### L-A — guest Origin enforcement
+
+*Fix (`src/security.ts::csrfGuard`).* Any request carrying an auth cookie
+(session **or** guest `ww_upload`/`ww_prospect`) is now rejected if the proof is
+foreign, and a guest-credentialed mutation with **no** Origin/Referer is
+rejected (a guest capability cookie has no second factor, so it may not
+substitute a token for the origin proof). The documented exceptions are
+preserved: safe methods are never blocked, and a request with no cookie at all
+(webhooks, API-key callers, token-in-URL flows) is exempt because it carries no
+ambient authority to ride.
+
+*Test:* `test/unit/phase1-guest-origin.test.ts` (9 tests) — missing → 403,
+foreign → 403, valid Origin **and** valid Referer alone → 200, bogus token does
+not unlock a guest, plus the unchanged session-cookie cases.
+
+### L-B — database money invariants (migration `0018`)
+
+*Fix (`migrations/0018_money_invariants.sql`).* Adds the `iso_currencies`
+ISO-4217 allowlist; reconciles any remaining NULL minor values deterministically
+from each row's **own** legacy REAL column **without touching order status or
+any payment column**; and installs `BEFORE INSERT` / `BEFORE UPDATE OF <money
+columns>` triggers on `orders`, `order_items`, `products` and
+`product_variants` that reject a NULL or negative minor amount, a negative
+compare-at, an invalid currency, `discount > subtotal`, and any order where
+`total_minor ≠ subtotal_minor − discount_minor + shipping_minor`. A table
+rebuild was deliberately avoided: `0005`/`0006`/`0011` trigger bodies depend on
+these tables and SQLite rewrites dependent trigger bodies on `RENAME`.
+Service-side validation was added too (`createProduct`/`updateProduct` reject
+non-finite/negative/non-integer prices with a friendly form error).
+
+*Tests:* `test/unit/phase1-money-invariants.test.ts` (14 tests) with **raw SQL
+negative tests** — negative total, NULL minor amounts, invalid currency, broken
+arithmetic, `discount > subtotal`, and the equivalent UPDATE negatives — plus
+service-level assertions that an API-created order satisfies the invariant and
+that a negative admin price is refused with no row written. The integration
+suite additionally proves the reconciled legacy order is **still unpaid**
+(`status = pending_preview`, no discount code invented) and that the 0018
+triggers reject NULL/negative/invalid-currency money in a fully migrated DB.
+
+### L-C — exactly-one-active-default-variant invariant
+
+*Fix (`src/product-variants.ts`, wired into the admin product routes).* 0016's
+partial unique index only bounds the default count from above; the misleading
+"Exactly one default variant per product" claim is corrected in the new module's
+documentation and in the traceability doc. The service now guarantees the real
+rule: `createProduct()` writes the product **and** its default variant in one
+atomic batch; `checkPurchasableVariantInvariant()` / `assertCanActivate()` gate
+activation; `deactivateVariant()` / `deleteVariant()` refuse to remove a
+product's only active default unless another active variant is named as the
+replacement (or the product is deactivated first); `setDefaultVariant()` moves
+the default atomically. No cover/format price difference is invented — the
+variant is priced from the caller's own price.
+
+*Tests:* `test/unit/phase1-variant-invariant.test.ts` (15 tests) — atomic
+creation (a failing insert leaves neither row), zero-default active product
+rejected, duplicate default rejected by the DB, activate-without-default refused
+(service **and** admin route, with the reason rendered), deactivate/delete the
+only default refused, replacement accepted, and the product-deactivation escape
+hatch.
+
+### L-D — residual brand leakage
+
+*Fix (`src/brand.ts` — one configuration/CMS boundary).* Site name, logo, tagline,
+meta description, contact address, social handles, legal entity and copyright
+line now resolve from `resolveBrand(env)` / `brand()` with the neutral
+**`Storybook Studio`** default (owner-configurable via `BRAND_*`). Every
+template reads it: storefront layout/header/footer, contact, support, auth,
+blog, legal pages, FAQ + blog copy, admin chrome/login/PDP editor, the
+password-reset email subject, route titles (the site name is appended once in
+`page()`) and the 404 page. `migrations/0019` corrects the brand-derived
+`ai_settings` defaults that the admin AI page renders. Two remaining
+reference-content assets (`expressions.webp` character/expression reference
+sheet, `cart-cross-sell-bubble.webp` reference UI capture — both unreferenced)
+were deleted, and the fabricated "Adored by millions worldwide" claim was
+replaced with copy backed by the documented capability. The legacy internal
+identifier `wonderwraps_cart` is deliberately KEPT (cart-migration
+compatibility) and documented as a legacy name.
+
+*Tests:* `test/unit/phase1-brand-boundary.test.ts` (9 tests) renders every
+public/admin/legal/blog/checkout/404 route, the reader and the PDP and asserts no
+`Wonder[wraps]` variant appears anywhere; it also asserts the neutral default is
+what actually renders, that a configured brand name flows through, that no `src`
+file reintroduces the literal, and that no unsupported popularity claim renders.
+The e2e identity gate now derives the expected brand from `src/brand.ts` and
+fails the run if any legacy brand renders.
+
+### L-E — dead payment styling
+
+*Fix.* Removed `.btn-paypal-express`, `.btn-paypal-later`, their hover rules and
+the `.cart-express-pay-grid` wrapper from `public/static/pdp.css`, and the dead
+`.pay-marks` rule from `public/static/style.css` — styling that implied an
+unavailable payment method. A regression test asserts the selectors stay gone.
+
+## 13.2 Gate results for the correction cycle
+
+| Command | Exit | Exact figures |
+|---|---|---|
+| `npm run typecheck` | **0** | 0 errors |
+| `npm run test` | **0** | **428 passed / 428** across 26 files (was 343/19) |
+| `npm run test:integration` | **0** | 9/9 scenarios, "Migration smoke tests passed" (45 tables + 12 new columns; 0018 triggers asserted) |
+| `npm run secrets:scan` | **0** | git mode: no matches across 185 files at fix time, 186 once this docs commit added the progress record |
+| `npm run secrets:scan -- --mode=archive` | **0** | archive mode: no matches across 186 files at fix time, 187 once this docs commit added the progress record |
+| `npm run build` | **0** | `dist/_worker.js` 291.75 kB (gzip 87.40 kB) |
+| `npm run test:e2e` | **0** | all 10 journey groups passed (guest, authenticated, double-submission, multi-face, upload-attack, cart-reload, cover-agreement, csrf, admin, disabled-claims) |
+| `npm run audit:frontend -- phase1-correction` | **0** | 0 findings, desktop 1280 + mobile 390, every public/admin route |
+| `npm audit --omit=dev` | **0** | 0 vulnerabilities |
+| `npm audit` | **1** | 3 high — dev-only `sharp <0.35.4` ← `miniflare` ← `wrangler` (not shipped in `_worker.js`); **pre-existing and unchanged by this cycle** |
+
+## 13.3 Additional defect found and fixed while implementing L-C
+
+The admin product create/update handlers had a pre-existing **column/argument
+arity defect** (24 columns vs 21–23 bound values), so the admin product form
+could not create or save a product at all — the create path swallowed the error
+in a bare `catch`, and the update path had no product `price_minor` written
+correctly. Routing both handlers through the new `src/product-variants.ts`
+service fixed the arity, made `price`/`price_minor` consistent, and is what
+makes the L-C atomic-creation and activation-gate behaviour reachable at all.
+This was not in the audit list; it is reported here because it was found in the
+required repair path.
+
+## 13.4 Correction-cycle confirmations
+
+- New commits only, on `fix/phase2-critical-recovery`; `f6f9873` was **not**
+  amended, rebased or rewritten. Nothing was pushed.
+- `main` (`4d76779`) untouched. Migrations `0001`–`0017` untouched; new
+  forward-only migrations are `0018` and `0019`.
+- `.openclaw_test_out.txt` was never staged. No secrets/dumps/PII/child images
+  were added; two unreferenced reference-content images were removed.
+- No real provider/payment/email/AI call was made by any test or gate
+  (mocked fetch / deterministic fakes / local D1+R2 only).
