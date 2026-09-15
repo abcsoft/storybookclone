@@ -2,11 +2,20 @@
 // limiting (Workers isolates are ephemeral so an in-memory limiter would not
 // actually limit anything), and generic responses so the API never reveals
 // whether a given email has an account (enumeration protection).
+//
+// V2 Phase 5 (PLT-05): the reset email is delivered through the durable outbox
+// — the DECISION to send is a committed row, delivery is a separate recorded
+// attempt, and a retry can never produce a second copy of the same logical
+// mail. The Phase-1 fail-closed gate is unchanged and still runs BEFORE any
+// token row is created.
 import { brand } from './brand'
 import { hashPassword } from './auth'
 import { destroyAllSessionsForUser } from './auth'
 import { sha256Hex } from './secrets'
 import { getEmailAdapter, FailClosedEmailAdapter } from './email'
+import { sendEmailNow } from './mail/outbox'
+import type { MailEnv } from './mail/provider'
+import { recordSecurityEvent, notifyAccountSecurity } from './account/security'
 import { consumeRateLimit } from './rate-limit'
 
 const RESET_TOKEN_TTL_SECONDS = 30 * 60 // 30 minutes
@@ -58,16 +67,36 @@ export async function requestPasswordReset(db: D1Database, email: string, resetU
     .bind(user.id, tokenHash, expiresAt)
     .run()
 
-  await adapter.send({
+  // PLT-05: one durable row per logical reset mail (the token hash is unique
+  // per request, so two distinct requests are two distinct messages), then one
+  // recorded delivery attempt. A retry of THIS attempt reuses the same row.
+  const mailEnv: MailEnv = { ENVIRONMENT: environment }
+  await sendEmailNow(db, mailEnv, {
+    dedupeKey: `password-reset:${user.id}:${tokenHash}`,
+    templateKey: 'password_reset',
     to: user.email,
-    subject: `Reset your ${brand().name} password`,
-    text: `Reset your password: ${resetUrlBase}?token=${rawToken}\nThis link expires in 30 minutes and can only be used once. If you didn't request this, you can ignore this email.`
+    userId: user.id,
+    variables: {
+      brandName: brand().name,
+      actionUrl: `${resetUrlBase}?token=${rawToken}`,
+      expiresMinutes: String(Math.round(RESET_TOKEN_TTL_SECONDS / 60))
+    }
   })
 }
 
 export type ResetPasswordResult = { ok: true } | { ok: false; error: 'invalid_or_expired' | 'weak_password' }
 
-export async function resetPassword(db: D1Database, rawToken: string, newPassword: string): Promise<ResetPasswordResult> {
+/**
+ * `opts.env` (V2 Phase 5) enables the security notification for a completed
+ * reset. The security EVENT is always recorded — the notification is a
+ * best-effort consequence of it, never a precondition.
+ */
+export async function resetPassword(
+  db: D1Database,
+  rawToken: string,
+  newPassword: string,
+  opts: { env?: MailEnv; correlationId?: string } = {}
+): Promise<ResetPasswordResult> {
   if (!rawToken) return { ok: false, error: 'invalid_or_expired' }
   if (String(newPassword || '').length < 8) return { ok: false, error: 'weak_password' }
 
@@ -81,13 +110,24 @@ export async function resetPassword(db: D1Database, rawToken: string, newPasswor
     return { ok: false, error: 'invalid_or_expired' }
   }
 
-  await db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').bind(await hashPassword(newPassword), row.user_id).run()
+  await db.prepare('UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(await hashPassword(newPassword), row.user_id).run()
   await db.prepare('UPDATE password_reset_tokens SET used_at = CURRENT_TIMESTAMP WHERE id = ?').bind(row.id).run()
   // Invalidate any other outstanding reset links for this user, and force
   // re-login everywhere — the old password (and any session from it) should
   // no longer be trusted once the account owner has reset it.
   await db.prepare('DELETE FROM password_reset_tokens WHERE user_id = ? AND id != ?').bind(row.user_id, row.id).run()
   await destroyAllSessionsForUser(db, row.user_id)
+
+  await recordSecurityEvent(db, { userId: row.user_id, eventType: 'password_reset', metadata: { sessionsRevoked: true } })
+  if (opts.env) {
+    await notifyAccountSecurity(db, opts.env, {
+      userId: row.user_id,
+      eventType: 'password_reset',
+      eventTitle: 'your password was reset',
+      eventSummary: 'Your account password was reset and every signed-in session was signed out.',
+      correlationId: opts.correlationId
+    })
+  }
 
   return { ok: true }
 }
