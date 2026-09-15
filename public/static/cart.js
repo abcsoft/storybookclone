@@ -184,3 +184,88 @@ function notify(list) {
 export function cartCount(list) {
   return list.reduce((acc, i) => acc + (Number(i.qty) || 1), 0)
 }
+
+// ---------------------------------------------------------------------------
+// V2 Phase 4 (COM-01/COM-13): mirroring the offline cart into the SERVER cart.
+//
+// The server cart is the AUTHORITY for what is ordered and charged; this
+// localStorage cart is the fast, offline-friendly CACHE. `syncCartToServer()`
+// is the explicit bridge between them, and it is deliberately NOT called from
+// writeCart(): the storage module stays pure (and unit-testable without a
+// network), while the page entry points opt in to the mirroring.
+//
+// A copy of every line is sent; the server ADOPTS what it can validate and
+// reports the rest, so a line that has gone stale is surfaced rather than
+// silently dropped. Nothing here is trusted for a price.
+// ---------------------------------------------------------------------------
+let inFlight = null
+let pendingAgain = false
+// The signature of the last payload the server confirmed, so an unchanged cart
+// is not re-sent on every page load. Without this, simply browsing the storefront
+// would hammer the endpoint — and every one of those calls would be a no-op.
+const SYNC_SIGNATURE_KEY = 'ww_cart_synced'
+let lastSyncedSignature = null
+
+function signatureOf(payload) {
+  return JSON.stringify(payload)
+}
+
+function readSyncedSignature() {
+  if (lastSyncedSignature != null) return lastSyncedSignature
+  try {
+    lastSyncedSignature = typeof sessionStorage !== 'undefined' ? sessionStorage.getItem(SYNC_SIGNATURE_KEY) : null
+  } catch {
+    lastSyncedSignature = null
+  }
+  return lastSyncedSignature
+}
+
+function writeSyncedSignature(signature) {
+  lastSyncedSignature = signature
+  try {
+    if (typeof sessionStorage !== 'undefined') sessionStorage.setItem(SYNC_SIGNATURE_KEY, signature)
+  } catch {
+    /* storage unavailable (private mode) — the in-memory value still dedupes */
+  }
+}
+
+export async function syncCartToServer(items = readCart()) {
+  if (typeof fetch !== 'function' || typeof window === 'undefined') return null
+  if (inFlight) {
+    // Coalesce bursts (a qty stepper clicked quickly) into one follow-up call.
+    pendingAgain = true
+    return inFlight
+  }
+  const payload = (Array.isArray(items) ? items : []).map((i) => ({
+    slug: i.slug,
+    qty: i.qty,
+    userBookId: i.userBookId,
+    coverType: i.coverType
+  }))
+  // An EMPTY local cart has nothing to adopt, and must not create a server cart.
+  if (!payload.length) return null
+  const signature = signatureOf(payload)
+  if (signature === readSyncedSignature()) return null
+  inFlight = (async () => {
+    try {
+      const { reconcileCart } = await import('./api.js')
+      const result = await reconcileCart(payload)
+      // Only a SUCCESSFUL reconcile is remembered: a failure (offline, rate
+      // limited) must be retried on the next change rather than silently
+      // suppressed as "already synced".
+      if (result && result.ok) writeSyncedSignature(signature)
+      return result
+    } catch {
+      // A failed mirror must never break the page: the offline cart still works
+      // and checkout re-sends it.
+      return null
+    } finally {
+      inFlight = null
+      if (pendingAgain) {
+        pendingAgain = false
+        void syncCartToServer(readCart())
+      }
+    }
+  })()
+  return inFlight
+}

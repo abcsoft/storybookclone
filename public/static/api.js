@@ -144,6 +144,87 @@ export function placeOrder(payload, idempotencyKey) {
   })
 }
 
+// ---- V2 Phase 4: the server cart, expiring quotes and checkout sessions ----
+//
+// These are the AUTHORITATIVE commerce calls. The legacy `quote(items, ...)`
+// above remains for the offline cart's advisory summary; it never prices a
+// charge. Note that no function here accepts an amount: the server computes
+// every total from its own catalog and quote snapshot.
+
+export function serverCart() {
+  return request('/api/v1/cart')
+}
+
+export function addServerCartItem(item) {
+  return request('/api/v1/cart/items', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(item)
+  })
+}
+
+export function updateServerCartItem(id, qty) {
+  return request('/api/v1/cart/items/' + encodeURIComponent(id), {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ qty })
+  })
+}
+
+export function removeServerCartItem(id) {
+  return request('/api/v1/cart/items/' + encodeURIComponent(id), { method: 'DELETE' })
+}
+
+export function setCartCoupon(code) {
+  return request('/api/v1/cart/coupon', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code })
+  })
+}
+
+/** Adopts the offline cart's lines into the durable server cart (COM-13). */
+export function reconcileCart(items) {
+  return request('/api/v1/cart/reconcile', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ items: Array.isArray(items) ? items : [] })
+  })
+}
+
+/** Creates a durable, EXPIRING quote for the SERVER cart. No amounts are sent. */
+export function requestQuote(opts = {}) {
+  return request('/api/v1/cart/quote', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ shipping: opts.shipping, couponCode: opts.couponCode })
+  })
+}
+
+export function readQuote(quoteId) {
+  return request('/api/v1/checkout/quotes/' + encodeURIComponent(quoteId))
+}
+
+export function paymentConfig() {
+  return request('/api/v1/payments/config')
+}
+
+export function createCheckoutSession(payload, idempotencyKey) {
+  return request('/api/v1/checkout/session', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey },
+    body: JSON.stringify(payload || {})
+  })
+}
+
+export function checkoutSession(id) {
+  return request('/api/v1/checkout/sessions/' + encodeURIComponent(id))
+}
+
+export function reorder(orderId) {
+  return request('/api/v1/my/orders/' + encodeURIComponent(orderId) + '/reorder', { method: 'POST' })
+}
+
 export function myOrders() {
   return request('/api/v1/my/orders')
 }

@@ -901,7 +901,11 @@ export function checkoutPage(user: { name?: string; email?: string } | null = nu
         </select>
         <p class="tiny">No delivery is scheduled in this version: printing and shipping are later milestones, so these amounts are recorded on the order only.</p>
         <p class="tiny">Code <strong>EXTRA20</strong> applies automatically: 20% off when you order 2 or more books.</p>
-        <p class="tiny checkout-test-payment-notice">${icon('flask')} Test checkout — no real payment is collected. A production payment provider is a later milestone.</p>
+        ${/* COM-07: this notice is filled in by the CLIENT from the server's own
+             capability report, so it always describes what this deployment
+             actually does. The default below is deliberately neutral: it claims
+             neither that payment is taken nor that it is not. */ ''}
+        <p class="tiny checkout-test-payment-notice checkout-payment-notice" id="checkout-payment-notice">${icon('flask')} Checking how payment is handled for this store…</p>
         <div id="checkout-error" class="notice" role="alert" hidden></div>
         <button class="btn btn-primary" type="submit" id="place-order-btn">Place order</button>
       </form>

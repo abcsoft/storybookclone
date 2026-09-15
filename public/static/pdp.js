@@ -1,7 +1,15 @@
 // PDP-only interactivity: gallery slider + personalised preview & form controls.
 // ES module — imports the canonical cart store and the centralized API client
 // instead of touching localStorage / fetch directly.
-import { addItem } from './cart.js'
+import { addItem, onChange, syncCartToServer } from './cart.js'
+
+// COM-01/COM-13: mirror every offline cart change into the durable server cart.
+// The PDP is the main add-to-cart entry point, so it is one of the two places
+// that bridges the client cache and the server authority.
+onChange(() => {
+  void syncCartToServer()
+})
+void syncCartToServer()
 import { getPhotoPolicy, createUserBook, initiatePhotoUpload, completePhotoUpload, getUploadAnalysis, selectFace, patchPersonalization } from './api.js'
 
 // The server-owned contract rendered into the page (see

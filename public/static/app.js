@@ -1,8 +1,17 @@
 // --- app.js (Storefront & Cart interactive logic) — ES module ---
-import { readCart, writeCart, addItem, removeItem, setQty, cartCount } from './cart.js'
+import { readCart, writeCart, addItem, removeItem, setQty, cartCount, onChange, syncCartToServer } from './cart.js'
 import { quote as fetchQuote, subscribeNewsletter } from './api.js'
 import { money as formatMoney } from './format.js'
 import { initMobileNav, initSearch, initLocaleForm } from './shell.js'
+
+// COM-01/COM-13: every offline cart change is mirrored into the durable SERVER
+// cart, and any cart left from a previous visit is adopted on load. This is what
+// makes "the cart survives a refresh — and a payment return" true without any
+// page having to special-case it.
+onChange(() => {
+  void syncCartToServer()
+})
+void syncCartToServer()
 
 function updateCartBadge() {
   const badge = document.getElementById('cart-badge')
