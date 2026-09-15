@@ -86,6 +86,47 @@ export function orderTransitionNeedsReason(to: OrderStatus): boolean {
   return to === 'cancelled' || to === 'refunded' || to === 'partially_refunded' || to === 'disputed'
 }
 
+/**
+ * The states in which an order has been (or is being) MADE. Once production has
+ * completed there is a physical book, so moving `orders.status` back to
+ * `cancelled` cannot undo it — the Phase-4 rule "production/print state controls
+ * cancellation eligibility", expressed as data rather than as a branch buried in
+ * a route.
+ *
+ * `printing` is deliberately absent: `printing -> cancelled` is a pre-existing
+ * Phase-1 edge and is preserved verbatim (see the machine above).
+ *
+ * Note the two axes: a `shipped`/`delivered` order cannot be CANCELLED, but it
+ * can still be REFUNDED — a refund is a ledger operation on the payment axis and
+ * does not claim the book was never made.
+ */
+export const PRODUCTION_STATES: readonly OrderStatus[] = ['shipped', 'delivered'] as const
+
+export type CancellationEligibility = { eligible: boolean; reason: string }
+
+/**
+ * Whether an order in `status` may still move to `cancelled`, and — when it may
+ * not — a plain-language reason an operator can act on.
+ *
+ * Derived FROM `ORDER_STATUS_FLOW` rather than from a second, hand-maintained
+ * list, so this answer and `transitionOrderStatus`'s guard can never disagree:
+ * if an edge is ever added or removed, this follows automatically.
+ */
+export function cancellationEligibility(status: string): CancellationEligibility {
+  const from = String(status || '') as OrderStatus
+  const flow = ORDER_STATUS_FLOW[from]
+  if (!flow) return { eligible: false, reason: `"${status}" is not a known order status.` }
+  if (from === 'cancelled') return { eligible: false, reason: 'This order is already cancelled.' }
+  if (flow.includes('cancelled')) return { eligible: true, reason: '' }
+  if (PRODUCTION_STATES.includes(from)) {
+    return {
+      eligible: false,
+      reason: 'This order has already been produced and shipped, so it can no longer be cancelled. Refund it instead if it must be undone.'
+    }
+  }
+  return { eligible: false, reason: `An order that is ${statusLabel(from).toLowerCase()} cannot be cancelled.` }
+}
+
 export type TransitionOutcome = { ok: true; from: string; to: string; noop: boolean } | { ok: false; status: number; error: string }
 
 export type TransitionActor = { userId: number | null; email: string | null; requestId?: string }

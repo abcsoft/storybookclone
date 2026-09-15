@@ -3,7 +3,7 @@ import { esc } from './layout'
 import { brand } from './brand'
 import { money, type Product } from './data'
 import { type DiscountRow } from './db'
-import { ORDER_STATUSES, PREVIEW_STATUSES, ORDER_STATUS_FLOW, PREVIEW_STATUS_FLOW, orderTransitionNeedsReason, statusLabel, type OrderStatus, type PreviewStatus } from './orders-status'
+import { ORDER_STATUSES, PREVIEW_STATUSES, ORDER_STATUS_FLOW, PREVIEW_STATUS_FLOW, orderTransitionNeedsReason, statusLabel, cancellationEligibility, type OrderStatus, type PreviewStatus } from './orders-status'
 
 export function adminPage(opts: { title: string; active: string; body: string; subtitle?: string }) {
   // V2 Phase 2: the admin IA now mirrors §10. Navigation is data here (one
@@ -12,6 +12,7 @@ export function adminPage(opts: { title: string; active: string; body: string; s
   const nav = [
     ['dashboard', '/admin', 'fa-gauge', 'Dashboard'],
     ['orders', '/admin/orders', 'fa-box-open', 'Orders'],
+    ['finance', '/admin/finance', 'fa-file-invoice-dollar', 'Finance'],
     ['catalog', '/admin/catalog', 'fa-book', 'Catalog'],
     ['collections', '/admin/collections', 'fa-tag', 'Collections'],
     ['media', '/admin/media', 'fa-image', 'Media'],
@@ -96,11 +97,28 @@ export function adminDashboard(s: {
   pending: number
   messages: number
   recentOrders: any[]
+  /** ADM-03: ledger-derived captured/refunded/net, per currency. */
+  revenue: Array<{ currency: string; capturedMinor: number; refundedMinor: number; netMinor: number; paidOrders: number }>
+  /** ADM-03: orders with NO captured payment. Explicitly NOT revenue. */
+  unpaidOrders: number
 }) {
+  const fmt = (minor: number, currency: string) => {
+    try {
+      return new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(minor / 100)
+    } catch {
+      return `${(minor / 100).toFixed(2)} ${currency}`
+    }
+  }
+  const revenueText = s.revenue.length
+    ? s.revenue.map((r) => fmt(r.netMinor, r.currency)).join(' · ')
+    : 'No payments captured yet'
   const cards = [
-    // S-10: this is NOT revenue — no payment/ledger exists before Phase 4.
-    // It is the total value of non-cancelled orders, labelled honestly.
-    ['fa-sack-dollar', `$${s.orderValue.toFixed(2)}`, 'Order value (non-cancelled, unpaid)'],
+    // ADM-03: NET REVENUE comes from the ledger (captures minus refunds and
+    // losses). An unpaid order contributes nothing, so it can never be counted
+    // here no matter what its status says.
+    ['fa-file-invoice-dollar', revenueText, s.revenue.length ? 'Net revenue (ledger)' : 'Net revenue — nothing captured'],
+    // S-10/ADM-03: order VALUE is labelled as exactly that, never revenue.
+    ['fa-sack-dollar', `$${s.orderValue.toFixed(2)}`, `Order value — NOT revenue (${s.unpaidOrders} unpaid)`],
     ['fa-box-open', String(s.orders), 'Total orders'],
     ['fa-clock', String(s.pending), 'Awaiting preview/approval'],
     ['fa-users', String(s.users), 'Customers'],
@@ -117,7 +135,7 @@ export function adminDashboard(s: {
     </div>
     <h2>Latest orders</h2>
     ${ordersTable(s.recentOrders, false)}
-    <p><a class="a-link" href="/admin/orders">All orders →</a></p>`
+    <p><a class="a-link" href="/admin/orders">All orders →</a> · <a class="a-link" href="/admin/finance">Finance & reconciliation →</a></p>`
   })
 }
 
@@ -128,7 +146,7 @@ function statusBadge(s: string) {
 export function ordersTable(orders: any[], link = true) {
   if (!orders.length) return '<p class="muted">No orders yet.</p>'
   return `<div class="a-table-scroll"><table class="a-table">
-    <thead><tr><th>#</th><th>Customer</th><th>Items</th><th>Total</th><th>Status</th><th>Placed</th><th></th></tr></thead>
+    <thead><tr><th>#</th><th>Customer</th><th>Items</th><th>Total</th><th>Payment</th><th>Status</th><th>Placed</th><th></th></tr></thead>
     <tbody>
       ${orders
         .map(
@@ -136,7 +154,11 @@ export function ordersTable(orders: any[], link = true) {
         <td>${o.id}</td>
         <td><strong>${esc(o.full_name)}</strong><br><span class="muted">${esc(o.email)}</span></td>
         <td>${o.item_count ?? ''}</td>
-        <td>$${Number(o.total).toFixed(2)}</td>
+        <td>${(Number(o.total_minor ?? Number(o.total) * 100) / 100).toFixed(2)} ${esc(String(o.currency || 'USD'))}</td>
+        <td class="tiny">
+          ${statusBadge(String(o.payment_status || 'unpaid'))}
+          ${Number(o.amount_captured_minor ?? 0) > 0 ? `<br><span class="muted">captured ${(Number(o.amount_captured_minor) / 100).toFixed(2)}${Number(o.amount_refunded_minor ?? 0) > 0 ? ` · refunded ${(Number(o.amount_refunded_minor) / 100).toFixed(2)}` : ''}</span>` : '<br><span class="muted">no payment captured</span>'}
+        </td>
         <td>${statusBadge(o.status)}</td>
         <td class="muted">${esc(String(o.created_at))}</td>
         <td>${link ? `<a class="a-link" href="/admin/orders/${o.id}">Manage</a>` : `<a class="a-link" href="/admin/orders/${o.id}">View</a>`}</td>
@@ -166,7 +188,13 @@ export function adminOrders(orders: any[], currentStatus: string) {
   })
 }
 
-export function adminOrderDetail(o: any, items: any[], flash?: string, error?: string) {
+/**
+ * ADM-04: the order detail view. `financeHtml` is the ADM-12 payment/ledger/
+ * timeline panel, rendered by src/admin_finance.ts and injected here so the
+ * order screen is one place an operator can answer "what happened to this
+ * order, and what money moved?" without hopping between views.
+ */
+export function adminOrderDetail(o: any, items: any[], flash?: string, error?: string, financeHtml = '') {
   return adminPage({
     title: `Order #${o.id}`,
     active: 'orders',
@@ -181,11 +209,23 @@ export function adminOrderDetail(o: any, items: any[], flash?: string, error?: s
         <p class="muted">${esc(o.address)}, ${esc(o.city)}, ${esc(o.country)}</p>
         <p class="muted">Shipping: ${esc(o.shipping_method)} ($${Number(o.shipping).toFixed(2)}) · Placed ${esc(String(o.created_at))}</p>
         <table class="a-table mini">
-          <tr><td>Subtotal</td><td>$${Number(o.subtotal).toFixed(2)}</td></tr>
-          <tr><td>Discount${o.discount_code ? ` (${esc(o.discount_code)})` : ''}</td><td>−$${Number(o.discount).toFixed(2)}</td></tr>
-          <tr><td>Shipping</td><td>$${Number(o.shipping).toFixed(2)}</td></tr>
-          <tr><td><strong>Total</strong></td><td><strong>$${Number(o.total).toFixed(2)}</strong></td></tr>
+          ${(() => {
+            // The integer minor units are authoritative (COM-03); the legacy
+            // REAL columns are only a fallback for rows written before them.
+            const cur = String(o.currency || 'USD')
+            const m = (minor: unknown, major: unknown) => {
+              const value = minor != null ? Number(minor) / 100 : Number(major || 0)
+              return `${value.toFixed(2)} ${cur}`
+            }
+            return `
+          <tr><td>Subtotal</td><td>${m(o.subtotal_minor, o.subtotal)}</td></tr>
+          <tr><td>Discount${o.discount_code ? ` (${esc(o.discount_code)})` : ''}</td><td>−${m(o.discount_minor, o.discount)}</td></tr>
+          <tr><td>Shipping</td><td>${m(o.shipping_minor, o.shipping)}</td></tr>
+          <tr><td>Tax (included)</td><td>${m(o.tax_minor, 0)}</td></tr>
+          <tr><td><strong>Total</strong></td><td><strong>${m(o.total_minor, o.total)}</strong></td></tr>`
+          })()}
         </table>
+        <p class="tiny"><span class="badge-status">${esc(statusLabel(String(o.payment_status || 'unpaid')))}</span> payment · captured ${Number(o.amount_captured_minor ?? 0) / 100} ${esc(String(o.currency || 'USD'))} · refunded ${Number(o.amount_refunded_minor ?? 0) / 100}</p>
         <form method="post" action="/admin/orders/${o.id}/status" class="a-inline-form">
           <label>Order status
             <select name="status">
@@ -203,6 +243,15 @@ export function adminOrderDetail(o: any, items: any[], flash?: string, error?: s
             <input name="reason" type="text" maxlength="200" placeholder="Why is this changing?">
           </label>
           <button class="a-btn" type="submit">Update status</button>
+          ${(() => {
+            // When cancellation is not available, say WHY rather than leaving the
+            // operator to infer it from a missing option. Derived from the state
+            // machine, so it can never drift from the server-side guard.
+            const eligibility = cancellationEligibility(String(o.status))
+            return eligibility.eligible
+              ? ''
+              : `<p class="tiny" data-cancellation-eligibility="ineligible">Cancellation: not available — ${esc(eligibility.reason)}</p>`
+          })()}
         </form>
         <form method="post" action="/admin/orders/${o.id}/notes" class="a-inline-form">
           <label>Internal notes<textarea name="notes" rows="3">${esc(o.admin_notes || '')}</textarea></label>
@@ -242,7 +291,8 @@ export function adminOrderDetail(o: any, items: any[], flash?: string, error?: s
           )
           .join('')}
       </section>
-    </div>`
+    </div>
+    ${financeHtml}`
   })
 }
 
@@ -328,34 +378,75 @@ export function adminProductForm(p: Product | null, flash?: string) {
   })
 }
 
-export function adminDiscounts(rows: DiscountRow[], flash?: string, error?: string) {
+export function adminDiscounts(
+  rows: Array<Record<string, any>>,
+  usage: Map<number, { count: number; totalMinor: number }> = new Map(),
+  flash?: string,
+  error?: string
+) {
+  const money = (minor: number) => `$${(minor / 100).toFixed(2)}`
+  const rule = (r: Record<string, any>) => {
+    const parts: string[] = []
+    if (r.min_subtotal_minor != null) parts.push(`min ${money(Number(r.min_subtotal_minor))}`)
+    if (r.max_uses != null) parts.push(`max ${r.max_uses} uses`)
+    if (r.max_uses_per_owner != null) parts.push(`${r.max_uses_per_owner}/customer`)
+    if (r.max_discount_minor != null) parts.push(`cap ${money(Number(r.max_discount_minor))}`)
+    if (r.starts_at) parts.push(`from ${String(r.starts_at).slice(0, 10)}`)
+    if (r.ends_at) parts.push(`until ${String(r.ends_at).slice(0, 10)}`)
+    if (r.stackable) parts.push('stackable')
+    return parts.length ? parts.join(' · ') : 'no extra limits'
+  }
   return adminPage({
     title: 'Discounts',
     active: 'discounts',
     body: `
     <h1>Discount codes</h1>
+    <p class="a-muted tiny">The rate actually applied is the whole-number basis-point value shown (2000 = 20%). The percentage column is a display mirror; no pricing path reads it.</p>
     ${flash ? `<p class="a-notice ok">${esc(flash)}</p>` : ''}
     ${error ? `<p class="a-notice error">${esc(error)}</p>` : ''}
     <div class="a-table-scroll"><table class="a-table">
-      <thead><tr><th>Code</th><th>Percent</th><th>Min books</th><th>Applies to</th><th>Auto-apply</th><th>Active</th><th></th></tr></thead>
+      <thead><tr><th>Code</th><th>Rate</th><th>Scope</th><th>Min books</th><th>Rules</th><th>Redeemed</th><th>Auto</th><th>State</th><th></th></tr></thead>
       <tbody>
         ${rows
-          .map(
-            (d) => `<tr>
-          <td><strong>${esc(d.code)}</strong></td>
-          <td>${d.percent}%</td>
-          <td>${d.min_books}</td>
-          <td>${esc(d.applies_to)}</td>
+          .map((d) => {
+            const used = usage.get(Number(d.id)) || { count: 0, totalMinor: 0 }
+            const bps = d.percent_bps != null ? Number(d.percent_bps) : Math.round(Number(d.percent || 0) * 100)
+            return `<tr>
+          <td><strong>${esc(String(d.code))}</strong></td>
+          <td>${esc(String(bps / 100))}%<span class="a-muted tiny"> (${bps} bps)</span></td>
+          <td>${esc(String(d.scope || d.applies_to || 'books'))}</td>
+          <td>${esc(String(d.min_books ?? 0))}</td>
+          <td class="tiny">${esc(rule(d))}</td>
+          <td>${used.count}${used.count ? ` <span class="tiny a-muted">(${money(used.totalMinor)})</span>` : ''}${d.max_uses != null ? ` / ${esc(String(d.max_uses))}` : ''}</td>
           <td>${d.auto_apply ? 'Yes' : 'No'}</td>
           <td>
             <form method="post" action="/admin/discounts/${d.id}/toggle" class="a-inline-form row">
               <input type="hidden" name="field" value="active">
               <button class="a-btn ghost" type="submit">${d.active ? 'Deactivate' : 'Activate'}</button>
             </form>
+            ${d.active ? '' : '<span class="tiny a-muted">inactive</span>'}
           </td>
-          <td></td>
+          <td class="tiny">
+            <details>
+              <summary>Edit rules</summary>
+              <form method="post" action="/admin/discounts/${d.id}/update" class="a-form">
+                <label>Percent<input name="percent" type="number" min="1" max="100" step="0.01" value="${esc(String(d.percent))}"></label>
+                <label>Scope<select name="scope">${['books', 'stickers', 'all'].map((s) => `<option value="${s}" ${String(d.scope) === s ? 'selected' : ''}>${s}</option>`).join('')}</select></label>
+                <label><input type="checkbox" name="stackable" ${d.stackable ? 'checked' : ''}> Stackable</label>
+                <label>Priority<input name="priority" type="number" value="${esc(String(d.priority ?? 100))}"></label>
+                <label>Min subtotal ($)<input name="min_subtotal" type="number" step="0.01" value="${d.min_subtotal_minor != null ? (Number(d.min_subtotal_minor) / 100).toFixed(2) : ''}"></label>
+                <label>Max uses<input name="max_uses" type="number" value="${d.max_uses ?? ''}"></label>
+                <label>Max per customer<input name="max_uses_per_owner" type="number" value="${d.max_uses_per_owner ?? ''}"></label>
+                <label>Max discount ($)<input name="max_discount" type="number" step="0.01" value="${d.max_discount_minor != null ? (Number(d.max_discount_minor) / 100).toFixed(2) : ''}"></label>
+                <label>Starts<input name="starts_at" type="date" value="${d.starts_at ? esc(String(d.starts_at).slice(0, 10)) : ''}"></label>
+                <label>Ends<input name="ends_at" type="date" value="${d.ends_at ? esc(String(d.ends_at).slice(0, 10)) : ''}"></label>
+                <label><input type="checkbox" name="active" ${d.active ? 'checked' : ''}> Active</label>
+                <button class="a-btn ghost" type="submit">Save rules</button>
+              </form>
+            </details>
+          </td>
         </tr>`
-          )
+          })
           .join('')}
       </tbody>
     </table></div>
@@ -368,9 +459,20 @@ export function adminDiscounts(rows: DiscountRow[], flash?: string, error?: stri
         <label>Applies to
           <select name="applies_to"><option value="books">Books only</option><option value="all">Whole cart</option></select>
         </label>
+        <label>Scope
+          <select name="scope"><option value="books">Books</option><option value="stickers">Stickers</option><option value="all">Whole cart</option></select>
+        </label>
+        <label>Priority<input name="priority" type="number" value="100"></label>
+        <label>Starts<input name="starts_at" type="date"></label>
+        <label>Ends<input name="ends_at" type="date"></label>
+        <label>Minimum subtotal ($)<input name="min_subtotal" type="number" step="0.01" placeholder="optional"></label>
+        <label>Total usage limit<input name="max_uses" type="number" placeholder="unlimited"></label>
+        <label>Per-customer limit<input name="max_uses_per_owner" type="number" placeholder="unlimited"></label>
+        <label>Maximum discount ($)<input name="max_discount" type="number" step="0.01" placeholder="uncapped"></label>
       </div>
       <div class="a-checks">
         <label><input type="checkbox" name="auto_apply"> Auto-apply when eligible</label>
+        <label><input type="checkbox" name="stackable"> May stack with other stackable codes</label>
       </div>
       <button class="a-btn" type="submit">Create</button>
     </form>`

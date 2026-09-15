@@ -49,11 +49,35 @@ import { drainDueJobs } from './generation/pipeline'
 import { getGenerationProviders } from './generation/providers'
 import { parseReviewFilters } from './reviews'
 import { adminPage } from './admin'
+import {
+  adminFinanceDashboard,
+  adminFinanceDisputes,
+  adminFinanceEvents,
+  adminFinancePayments,
+  adminFinanceReconciliation,
+  adminFinanceRefunds
+} from './admin_finance'
+import { financialSummary, reconciliationIssues } from './commerce/reporting'
+import { getPaymentProvider, paymentProviderHealth } from './commerce/payments'
+import { requestRefund } from './commerce/refunds'
+import { FINANCE_PERMISSIONS, type FinancePermission } from './commerce/types'
 import { adminActor } from './auth'
 import { recordAdminAudit } from './admin-audit'
 import { BLOCK_KINDS } from './cms'
 
-type AdminEnv = { Bindings: { DB: D1Database; PHOTOS?: R2Bucket; ENVIRONMENT?: string }; Variables: { user: { id?: number; email?: string } | null } }
+type AdminEnv = {
+  Bindings: {
+    DB: D1Database
+    PHOTOS?: R2Bucket
+    ENVIRONMENT?: string
+    PAYMENTS_DISABLED?: string
+    PAYMENT_PROVIDER?: string
+    STRIPE_SECRET_KEY?: string
+    STRIPE_WEBHOOK_SECRET?: string
+    STRIPE_API_BASE?: string
+  }
+  Variables: { user: { id?: number; email?: string; role?: string } | null }
+}
 type AdminCtx = Context<AdminEnv>
 
 function actorOf(c: AdminCtx): { id: number | null; email: string | null } {
@@ -274,8 +298,50 @@ function registerGenerationAdminRoutes(app: Hono<any>) {
   )
 }
 
+/**
+ * ADM-02 groundwork, applied to money. A permission is granted from the actor's
+ * ROLE today (only `admin` exists), but it is checked through ONE function so
+ * the Phase-6 role/permission matrix can narrow it without touching a single
+ * route. Crucially, the check is server-side: hiding a menu item is not a
+ * control, and a direct request to a finance URL is denied exactly like a
+ * hidden one.
+ */
+export function financePermissionsFor(actor: { role?: string } | null | undefined): FinancePermission[] {
+  if (!actor || actor.role !== 'admin') return []
+  return [FINANCE_PERMISSIONS.read, FINANCE_PERMISSIONS.refund, FINANCE_PERMISSIONS.reconcile, FINANCE_PERMISSIONS.discounts]
+}
+
+export function hasFinancePermission(actor: { role?: string } | null | undefined, permission: FinancePermission): boolean {
+  return financePermissionsFor(actor).includes(permission)
+}
+
+/** A JSON 403/401 denial for a finance API call, or null when allowed. */
+function denyUnlessFinance(c: AdminCtx, permission: FinancePermission): Response | null {
+  const actor = c.get('user') || null
+  if (!actor) return c.json({ error: { code: 'auth_required', message: 'Sign in as an administrator.' } }, 401)
+  if (!hasFinancePermission(actor, permission)) {
+    return c.json({ error: { code: 'forbidden', message: 'Your account does not have the finance permission for this action.' } }, 403)
+  }
+  return null
+}
+
+/** A page-level denial: the finance area renders an explicit refusal, never a blank screen. */
+function financePageDenied(c: AdminCtx, permission: FinancePermission): Response | null {
+  const actor = c.get('user') || null
+  if (hasFinancePermission(actor, permission)) return null
+  return c.html(
+    adminPage({
+      title: 'Finance',
+      active: 'finance',
+      body: '<h1>Finance</h1><p class="a-notice error">Your account does not have permission to view financial data.</p>'
+    }),
+    403
+  )
+}
+
 export function registerAdminStoreRoutes(app: Hono<any>) {
   registerGenerationAdminRoutes(app)
+  registerFinanceAdminRoutes(app)
   // ---------------------------------------------------------------- ADM-06
   app.get('/admin/catalog', async (c: AdminCtx) => {
     const url = new URL(c.req.url)
@@ -916,5 +982,122 @@ export function registerAdminStoreRoutes(app: Hono<any>) {
     if (!result.ok) return c.redirect(flashRedirect('/admin/reviews', result.error, true))
     await audit(c, `review.${result.status}`, 'review', id, { reason: reason || null })
     return c.redirect(flashRedirect('/admin/reviews', `Review ${result.status}.`))
+  })
+}
+
+/**
+ * ADM-03 / ADM-12: the finance area.
+ *
+ * Registered from inside registerAdminStoreRoutes(), which src/index.tsx calls
+ * AFTER the central `/admin/*` authorization guard — so every route here is
+ * admin-only by construction, and each is ADDITIONALLY gated on the finance
+ * permission so the Phase-6 role matrix can narrow access without changing a
+ * route. The refund mutation runs through the same validated domain service the
+ * API uses, so the refund cap holds identically however it is reached.
+ */
+function registerFinanceAdminRoutes(app: Hono<any>) {
+  // ---------------------------------------------------------------- ADM-03
+  app.get('/admin/finance', async (c: AdminCtx) => {
+    const denied = financePageDenied(c, FINANCE_PERMISSIONS.read)
+    if (denied) return denied
+    const [summary, issues] = await Promise.all([financialSummary(c.env.DB, {}), reconciliationIssues(c.env.DB, 200)])
+    return c.html(adminFinanceDashboard(summary, issues))
+  })
+
+  // ---------------------------------------------------------------- ADM-12
+  app.get('/admin/finance/payments', async (c: AdminCtx) => {
+    const denied = financePageDenied(c, FINANCE_PERMISSIONS.read)
+    if (denied) return denied
+    const rows =
+      (
+        await c.env.DB
+          .prepare(
+            `SELECT pa.*, o.created_at AS order_created FROM payment_attempts pa
+              JOIN orders o ON o.id = pa.order_id
+             ORDER BY pa.id DESC LIMIT 200`
+          )
+          .all<Record<string, unknown>>()
+      ).results || []
+    return c.html(adminFinancePayments(rows, paymentProviderHealth(c.env as any)))
+  })
+
+  app.get('/admin/finance/refunds', async (c: AdminCtx) => {
+    const denied = financePageDenied(c, FINANCE_PERMISSIONS.read)
+    if (denied) return denied
+    const rows = (await c.env.DB.prepare('SELECT * FROM refunds ORDER BY id DESC LIMIT 200').all<Record<string, unknown>>()).results || []
+    return c.html(adminFinanceRefunds(rows))
+  })
+
+  app.get('/admin/finance/disputes', async (c: AdminCtx) => {
+    const denied = financePageDenied(c, FINANCE_PERMISSIONS.read)
+    if (denied) return denied
+    const rows = (await c.env.DB.prepare('SELECT * FROM disputes ORDER BY id DESC LIMIT 200').all<Record<string, unknown>>()).results || []
+    return c.html(adminFinanceDisputes(rows))
+  })
+
+  app.get('/admin/finance/events', async (c: AdminCtx) => {
+    const denied = financePageDenied(c, FINANCE_PERMISSIONS.read)
+    if (denied) return denied
+    const rows = (await c.env.DB.prepare('SELECT * FROM payment_events ORDER BY id DESC LIMIT 200').all<Record<string, unknown>>()).results || []
+    return c.html(adminFinanceEvents(rows))
+  })
+
+  app.get('/admin/finance/reconciliation', async (c: AdminCtx) => {
+    const denied = financePageDenied(c, FINANCE_PERMISSIONS.reconcile)
+    if (denied) return denied
+    const [issues, count] = await Promise.all([
+      reconciliationIssues(c.env.DB, 200),
+      c.env.DB.prepare('SELECT COUNT(*) AS n FROM orders').first<{ n: number }>()
+    ])
+    return c.html(adminFinanceReconciliation(issues, Number(count?.n ?? 0)))
+  })
+
+  /**
+   * Issue a refund. Amount is in MAJOR units in the form (what an operator
+   * types) and converted to the authoritative integer minor units immediately;
+   * a blank amount means "the whole captured remainder". The idempotency key is
+   * generated here when the operator does not supply one, so a double-submit of
+   * the SAME form is a replay rather than a second refund — and the domain
+   * service plus the DB trigger still cap it.
+   */
+  app.post('/admin/orders/:id/refunds', async (c: AdminCtx) => {
+    const denied = denyUnlessFinance(c, FINANCE_PERMISSIONS.refund)
+    if (denied && !String(c.req.header('Accept') || '').includes('text/html')) return denied
+    const orderId = intParam(c.req.param('id'), 1, Number.MAX_SAFE_INTEGER)
+    if (orderId == null) return c.redirect(flashRedirect('/admin/orders', 'Invalid order id.', true))
+    if (!hasFinancePermission(c.get('user'), FINANCE_PERMISSIONS.refund)) {
+      return c.redirect(flashRedirect(`/admin/orders/${orderId}`, 'Your account does not have the refund permission.', true))
+    }
+    const form = await c.req.parseBody()
+    const rawAmount = String(form.amount ?? '').trim()
+    let amountMinor: number | null = null
+    if (rawAmount) {
+      const major = Number(rawAmount)
+      if (!Number.isFinite(major) || major <= 0) {
+        return c.redirect(flashRedirect(`/admin/orders/${orderId}`, 'Enter a positive refund amount, or leave it blank for the full remaining amount.', true))
+      }
+      amountMinor = Math.round(major * 100)
+    }
+    const reason = str(form.reason, 200)
+    if (!reason) return c.redirect(flashRedirect(`/admin/orders/${orderId}`, 'A reason is required to refund an order.', true))
+    const idempotencyKey = str(form.idempotency_key, 120) || `admin-refund:${orderId}:${crypto.randomUUID()}`
+
+    const provider = getPaymentProvider(c.env as any)
+    const result = await requestRefund(c.env.DB, provider, {
+      orderId,
+      amountMinor,
+      reason,
+      idempotencyKey,
+      actor: { userId: actorOf(c).id, email: actorOf(c).email }
+    })
+    if (!result.ok) return c.redirect(flashRedirect(`/admin/orders/${orderId}`, result.error || 'The refund could not be completed.', true))
+    if (!result.replayed) {
+      await audit(c, 'order.refund', 'order', orderId, {
+        amountMinor: result.refund?.amount_minor ?? null,
+        remainingMinor: result.remainingMinor ?? null,
+        reason
+      })
+    }
+    return c.redirect(flashRedirect(`/admin/orders/${orderId}`, result.replayed ? 'That refund was already recorded.' : 'Refund recorded.'))
   })
 }

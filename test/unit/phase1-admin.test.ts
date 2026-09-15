@@ -288,8 +288,27 @@ describe('S-10 unpaid totals are labelled Order value, never Revenue', () => {
     const jar = await adminJar()
     const res = await app.request('/admin', { headers: { ...jar.headers() } }, env)
     const html = await res.text()
-    expect(html.toLowerCase()).not.toContain('revenue')
     expect(html).toContain('Order value')
+    // V2 Phase 4 (ADM-03) makes the invariant this test guards STRONGER rather
+    // than removing it. The dashboard now has a real, ledger-derived revenue
+    // tile, so "the word revenue appears nowhere" is no longer the right proxy:
+    // the property that must hold is that the UNPAID value is explicitly not
+    // revenue, and that an order nobody paid for contributes nothing to the
+    // revenue tile.
+    expect(html).toContain('Order value — NOT revenue')
     expect(html).toContain('$46.99') // derived from the integer total_minor (4699)
+    // Nothing was captured for this order, so the revenue tile says so and shows
+    // no amount at all — the unpaid value can never leak into it.
+    expect(html).toContain('Net revenue — nothing captured')
+    // Every occurrence of the word "revenue" on this page is either the explicit
+    // negation on the order-value tile or the ledger-derived net tile.
+    const revenueMentions = html.toLowerCase().match(/revenue/g) || []
+    expect(revenueMentions.length).toBeGreaterThan(0)
+    expect(html).toContain('Net revenue')
+    // The tile that carries the ledger-derived revenue figure must not contain
+    // the unpaid order value in any form.
+    const revenueTile = html.split('<div class="stat">').find((tile) => tile.toLowerCase().includes('net revenue'))
+    expect(revenueTile).toBeTruthy()
+    expect(revenueTile).not.toContain('46.99')
   })
 })
