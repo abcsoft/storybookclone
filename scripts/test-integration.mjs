@@ -104,6 +104,52 @@ const PHASE_4_TRIGGERS = [
   'trg_financial_entries_no_delete'
 ]
 
+// V2 Phase 5 (migrations 0028-0032). Named separately so the Phase-4 scenario
+// can assert precisely that they do NOT exist at the accepted Phase-4 schema.
+const PHASE_5_TABLES = [
+  'email_tokens', 'account_security_events', 'notification_preferences',
+  'guest_claims', 'revision_request_resolutions',
+  'email_templates', 'email_outbox', 'email_attempts',
+  'support_tickets', 'support_ticket_events', 'support_messages', 'support_attachments',
+  'download_entitlements', 'download_tokens', 'download_events',
+  'privacy_requests', 'privacy_request_events'
+]
+const PHASE_5_COLUMNS = [
+  ['users', 'email_verified'],
+  ['users', 'email_verified_at'],
+  ['users', 'status'],
+  ['users', 'updated_at'],
+  ['sessions', 'public_id'],
+  ['sessions', 'user_agent'],
+  ['sessions', 'last_seen_at'],
+  ['sessions', 'ip_hash'],
+  ['sessions', 'created_ip_hash'],
+  ['revision_requests', 'reason_code'],
+  ['revision_requests', 'replacement_upload_key'],
+  ['revision_requests', 'policy_json'],
+  ['revision_requests', 'structured_reason']
+]
+const PHASE_5_TRIGGERS = [
+  'trg_email_tokens_no_reuse',
+  'trg_account_security_events_no_update',
+  'trg_guest_claims_no_update',
+  'trg_revision_request_resolutions_no_update',
+  'trg_email_templates_identity_immutable',
+  'trg_email_outbox_content_immutable',
+  'trg_email_outbox_sent_terminal',
+  'trg_email_attempts_no_update',
+  'trg_support_tickets_status_flow',
+  'trg_support_ticket_events_no_update',
+  'trg_support_messages_no_update',
+  'trg_support_attachments_no_update',
+  'trg_download_entitlements_identity_immutable',
+  'trg_download_entitlements_count_monotonic',
+  'trg_download_tokens_no_reuse',
+  'trg_download_events_no_update',
+  'trg_privacy_requests_kind_immutable',
+  'trg_privacy_request_events_no_update'
+]
+
 const EXPECTED_TABLES = [
   'users', 'sessions', 'products', 'discounts', 'orders', 'order_items',
   'contacts', 'newsletter', 'pdp_page', 'pdp_gallery', 'pdp_accordions',
@@ -130,7 +176,10 @@ const EXPECTED_TABLES = [
   // V2 Phase 3 (migrations 0024-0025): generation pipeline
   ...PHASE_3_TABLES,
   // V2 Phase 4 (migrations 0026-0027): cart, quotes, payments, ledger
-  ...PHASE_4_TABLES
+  ...PHASE_4_TABLES,
+  // V2 Phase 5 (migrations 0028-0032): customer account, mail outbox, support,
+  // downloads and privacy intake
+  ...PHASE_5_TABLES
 ]
 
 const EXPECTED_NEW_COLUMNS = [
@@ -151,7 +200,9 @@ const EXPECTED_NEW_COLUMNS = [
   // V2 Phase 3 (migrations 0024-0025)
   ...PHASE_3_COLUMNS,
   // V2 Phase 4 (migrations 0026-0027)
-  ...PHASE_4_COLUMNS
+  ...PHASE_4_COLUMNS,
+  // V2 Phase 5 (migrations 0028-0032)
+  ...PHASE_5_COLUMNS
 ]
 
 /** The triggers migration 0024 introduces. */
@@ -207,7 +258,9 @@ const EXPECTED_TRIGGERS = [
   'trg_product_variants_currency_update',
   ...PHASE_3_TRIGGERS,
   // V2 Phase 4 (migrations 0026-0027): money, ledger and refund integrity
-  ...PHASE_4_TRIGGERS
+  ...PHASE_4_TRIGGERS,
+  // V2 Phase 5 (migrations 0028-0032): account, outbox, support, downloads, privacy
+  ...PHASE_5_TRIGGERS
 ]
 
 
@@ -531,13 +584,15 @@ const ACCEPTED_PHASE_1_0009_MIGRATIONS = [
   // This scenario stops at the accepted Phase-2 schema, so the PHASE-3 tables
   // must NOT exist yet — asserted both ways rather than skipped.
   assertTables(db, 'phase2 upgrade', {
-    tables: EXPECTED_TABLES.filter((t) => !PHASE_3_TABLES.includes(t) && !PHASE_4_TABLES.includes(t)),
+    tables: EXPECTED_TABLES.filter((t) => !PHASE_3_TABLES.includes(t) && !PHASE_4_TABLES.includes(t) && !PHASE_5_TABLES.includes(t)),
     columns: EXPECTED_NEW_COLUMNS.filter(
       ([table, column]) =>
-        !PHASE_3_COLUMNS.some(([t, c]) => t === table && c === column) && !PHASE_4_COLUMNS.some(([t, c]) => t === table && c === column)
+        !PHASE_3_COLUMNS.some(([t, c]) => t === table && c === column) &&
+        !PHASE_4_COLUMNS.some(([t, c]) => t === table && c === column) &&
+        !PHASE_5_COLUMNS.some(([t, c]) => t === table && c === column)
     )
   })
-  assertTriggers(db, 'phase2 upgrade', EXPECTED_TRIGGERS.filter((t) => !PHASE_3_TRIGGERS.includes(t) && !PHASE_4_TRIGGERS.includes(t)))
+  assertTriggers(db, 'phase2 upgrade', EXPECTED_TRIGGERS.filter((t) => !PHASE_3_TRIGGERS.includes(t) && !PHASE_4_TRIGGERS.includes(t) && !PHASE_5_TRIGGERS.includes(t)))
   const phase3Leak = PHASE_3_TABLES.filter((t) => db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?").get(t))
   if (phase3Leak.length) {
     console.error(`FAIL [phase2 upgrade]: migration 0020-0023 created Phase-3 tables: ${phase3Leak.join(', ')}`)
@@ -643,10 +698,12 @@ const ACCEPTED_PHASE_1_0009_MIGRATIONS = [
   // This scenario stops at the accepted Phase-3 schema, so the PHASE-4 tables
   // must NOT exist yet — asserted both ways rather than skipped.
   assertTables(db, 'phase3 upgrade', {
-    tables: EXPECTED_TABLES.filter((t) => !PHASE_4_TABLES.includes(t)),
-    columns: EXPECTED_NEW_COLUMNS.filter(([table, column]) => !PHASE_4_COLUMNS.some(([t, c]) => t === table && c === column))
+    tables: EXPECTED_TABLES.filter((t) => !PHASE_4_TABLES.includes(t) && !PHASE_5_TABLES.includes(t)),
+    columns: EXPECTED_NEW_COLUMNS.filter(
+      ([table, column]) => !PHASE_4_COLUMNS.some(([t, c]) => t === table && c === column) && !PHASE_5_COLUMNS.some(([t, c]) => t === table && c === column)
+    )
   })
-  assertTriggers(db, 'phase3 upgrade', EXPECTED_TRIGGERS.filter((t) => !PHASE_4_TRIGGERS.includes(t)))
+  assertTriggers(db, 'phase3 upgrade', EXPECTED_TRIGGERS.filter((t) => !PHASE_4_TRIGGERS.includes(t) && !PHASE_5_TRIGGERS.includes(t)))
   const phase4Leak = PHASE_4_TABLES.filter((t) => db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?").get(t))
   if (phase4Leak.length) {
     console.error(`FAIL [phase3 upgrade]: migration 0024-0025 created Phase-4 tables: ${phase4Leak.join(', ')}`)
@@ -773,7 +830,9 @@ const ACCEPTED_PHASE_1_0009_MIGRATIONS = [
   const db = new DatabaseSync(':memory:')
   db.exec('PRAGMA foreign_keys = ON')
   const phase3 = allFiles.filter((f) => f < '0026_')
-  const phase4 = allFiles.filter((f) => f >= '0026_')
+  // Bounded at the ACCEPTED Phase-4 boundary: 0028+ belongs to the Phase-5
+  // scenario below, which asserts its own schema over the same baseline.
+  const phase4 = allFiles.filter((f) => f >= '0026_' && f < '0028_')
   if (!phase4.length) {
     console.error('FAIL [phase4 upgrade]: no 0026+ migrations found')
     process.exit(1)
@@ -806,9 +865,26 @@ const ACCEPTED_PHASE_1_0009_MIGRATIONS = [
   const beforeTotals = db.prepare("SELECT total_minor, status, id FROM orders WHERE email = 'p4@example.com'").get()
   const beforeDiscount = db.prepare("SELECT percent FROM discounts WHERE code = 'LEGACY20'").get()
 
+  const failPhase5Leak = (msg) => {
+    console.error(`FAIL [phase4 upgrade]: ${msg}`)
+    process.exit(1)
+  }
   applyMigrationSet(db, phase4, 'phase4-upgrade (apply 0026-0027)')
-  assertTables(db, 'phase4 upgrade')
-  assertTriggers(db, 'phase4 upgrade')
+  // Scoped to what the ACCEPTED Phase-4 schema contained: the Phase-5 tables,
+  // columns and triggers must NOT exist yet at this point.
+  assertTables(db, 'phase4 upgrade', {
+    tables: EXPECTED_TABLES.filter((t) => !PHASE_5_TABLES.includes(t)),
+    columns: EXPECTED_NEW_COLUMNS.filter(([t, c]) => !PHASE_5_COLUMNS.some(([a, b]) => a === t && b === c))
+  })
+  assertTriggers(db, 'phase4 upgrade', EXPECTED_TRIGGERS.filter((t) => !PHASE_5_TRIGGERS.includes(t)))
+  for (const table of PHASE_5_TABLES) {
+    const exists = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(table)
+    if (exists) failPhase5Leak(`${table} already exists at the accepted Phase-4 schema`)
+  }
+  for (const [table, column] of PHASE_5_COLUMNS) {
+    const cols = db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name)
+    if (cols.includes(column)) failPhase5Leak(`${table}.${column} already exists at the accepted Phase-4 schema`)
+  }
 
   const fail = (msg) => {
     console.error(`FAIL [phase4 upgrade]: ${msg}`)
@@ -1025,6 +1101,297 @@ const ACCEPTED_PHASE_1_0009_MIGRATIONS = [
   if (!addressImmutable) fail('the order address snapshot is not immutable')
 
   console.log(`OK [phase4 upgrade]: 0026-0027 applied over existing Phase-3 rows; ${versionCount} price versions derived (USD variant base + GBP variant price), the legacy discount gained its basis-point twin and scope, the tax boundary is configured at ZERO rate, every pre-existing row unchanged and NOTHING marked paid, and no cart/quote/payment/refund/ledger row invented. The one-active-cart, quote-identity, one-order-per-cart, payment-state, single-capture, refund-cap and append-only guarantees all hold at the schema level.`)
+}
+
+// 2j) V2 Phase 5 upgrade (0028-0032) from the accepted Phase-4 schema with
+//     EXISTING rows: the new tables/columns/guards must arrive, every existing
+//     row must be untouched, NOTHING may be invented, and every pre-existing
+//     account must stay UNVERIFIED (nothing may claim a verification that never
+//     happened — the same rule that forbids back-filling an order as paid).
+{
+  const db = new DatabaseSync(':memory:')
+  db.exec('PRAGMA foreign_keys = ON')
+  const phase4 = allFiles.filter((f) => f < '0028_')
+  const phase5 = allFiles.filter((f) => f >= '0028_')
+  if (!phase5.length) {
+    console.error('FAIL [phase5 upgrade]: no 0028+ migrations found')
+    process.exit(1)
+  }
+  applyMigrationSet(db, phase4, 'phase5-upgrade (baseline 0001-0027)')
+
+  // Pre-existing Phase-4-shaped rows: a customer with a session, a paid order
+  // with an item, a personalised book with an immutable revision, a published
+  // preview and a revision request awaiting an answer.
+  db.exec(`
+    INSERT INTO users (name, email, password_hash, role) VALUES ('Existing Customer', 'p5@example.com', 'hash123', 'customer');
+    INSERT INTO sessions (token, user_id, expires_at) VALUES ('legacy-session-token', (SELECT id FROM users WHERE email='p5@example.com'), 4102444800);
+    INSERT OR IGNORE INTO languages (code, name, native_name) VALUES ('en', 'English', 'English');
+    INSERT INTO products (slug, title, price, price_minor, currency, image, category, age_min, age_max, active)
+      VALUES ('legacy-p5', 'Legacy Phase 4 Book', 24.99, 2499, 'USD', '/static/img/art/cover-the-quiet-drum.svg', 'book', 4, 8, 1);
+    INSERT INTO product_variants (product_id, code, label, price_minor, currency, is_default, sort_order)
+      SELECT id, 'hardcover', 'Hardcover', 2499, 'USD', 1, 0 FROM products WHERE slug = 'legacy-p5';
+    INSERT INTO orders (user_id, full_name, email, address, city, country, subtotal, discount, shipping, total, subtotal_minor, discount_minor, shipping_minor, total_minor, currency, status, payment_status, amount_captured_minor, paid_at)
+      SELECT id, 'Existing Customer', 'p5@example.com', 'a', 'c', 'US', 24.99, 0, 4.99, 29.98, 2499, 0, 499, 2998, 'USD', 'paid', 'captured', 2998, CURRENT_TIMESTAMP FROM users WHERE email='p5@example.com';
+    INSERT INTO order_items (order_id, product_id, slug, title, kind, unit_price, qty, unit_price_minor, currency, variant_code)
+      SELECT o.id, (SELECT id FROM products WHERE slug='legacy-p5'), 'legacy-p5', 'Legacy Phase 4 Book', 'book', 24.99, 1, 2499, 'USD', 'hardcover' FROM orders o WHERE o.email = 'p5@example.com';
+    INSERT INTO user_books (public_id, product_id, user_id, state, current_revision)
+      SELECT 'ub_legacy_p5', id, (SELECT id FROM users WHERE email='p5@example.com'), 'preview_ready', 1 FROM products WHERE slug='legacy-p5';
+    INSERT INTO photo_uploads (upload_key, owner_token, content_type, byte_size, expires_at)
+      VALUES ('uploads/legacy-p5.jpg', (SELECT 'user:' || id FROM users WHERE email='p5@example.com'), 'image/jpeg', 2048, 4102444800);
+    INSERT INTO book_templates (product_id, language_code, version, status, published_at)
+      SELECT id, 'en', 1, 'published', CURRENT_TIMESTAMP FROM products WHERE slug='legacy-p5';
+    INSERT INTO personalization_inputs (user_book_id, revision, child_name, child_age, language_code, dedication, photo_upload_key)
+      SELECT id, 1, 'Legacy Child', 6, 'en', 'For you.', 'uploads/legacy-p5.jpg' FROM user_books WHERE public_id='ub_legacy_p5';
+    INSERT INTO preview_versions (user_book_id, input_revision, template_id, status, scene_count, watermark_label)
+      SELECT ub.id, 1, (SELECT id FROM book_templates WHERE product_id = ub.product_id LIMIT 1), 'ready', 6, 'Legacy' FROM user_books ub WHERE ub.public_id='ub_legacy_p5';
+    INSERT INTO revision_requests (user_book_id, preview_version_id, input_revision, requested_by_type, requested_by_id, note)
+      SELECT ub.id, (SELECT id FROM preview_versions WHERE user_book_id = ub.id LIMIT 1), 1, 'user', (SELECT id FROM users WHERE email='p5@example.com'), 'Please change the hair colour.'
+        FROM user_books ub WHERE ub.public_id='ub_legacy_p5';
+  `)
+
+  const beforeUser = db.prepare("SELECT id, name, email, password_hash, role FROM users WHERE email='p5@example.com'").get()
+  const beforeSession = db.prepare("SELECT token, user_id, expires_at FROM sessions WHERE token='legacy-session-token'").get()
+  const beforeOrder = db.prepare("SELECT id, total_minor, status, payment_status, amount_captured_minor FROM orders WHERE email='p5@example.com'").get()
+  // requested_by_id is TEXT, so bind the string form — a numeric bind would not match.
+  const beforeRevision = db.prepare('SELECT id, note, input_revision FROM revision_requests WHERE requested_by_id = ?').get(String(beforeUser.id))
+
+  applyMigrationSet(db, phase5, 'phase5-upgrade (apply 0028-0032)')
+  assertTables(db, 'phase5 upgrade')
+  assertTriggers(db, 'phase5 upgrade')
+
+  const fail = (msg) => {
+    console.error(`FAIL [phase5 upgrade]: ${msg}`)
+    process.exit(1)
+  }
+
+  // ---- every pre-existing row is UNTOUCHED ----
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(beforeUser.id)
+  for (const key of ['name', 'email', 'password_hash', 'role']) {
+    if (user[key] !== beforeUser[key]) fail(`the upgrade changed users.${key}`)
+  }
+  // NOTHING may claim a verification that never happened.
+  if (Number(user.email_verified) !== 0) fail(`an existing account was marked verified (email_verified=${user.email_verified})`)
+  if (user.email_verified_at !== null) fail('the upgrade invented an email_verified_at')
+  if (user.status !== 'active') fail(`the upgrade changed the account status to ${user.status}`)
+  const session = db.prepare("SELECT * FROM sessions WHERE token='legacy-session-token'").get()
+  if (session.user_id !== beforeSession.user_id || session.expires_at !== beforeSession.expires_at) fail('the upgrade changed an existing session')
+  // …but every pre-existing session became ADDRESSABLE, or its owner could never see or revoke it.
+  if (!session.public_id || !/^[a-f0-9]{32}$/.test(session.public_id)) fail(`a pre-existing session was not given an addressable public_id (${session.public_id})`)
+  const order = db.prepare('SELECT * FROM orders WHERE id = ?').get(beforeOrder.id)
+  if (order.total_minor !== beforeOrder.total_minor || order.status !== beforeOrder.status) fail('the upgrade changed an existing order')
+  if (order.payment_status !== 'captured' || Number(order.amount_captured_minor) !== 2998) fail('the upgrade changed an existing payment state')
+  const revision = db.prepare('SELECT * FROM revision_requests WHERE id = ?').get(beforeRevision.id)
+  if (revision.note !== beforeRevision.note) fail('the upgrade changed an existing revision request note')
+  if (revision.reason_code !== null) fail('the upgrade invented a structured reason for an existing request')
+  if (revision.policy_json === null) fail('the upgrade left policy_json unset')
+
+  // ---- NOTHING invented in the new tables (except the seeded templates) ----
+  for (const table of PHASE_5_TABLES.filter((t) => t !== 'email_templates')) {
+    const count = db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n
+    if (count !== 0) fail(`the upgrade invented ${count} row(s) in ${table}`)
+  }
+  const templates = db.prepare('SELECT COUNT(*) AS n FROM email_templates').get().n
+  if (templates !== 12) fail(`expected 12 seeded email templates, found ${templates}`)
+  const published = db.prepare("SELECT COUNT(*) AS n FROM email_templates WHERE status = 'published'").get().n
+  if (published !== 12) fail(`expected every seeded template to be published, found ${published}`)
+
+  // ---- re-applying the repeatable part duplicates nothing ----
+  const repeatable = phase5.filter((f) => !/ALTER TABLE/i.test(readFileSync(join(migrationsDir, f), 'utf8')))
+  applyMigrationSet(db, repeatable, 'phase5-upgrade (re-apply CREATE-TABLE-only files)')
+  assertTables(db, 'phase5 upgrade')
+  const templatesAfter = db.prepare('SELECT COUNT(*) AS n FROM email_templates').get().n
+  if (templatesAfter !== 12) fail(`re-applying the migration duplicated the seeded templates (${templatesAfter})`)
+  const sessionAfter = db.prepare("SELECT COUNT(*) AS n FROM sessions WHERE token='legacy-session-token'").get().n
+  if (sessionAfter !== 1) fail('re-applying the migration duplicated a session')
+
+  // ---- the DB-level guarantees ----
+  const userId = beforeUser.id
+  const orderId = beforeOrder.id
+  const itemId = db.prepare('SELECT id FROM order_items WHERE order_id = ?').get(orderId).id
+
+  // An email token is single-use at the database level.
+  db.exec(`INSERT INTO email_tokens (user_id, purpose, target_email, token_hash, expires_at) VALUES (${userId}, 'verify_email', 'p5@example.com', 'hash_a', 4102444800)`)
+  db.exec(`UPDATE email_tokens SET consumed_at = CURRENT_TIMESTAMP WHERE token_hash = 'hash_a'`)
+  let tokenReuse = false
+  try {
+    db.exec(`UPDATE email_tokens SET consumed_at = NULL WHERE token_hash = 'hash_a'`)
+  } catch (err) {
+    tokenReuse = /already consumed/.test(String(err.message))
+  }
+  if (!tokenReuse) fail('a consumed email token could be re-opened')
+
+  // A guest claim is recorded once per resource, and is immutable.
+  db.exec(`INSERT INTO guest_claims (public_id, user_id, resource_type, resource_ref, verified_via, verified_email) VALUES ('gc_1', ${userId}, 'order', '${orderId}', 'email_token', 'p5@example.com')`)
+  let doubleClaim = false
+  try {
+    db.exec(`INSERT INTO guest_claims (public_id, user_id, resource_type, resource_ref, verified_via) VALUES ('gc_2', ${userId}, 'order', '${orderId}', 'guest_capability')`)
+  } catch (err) {
+    doubleClaim = /UNIQUE/i.test(String(err.message))
+  }
+  if (!doubleClaim) fail('the same order could be claimed twice')
+  let claimRewrite = false
+  try {
+    db.exec(`UPDATE guest_claims SET verified_via = 'guest_capability' WHERE public_id = 'gc_1'`)
+  } catch (err) {
+    claimRewrite = /immutable/.test(String(err.message))
+  }
+  if (!claimRewrite) fail('a recorded guest claim was editable')
+
+  // The security-alert preference cannot be switched off.
+  let alertsLocked = false
+  try {
+    db.exec(`INSERT INTO notification_preferences (user_id, security_alerts) VALUES (${userId}, 0)`)
+  } catch (err) {
+    alertsLocked = /CHECK/i.test(String(err.message))
+  }
+  if (!alertsLocked) fail('security alerts could be switched off')
+
+  // The outbox: dedupe identity, immutable content, terminal 'sent'.
+  db.exec(`INSERT INTO email_outbox (public_id, dedupe_key, template_key, to_email, subject, body_text, status) VALUES ('em_1', 'logical-1', 'verify_email', 'p5@example.com', 's', 'b', 'queued')`)
+  let duplicateMail = false
+  try {
+    db.exec(`INSERT INTO email_outbox (public_id, dedupe_key, template_key, to_email, subject, body_text, status) VALUES ('em_2', 'logical-1', 'verify_email', 'p5@example.com', 's', 'b', 'queued')`)
+  } catch (err) {
+    duplicateMail = /UNIQUE/i.test(String(err.message))
+  }
+  if (!duplicateMail) fail('two logical mails shared one dedupe key')
+  let contentRewritten = false
+  try {
+    db.exec(`UPDATE email_outbox SET subject = 'different' WHERE dedupe_key = 'logical-1'`)
+  } catch (err) {
+    contentRewritten = /immutable/.test(String(err.message))
+  }
+  if (!contentRewritten) fail('a queued email body was editable')
+  db.exec(`UPDATE email_outbox SET status = 'sent' WHERE dedupe_key = 'logical-1'`)
+  let requeued = false
+  try {
+    db.exec(`UPDATE email_outbox SET status = 'queued' WHERE dedupe_key = 'logical-1'`)
+  } catch (err) {
+    requeued = /cannot be re-queued/.test(String(err.message))
+  }
+  if (!requeued) fail('a sent email could be re-queued — that is exactly how a retry duplicates mail')
+  db.exec(`INSERT INTO email_attempts (outbox_id, attempt_no, outcome, provider) VALUES ((SELECT id FROM email_outbox WHERE dedupe_key='logical-1'), 1, 'sent', 'console')`)
+  let duplicateAttempt = false
+  try {
+    db.exec(`INSERT INTO email_attempts (outbox_id, attempt_no, outcome, provider) VALUES ((SELECT id FROM email_outbox WHERE dedupe_key='logical-1'), 1, 'sent', 'console')`)
+  } catch (err) {
+    duplicateAttempt = /UNIQUE/i.test(String(err.message))
+  }
+  if (!duplicateAttempt) fail('the same delivery attempt could be recorded twice')
+  let attemptRewrite = false
+  try {
+    db.exec(`UPDATE email_attempts SET outcome = 'failed'`)
+  } catch (err) {
+    attemptRewrite = /append-only/.test(String(err.message))
+  }
+  if (!attemptRewrite) fail('a delivery attempt was editable')
+
+  // Support: the status machine and the attachment allowlist.
+  db.exec(`INSERT INTO support_tickets (public_id, user_id, subject, category, status) VALUES ('tk_1', ${userId}, 'Subject', 'other', 'open')`)
+  let legalTicketStatus = true
+  try {
+    // open -> waiting_staff -> resolved are all declared edges.
+    db.exec(`UPDATE support_tickets SET status = 'waiting_staff' WHERE public_id = 'tk_1'`)
+    db.exec(`UPDATE support_tickets SET status = 'resolved' WHERE public_id = 'tk_1'`)
+  } catch (err) {
+    legalTicketStatus = false
+  }
+  if (!legalTicketStatus) fail('a LEGAL support ticket transition was rejected')
+  // resolved -> assigned is NOT an edge (a resolved ticket may only close or reopen).
+  let illegalTicketStatus = false
+  try {
+    db.exec(`UPDATE support_tickets SET status = 'assigned' WHERE public_id = 'tk_1'`)
+  } catch (err) {
+    illegalTicketStatus = /invalid support ticket status transition/.test(String(err.message))
+  }
+  if (!illegalTicketStatus) fail('an illegal support ticket transition was accepted')
+  // …and the refused transition left the ticket exactly where it was.
+  if (db.prepare("SELECT status FROM support_tickets WHERE public_id = 'tk_1'").get().status !== 'resolved') fail('a refused transition still changed the ticket status')
+  let markupAttachment = false
+  try {
+    db.exec(`INSERT INTO support_attachments (public_id, ticket_id, uploader_type, object_key, content_type, byte_size) VALUES ('sa_1', (SELECT id FROM support_tickets WHERE public_id='tk_1'), 'customer', 'support/tk_1/a.html', 'text/html', 10)`)
+  } catch (err) {
+    markupAttachment = /CHECK/i.test(String(err.message))
+  }
+  if (!markupAttachment) fail('an HTML attachment was accepted — that is the stored-XSS vector')
+  let oversizeAttachment = false
+  try {
+    db.exec(`INSERT INTO support_attachments (public_id, ticket_id, uploader_type, object_key, content_type, byte_size) VALUES ('sa_2', (SELECT id FROM support_tickets WHERE public_id='tk_1'), 'customer', 'support/tk_1/b.jpg', 'image/jpeg', 5242881)`)
+  } catch (err) {
+    oversizeAttachment = /CHECK/i.test(String(err.message))
+  }
+  if (!oversizeAttachment) fail('an oversize attachment was accepted')
+
+  // Downloads: one entitlement per (item, kind), a monotonic counter and a cap.
+  db.exec(`INSERT INTO download_entitlements (public_id, user_id, order_id, order_item_id, kind, max_downloads, expires_at) VALUES ('dl_1', ${userId}, ${orderId}, ${itemId}, 'preview_pages', 3, 4102444800)`)
+  let doubleEntitlement = false
+  try {
+    db.exec(`INSERT INTO download_entitlements (public_id, user_id, order_id, order_item_id, kind, max_downloads, expires_at) VALUES ('dl_2', ${userId}, ${orderId}, ${itemId}, 'preview_pages', 3, 4102444800)`)
+  } catch (err) {
+    doubleEntitlement = /UNIQUE/i.test(String(err.message))
+  }
+  if (!doubleEntitlement) fail('the same order item was entitled twice')
+  db.exec(`UPDATE download_entitlements SET download_count = 2 WHERE public_id = 'dl_1'`)
+  let countDecreased = false
+  try {
+    db.exec(`UPDATE download_entitlements SET download_count = 1 WHERE public_id = 'dl_1'`)
+  } catch (err) {
+    countDecreased = /cannot decrease/.test(String(err.message))
+  }
+  if (!countDecreased) fail('a download counter could be wound back')
+  let overLimit = false
+  try {
+    db.exec(`UPDATE download_entitlements SET download_count = 4 WHERE public_id = 'dl_1'`)
+  } catch (err) {
+    overLimit = /exceed the entitlement limit/.test(String(err.message))
+  }
+  if (!overLimit) fail('the download counter could exceed its limit')
+  let identityRewritten = false
+  try {
+    db.exec(`UPDATE download_entitlements SET max_downloads = 999 WHERE public_id = 'dl_1'`)
+  } catch (err) {
+    identityRewritten = /immutable/.test(String(err.message))
+  }
+  if (!identityRewritten) fail('a download entitlement limit was editable')
+  db.exec(`INSERT INTO download_tokens (entitlement_id, user_id, token_hash, expires_at) VALUES ((SELECT id FROM download_entitlements WHERE public_id='dl_1'), ${userId}, 'tok_a', 4102444800)`)
+  db.exec(`UPDATE download_tokens SET used_at = CURRENT_TIMESTAMP WHERE token_hash = 'tok_a'`)
+  let tokenReplayed = false
+  try {
+    db.exec(`UPDATE download_tokens SET used_at = NULL WHERE token_hash = 'tok_a'`)
+  } catch (err) {
+    tokenReplayed = /already used/.test(String(err.message))
+  }
+  if (!tokenReplayed) fail('a used download token could be re-armed')
+
+  // Privacy: at most ONE open request per (user, kind).
+  db.exec(`INSERT INTO privacy_requests (public_id, user_id, kind, status) VALUES ('pr_1', ${userId}, 'export', 'received')`)
+  let doubleRequest = false
+  try {
+    db.exec(`INSERT INTO privacy_requests (public_id, user_id, kind, status) VALUES ('pr_2', ${userId}, 'export', 'received')`)
+  } catch (err) {
+    doubleRequest = /UNIQUE/i.test(err.message)
+  }
+  if (!doubleRequest) fail('a customer could open the same privacy request twice')
+  db.exec(`INSERT INTO privacy_requests (public_id, user_id, kind, status) VALUES ('pr_3', ${userId}, 'delete', 'received')`)
+  let kindRewritten = false
+  try {
+    db.exec(`UPDATE privacy_requests SET kind = 'export' WHERE public_id = 'pr_3'`)
+  } catch (err) {
+    kindRewritten = /immutable/.test(String(err.message))
+  }
+  if (!kindRewritten) fail('a privacy request kind was editable')
+
+  // The account-safety log is append-only.
+  db.exec(`INSERT INTO account_security_events (user_id, event_type) VALUES (${userId}, 'email_verified')`)
+  let eventRewritten2 = false
+  try {
+    db.exec(`UPDATE account_security_events SET event_type = 'x'`)
+  } catch (err) {
+    eventRewritten2 = /append-only/.test(String(err.message))
+  }
+  if (!eventRewritten2) fail('the account security log was editable')
+
+  console.log(`OK [phase5 upgrade]: 0028-0032 applied over existing Phase-4 rows; ${templates} published email templates seeded; every pre-existing row unchanged, every existing account still UNVERIFIED and every pre-existing session given an addressable public_id; nothing invented in any new table; re-applying the CREATE-TABLE-only files duplicates nothing. The single-use-token, claim-once, outbox-dedupe/sent-terminal, support-status, attachment-allowlist, download-cap and one-open-privacy-request guarantees all hold at the schema level.`)
 }
 
 // 3) Repeated migration behavior — `wrangler d1 migrations apply` tracks

@@ -19,6 +19,7 @@ import { chromium } from 'playwright'
 import { runPhase2Journeys } from './e2e-phase2.mjs'
 import { runPhase3Journeys } from './e2e-phase3.mjs'
 import { runPhase4Journeys } from './e2e-phase4.mjs'
+import { runPhase5Journeys } from './e2e-phase5.mjs'
 import jpegCodec from 'jpeg-js'
 import { spawn, execFileSync } from 'node:child_process'
 import { writeFileSync, mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs'
@@ -919,11 +920,26 @@ async function verifyAppIdentity(browser) {
 async function logoutViaUi(page) {
   const btn = page.locator('#logout-btn')
   await btn.waitFor({ state: 'visible', timeout: 15000 })
+  // Read what the browser will actually submit BEFORE clicking, so a failure
+  // below can say which half of the double-submit pair was wrong.
+  const before = await page.evaluate(() => ({
+    cookie: (document.cookie.match(/(?:^|;\s*)ww_csrf=([^;]+)/) || [])[1] || null,
+    field: document.querySelector('form.logout-form input[name=csrf_token]')?.value || null,
+    url: location.pathname
+  }))
   await btn.click()
   await page.waitForLoadState('load').catch(() => {})
   const me = await page.request.get(`${BASE}/api/me`)
   const body = await me.json().catch(() => ({}))
-  if (body.user) fail('logout', 'POST /logout did not end the session')
+  if (body.user) {
+    // Diagnostic: the guard's own error code, and the tokens the browser held,
+    // so a 403 is never reported as an opaque "did not end the session".
+    const refusal = await page.evaluate(() => (document.body ? document.body.innerText.slice(0, 200) : '(no body)')).catch(() => '(unreadable)')
+    fail(
+      'logout',
+      `POST /logout did not end the session (page=${before.url}, cookie prefix=${String(before.cookie).slice(0, 8)}, submitted field prefix=${String(before.field).slice(0, 8)}, equal=${before.cookie === before.field}, response=${refusal})`
+    )
+  }
   if ((await page.locator('#logout-btn').count()) !== 0) fail('logout', 'the logout control is still rendered after logging out')
   if ((await page.locator('#account-link').count()) !== 1) fail('logout', 'the signed-out header was not restored after logging out')
 }
@@ -1424,12 +1440,15 @@ async function main() {
   // main one) with the offline payment provider configured. See
   // scripts/e2e-phase4.mjs for why: with a provider configured, the paid path is
   // the ONLY checkout path — which would change what the other journeys test.
+  // LOCAL DEBUGGING AID (see the WW_E2E_ONLY note below): lets a local iteration
+  // run ONLY the phase-4 or phase-5 group. It can only ever REMOVE local runs.
+  const onlyGroupEarly = process.env.WW_E2E_ONLY
   const tmpDirForPhase4 = mkdtempSync(join(tmpdir(), 'ww-e2e-p4-'))
   let phase4Browser = null
   const phase4PhotoPath = join(tmpDirForPhase4, 'child-photo.jpg')
   writeFileSync(phase4PhotoPath, buildRealJpeg(900, 900))
   let phase4Server = null
-  try {
+  if (!onlyGroupEarly || onlyGroupEarly === 'phase4') try {
     const phase4Port = await findFreePort(PORT + 1)
     const phase4Base = `http://127.0.0.1:${phase4Port}`
     const started = startServer(phase4Port, [
@@ -1492,7 +1511,7 @@ async function main() {
     if (onlyGroup) {
       console.log(`[e2e] WW_E2E_ONLY=${onlyGroup} — running a NARROWED debug subset; the unset default runs every journey.`)
     }
-    if (!onlyGroup) {
+    if (!onlyGroup || onlyGroup === 'legacy') {
       await runGuestJourney(browser, photoPath)
       const { email: authEmail } = await runAuthenticatedJourney(browser, photoPath)
       await finishPasswordReset(browser, logs, authEmail)
@@ -1508,7 +1527,7 @@ async function main() {
 
     // V2 Phase 2: storefront / CMS / catalog / reviews / locale / keyboard
     // journeys. Uses the same task-supplied admin fixture as runAdminJourney.
-    await runPhase2Journeys({
+    if (!onlyGroup || onlyGroup === 'phase2' || onlyGroup === 'phase3') await runPhase2Journeys({
       browser,
       base: BASE,
       log,
@@ -1521,7 +1540,7 @@ async function main() {
 
     // V2 Phase 3: queue-driven generation -> watermarked multi-scene preview,
     // with real rows/assets, owner visibility and cross-user denial.
-    await runPhase3Journeys({
+    if (!onlyGroup || onlyGroup === 'phase3') await runPhase3Journeys({
       browser,
       base: BASE,
       log,
@@ -1532,7 +1551,51 @@ async function main() {
       queryD1
     })
 
-    console.log('\n[e2e] ALL JOURNEYS PASSED (guest, authenticated, double-submission, multi-face, upload-attack, cart-reload, cover-agreement, csrf, admin, disabled-claims, phase2-storefront-cms, phase3-generation-preview, phase4-commerce-payments)\n')
+  // V2 Phase 5 runs against its OWN payment-enabled server too: the guest
+  // purchase -> verified claim -> entitled download journey needs a REAL paid
+  // order, and with a provider configured the paid path is the only checkout
+  // path (see scripts/e2e-phase5.mjs). It runs AFTER the phase-3 group on purpose:
+  // the phase-3 journey asserts GLOBAL preview-asset counts (its own book's
+  // preview is expected to be the only one), so a group that generates previews
+  // must not run before it.
+  const tmpDirForPhase5 = mkdtempSync(join(tmpdir(), 'ww-e2e-p5-'))
+  let phase5Browser = null
+  const phase5PhotoPath = join(tmpDirForPhase5, 'child-photo.jpg')
+  writeFileSync(phase5PhotoPath, buildRealJpeg(900, 900))
+  let phase5Server = null
+  if (!onlyGroupEarly || onlyGroupEarly === 'phase5') try {
+    const phase5Port = await findFreePort(PORT + 2)
+    const phase5Base = `http://127.0.0.1:${phase5Port}`
+    const started = startServer(phase5Port, ['--binding', 'PAYMENT_PROVIDER=deterministic-fake'])
+    phase5Server = started.server
+    log('setup', `starting the account-enabled server for the phase-5 journey on :${phase5Port}`)
+    if (!(await waitFor(phase5Base + '/', 45000))) {
+      console.error(started.logs.value)
+      fail('setup', 'the phase-5 server did not become ready in time')
+    }
+    phase5Browser = await chromium.launch()
+    await runPhase5Journeys({
+      browser: phase5Browser,
+      base: phase5Base,
+      log,
+      fail,
+      attachDiagnostics,
+      assertClean,
+      queryD1,
+      // `logs` is this server's own stdout — where the DEVELOPMENT console email
+      // adapter prints a message, exactly as a developer reads it locally. That is
+      // how the journey opens the verification and claim links without any email
+      // provider, without a dev-only HTTP surface, and without weakening a
+      // production rule (the console adapter is refused outside development).
+      helpers: { personalizeAndAddToCart, photoPath: phase5PhotoPath, logs: started.logs }
+    })
+  } finally {
+    if (phase5Browser) await phase5Browser.close().catch(() => {})
+    if (phase5Server) killServerTree(phase5Server.pid)
+    rmSync(tmpDirForPhase5, { recursive: true, force: true })
+  }
+
+    console.log('\n[e2e] ALL JOURNEYS PASSED (guest, authenticated, double-submission, multi-face, upload-attack, cart-reload, cover-agreement, csrf, admin, disabled-claims, phase2-storefront-cms, phase3-generation-preview, phase4-commerce-payments, phase5-customer-lifecycle)\n')
   } catch (err) {
     // Surface the local server log on failure only — never written to a file.
     if (logs.value) console.error(`\n[e2e] server log:\n${logs.value}`)

@@ -190,6 +190,12 @@ const PUBLIC_ROUTES = [
   ['/register', 'register'],
   ['/forgot-password', 'forgot-password'],
   ['/reset-password?token=audit-invalid-token', 'reset-password'],
+  // V2 Phase 5: the token-landing page in its INVALID state (which is what an
+  // expired/reused/foreign link produces), and the account surfaces a logged-out
+  // visitor is redirected away from. Both are real, reachable states.
+  ['/verify-email?token=audit-invalid-token', 'verify-email-invalid'],
+  ['/account', 'account-logged-out'],
+  ['/my/downloads', 'downloads-logged-out'],
   ['/my-books', 'my-books'],
   ['/my/books/the-star-collector', 'reader'],
   ['/faqs', 'faqs'],
@@ -209,6 +215,24 @@ const PUBLIC_ROUTES = [
 // /reset-password?token=... intentionally uses an invalid token — this is
 // the generic "invalid or expired link" state a real expired/reused/wrong
 // link would show; it's a real page state to visually verify, not an error.
+
+// V2 Phase 5 (CUS-01..CUS-14): every customer account surface, audited with a
+// REAL signed-in session at desktop and mobile. The account pages are
+// server-rendered on purpose, so there is no "loading…" state to skip: what a
+// customer with an empty account sees is what is checked.
+const CUSTOMER_ROUTES = [
+  ['/account', 'account-overview'],
+  ['/account/profile', 'account-profile'],
+  ['/account/addresses', 'account-addresses'],
+  ['/account/security', 'account-security'],
+  ['/account/notifications', 'account-notifications'],
+  ['/account/claims', 'account-claims'],
+  ['/account/support', 'account-support'],
+  ['/account/privacy', 'account-privacy'],
+  ['/my-books', 'customer-my-books'],
+  ['/my/books', 'customer-my-library'],
+  ['/my/downloads', 'customer-my-downloads']
+]
 
 const ADMIN_ROUTES = [
   ['/admin/login', 'admin-login'],
@@ -578,6 +602,36 @@ async function main() {
       } else {
         log(`no orders exist in this run's DB yet — skipping admin/orders/:id screenshot (not a finding)`)
       }
+      await context.close()
+    }
+
+    // ---- V2 Phase 5: the signed-in customer account surfaces ----
+    //
+    // These pages contain personal data and are gated on a session, so they are
+    // audited the same way the admin surfaces are: the audit REGISTERS a real
+    // customer through the app's own route (never a seeded credential), then
+    // visits each page at desktop and mobile. The point is that they stand on
+    // their own with an EMPTY account — a fresh registration has no orders, no
+    // books, no tickets and no downloads, which is exactly the state most likely
+    // to render an empty or broken shell.
+    for (const vp of [DESKTOP, MOBILE]) {
+      const label = vp === DESKTOP ? 'desktop' : 'mobile'
+      const context = await browser.newContext({ viewport: vp })
+      const page = await context.newPage()
+      const customerEmail = `audit-p5-customer-${Date.now()}-${label}@local.test`
+      await page.goto(base + '/register')
+      await page.fill('#name', 'Audit Phase 5 Customer')
+      await page.fill('#email', customerEmail)
+      await page.fill('#password', 'audit-customer-pass-1')
+      await page.click('.auth-form form button[type=submit]')
+      await page.waitForURL(base + '/my-books', { timeout: 15000 })
+      for (const [path, name] of CUSTOMER_ROUTES) {
+        await visit(base, page, path, `customer-${name}`, label, findings, evidenceDir)
+      }
+      await runAccessibilityPass(base, page, CUSTOMER_ROUTES.map(([p]) => p), `customer-${label}`, findings)
+      // The reader page for a book the customer does not own must not leak it —
+      // a real ownership boundary, checked in the browser rather than asserted.
+      await visit(base, page, '/my/books?userBookId=ub_00000000000000000000000000000000', 'customer-unowned-book', label, findings, evidenceDir)
       await context.close()
     }
 
