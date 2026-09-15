@@ -1,9 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
-  <rect width="200" height="200" fill="#fff8d6"/>
-  <circle cx="100" cy="80" r="46" fill="#ffe2c8"/>
-  <circle cx="88" cy="74" r="4" fill="#222"/>
-  <circle cx="112" cy="74" r="4" fill="#222"/>
-  <path d="M85 90 Q100 100 115 90" stroke="#222" stroke-width="3" fill="none" stroke-linecap="round"/>
-  <rect x="50" y="130" width="100" height="60" rx="20" fill="#ffd34f"/>
-  <text x="100" y="190" text-anchor="middle" font-family="Figtree" font-size="13" fill="#5b16b3" font-weight="700">Bright natural light</text>
-</svg>
