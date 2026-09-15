@@ -49,11 +49,31 @@ export async function verifyPassword(password: string, stored: string): Promise<
 }
 
 // --- sessions ---
-export async function createSession(db: D1Database, userId: number): Promise<string> {
+/**
+ * Optional, purely descriptive session metadata (V2 Phase 5, CUS-02). It is used
+ * ONLY to render a session list its owner can recognise and revoke. `ipDigest`
+ * is a digest, never a raw address (see src/account/security.ts::ipDigest).
+ */
+export type SessionMeta = { userAgent?: string | null; ipDigest?: string | null }
+
+export async function createSession(db: D1Database, userId: number, meta: SessionMeta = {}): Promise<string> {
   const token = toHex(crypto.getRandomValues(new Uint8Array(32)))
   const expires = Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS
-  await db.prepare('INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, ?)').bind(token, userId, expires).run()
+  // `public_id` is what a session list shows and what a revoke addresses — no
+  // read path ever returns the token itself.
+  const publicId = `se_${crypto.randomUUID().replace(/-/g, '')}`
+  await db
+    .prepare('INSERT INTO sessions (token, user_id, expires_at, public_id, user_agent, created_ip_hash, ip_hash, last_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)')
+    .bind(token, userId, expires, publicId, meta.userAgent ? String(meta.userAgent).slice(0, 200) : null, meta.ipDigest ?? null, meta.ipDigest ?? null)
+    .run()
   return token
+}
+
+/** The public id of the session this request is authenticated by — never the token. */
+export async function currentSessionPublicId(db: D1Database, token: string | undefined): Promise<string | null> {
+  if (!token) return null
+  const row = await db.prepare('SELECT public_id FROM sessions WHERE token = ?').bind(token).first<{ public_id: string | null }>()
+  return row?.public_id ?? null
 }
 
 /**
@@ -61,10 +81,10 @@ export async function createSession(db: D1Database, userId: number): Promise<str
  * destroys the one the caller held before (if any), so a pre-authentication
  * session id can never survive a privilege change (session fixation).
  */
-export async function rotateSessionOnLogin(c: Context, db: D1Database, userId: number): Promise<string> {
+export async function rotateSessionOnLogin(c: Context, db: D1Database, userId: number, meta: SessionMeta = {}): Promise<string> {
   const previous = readSessionToken(c)
   if (previous) await destroySession(db, previous)
-  const token = await createSession(db, userId)
+  const token = await createSession(db, userId, meta)
   setSessionCookie(c, token)
   // A new session always gets a fresh double-submit CSRF token, so the page
   // that authenticates can immediately make authorized mutations.

@@ -16,6 +16,7 @@
 import { postLedgerEntry, refreshOrderFinancialState, refundableRemainderMinor } from './ledger'
 import { addAttemptRefundedMinor } from './payments/attempts'
 import type { PaymentProvider } from './payments/types'
+import { afterRefund } from '../account/hooks'
 
 export type RefundRow = {
   id: number
@@ -175,6 +176,16 @@ export async function requestRefund(db: D1Database, provider: PaymentProvider, i
   await addAttemptRefundedMinor(db, attempt.id, requested)
   const state = await refreshOrderFinancialState(db, input.orderId)
   await syncOrderRefundState(db, input.orderId, state?.paymentStatus ?? null, actorLabel, requested)
+
+  // V2 Phase 5 (CUS-11): a refund changes what the customer is entitled to keep.
+  // Re-deriving the entitlements from the ledger revokes them when the order is
+  // fully refunded and leaves them untouched for a partial refund. Idempotent, and
+  // best-effort: the refund is already committed.
+  try {
+    await afterRefund(db, input.orderId)
+  } catch (err) {
+    console.error(`[refunds] entitlement reconciliation failed for order ${input.orderId}: ${err instanceof Error ? err.message : 'unknown'}`)
+  }
 
   const remainingAfter = await refundableRemainderMinor(db, input.orderId)
   return {

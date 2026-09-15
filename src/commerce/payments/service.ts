@@ -26,6 +26,8 @@
 // regress a refunded order back to paid.
 import { postLedgerEntry, refreshOrderFinancialState } from '../ledger'
 import { getCartById, markCartConverted } from '../cart'
+import { afterPaymentOutcome } from '../../account/hooks'
+import type { MailEnv } from '../../mail/provider'
 import { addAttemptRefundedMinor } from './attempts'
 import type { PaymentEnv, VerifiedEvent } from './types'
 import { isHandledEventType } from './types'
@@ -476,6 +478,18 @@ export async function handleVerifiedWebhook(
     return { status, body: { ok: false, code: verified.code, message: verified.message } }
   }
   const result = await ingestProviderEvent(db, verified.event)
+  // V2 Phase 5 (CUS-11/PLT-05): reconcile what the customer is entitled to as a
+  // result of this outcome — download entitlements, and the one confirmation
+  // email for this outcome. Deliberately AFTER the ledger work has committed and
+  // idempotent, so a duplicate webhook neither doubles a quota nor re-sends a
+  // message, and a mail failure can never fail a verified payment event.
+  if (result.orderId != null && result.outcome && result.status !== 'duplicate') {
+    try {
+      await afterPaymentOutcome(db, env as unknown as MailEnv, result.orderId, result.outcome)
+    } catch (err) {
+      console.error(`[payments] payment follow-up failed for order ${result.orderId}: ${err instanceof Error ? err.message : 'unknown'}`)
+    }
+  }
   return {
     status: 200,
     body: {
