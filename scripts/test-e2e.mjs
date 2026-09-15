@@ -17,6 +17,7 @@
 // click can't exercise cleanly.
 import { chromium } from 'playwright'
 import { runPhase2Journeys } from './e2e-phase2.mjs'
+import { runPhase3Journeys } from './e2e-phase3.mjs'
 import jpegCodec from 'jpeg-js'
 import { spawn, execFileSync } from 'node:child_process'
 import { writeFileSync, mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs'
@@ -149,6 +150,13 @@ function startServer(port) {
       // real calls to any external face-analysis provider (Phase 2 requires
       // this). Never set in a real/deployed environment.
       '--binding', 'FACE_ANALYSIS_PROVIDER=deterministic-fake',
+      // V2 Phase 3: drain due generation jobs in the same request, so the whole
+      // queue -> consumer pipeline is exercised through the real HTTP surface
+      // without a second process. Gated on ENVIRONMENT=development AND this
+      // flag — see src/generation/queue.ts. The generation PROVIDERS are chosen
+      // by each pinned prompt version (all published versions use the
+      // deterministic offline provider, so this run makes ZERO paid calls).
+      '--binding', 'GENERATION_INLINE_DISPATCH=1',
       // One-time local admin bootstrap (ADM-01). This is how the admin journey
       // gets a real admin account: the app hashes the password itself with
       // src/auth.ts, so the fixture cannot drift from the real credential path.
@@ -1430,17 +1438,29 @@ async function main() {
 
     browser = await chromium.launch()
     await verifyAppIdentity(browser)
-    await runGuestJourney(browser, photoPath)
-    const { email: authEmail } = await runAuthenticatedJourney(browser, photoPath)
-    await finishPasswordReset(browser, logs, authEmail)
-    await runDoubleSubmissionTest(browser, photoPath)
-    await runMultiFaceJourney(browser, tmpDir)
-    await runUploadAttackJourney(browser, photoPath)
-    await runCartThumbnailJourney(browser, photoPath)
-    await runCoverAgreementJourney(browser, photoPath)
-    await runCsrfJourney(browser)
-    await runAdminJourney(browser)
-    await runDisabledCapabilityJourney(browser)
+
+    // LOCAL DEBUGGING AID ONLY. Unset (which is what `npm run test:e2e` and the
+    // release gates use) runs EVERY journey group. `WW_E2E_ONLY=phase3` narrows
+    // a local iteration to the phase-2 + phase-3 groups; it can only ever
+    // REMOVE local runs, never change what the gate executes, and when it is set
+    // it says so loudly.
+    const onlyGroup = process.env.WW_E2E_ONLY
+    if (onlyGroup) {
+      console.log(`[e2e] WW_E2E_ONLY=${onlyGroup} — running a NARROWED debug subset; the unset default runs every journey.`)
+    }
+    if (!onlyGroup) {
+      await runGuestJourney(browser, photoPath)
+      const { email: authEmail } = await runAuthenticatedJourney(browser, photoPath)
+      await finishPasswordReset(browser, logs, authEmail)
+      await runDoubleSubmissionTest(browser, photoPath)
+      await runMultiFaceJourney(browser, tmpDir)
+      await runUploadAttackJourney(browser, photoPath)
+      await runCartThumbnailJourney(browser, photoPath)
+      await runCoverAgreementJourney(browser, photoPath)
+      await runCsrfJourney(browser)
+      await runAdminJourney(browser)
+      await runDisabledCapabilityJourney(browser)
+    }
 
     // V2 Phase 2: storefront / CMS / catalog / reviews / locale / keyboard
     // journeys. Uses the same task-supplied admin fixture as runAdminJourney.
@@ -1455,7 +1475,20 @@ async function main() {
       queryD1
     })
 
-    console.log('\n[e2e] ALL JOURNEYS PASSED (guest, authenticated, double-submission, multi-face, upload-attack, cart-reload, cover-agreement, csrf, admin, disabled-claims, phase2-storefront-cms)\n')
+    // V2 Phase 3: queue-driven generation -> watermarked multi-scene preview,
+    // with real rows/assets, owner visibility and cross-user denial.
+    await runPhase3Journeys({
+      browser,
+      base: BASE,
+      log,
+      fail,
+      attachDiagnostics,
+      assertClean,
+      admin: { email: ADMIN_EMAIL, password: ADMIN_PASSWORD },
+      queryD1
+    })
+
+    console.log('\n[e2e] ALL JOURNEYS PASSED (guest, authenticated, double-submission, multi-face, upload-attack, cart-reload, cover-agreement, csrf, admin, disabled-claims, phase2-storefront-cms, phase3-generation-preview)\n')
   } catch (err) {
     // Surface the local server log on failure only — never written to a file.
     if (logs.value) console.error(`\n[e2e] server log:\n${logs.value}`)

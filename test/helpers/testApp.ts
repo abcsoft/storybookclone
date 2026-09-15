@@ -28,6 +28,24 @@ export type TestEnv = {
   GUEST_ORDER_TOKEN_SECRET?: string
   GUEST_ORDER_TOKEN_SECRET_PREV?: string
   FACE_ANALYSIS_PROVIDER?: string
+  FACE_ANALYSIS_API_URL?: string
+  FACE_ANALYSIS_API_KEY?: string
+  /**
+   * Phase 3 generation. `GENERATION_INLINE_DISPATCH=1` drains due jobs in the
+   * same request so the whole pipeline is exercised through the HTTP surface
+   * without a real queue consumer. It is gated on ENVIRONMENT=development AND
+   * the explicit flag, so it can never become the production architecture.
+   */
+  GENERATION_INLINE_DISPATCH?: string
+  GENERATION_DISABLED?: string
+  GENERATION_STORY_API_URL?: string
+  GENERATION_STORY_API_KEY?: string
+  GENERATION_ILLUSTRATION_API_URL?: string
+  GENERATION_ILLUSTRATION_API_KEY?: string
+  GENERATION_TRANSLATION_API_URL?: string
+  GENERATION_TRANSLATION_API_KEY?: string
+  GENERATION_VALIDATION_API_URL?: string
+  GENERATION_VALIDATION_API_KEY?: string
   /** M-2: only `cloudflare` (in a production environment) arms the trusted-proxy boundary. */
   TRUSTED_PROXY?: string
   /** L-D: overrides for the single brand/identity boundary (src/brand.ts). */
@@ -55,6 +73,9 @@ export function freshEnv(overrides: Partial<TestEnv> = {}): TestEnv {
     // to undefined explicitly. The fake is additionally gated on
     // ENVIRONMENT=development below, so it can never activate in production.
     FACE_ANALYSIS_PROVIDER: 'deterministic-fake',
+    // Phase 3: the real-world equivalent of a configured queue consumer, for a
+    // test/dev deployment — see src/generation/queue.ts.
+    GENERATION_INLINE_DISPATCH: '1',
     ENVIRONMENT: 'development',
     ...overrides
   }

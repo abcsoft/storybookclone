@@ -225,6 +225,10 @@ const ADMIN_ROUTES = [
   ['/admin/cms/pages', 'admin-cms-pages'],
   ['/admin/cms/faqs', 'admin-cms-faqs'],
   ['/admin/reviews', 'admin-reviews'],
+  // V2 Phase 3 (ADM-08/ADM-10/ADM-11): the generation operational surfaces.
+  ['/admin/generation/templates', 'admin-generation-templates'],
+  ['/admin/generation/jobs', 'admin-generation-jobs'],
+  ['/admin/generation/previews', 'admin-generation-previews'],
   ['/admin/reviews?status=all', 'admin-reviews-all'],
   ['/admin/localization', 'admin-localization'],
   ['/admin/settings', 'admin-settings'],

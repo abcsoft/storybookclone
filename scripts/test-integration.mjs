@@ -12,6 +12,7 @@
 // IF NOT EXISTS`) is not naturally idempotent if re-run raw.
 import { DatabaseSync } from 'node:sqlite'
 import { readdirSync, readFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -20,6 +21,29 @@ const migrationsDir = join(root, 'migrations')
 const allFiles = readdirSync(migrationsDir)
   .filter((f) => f.endsWith('.sql'))
   .sort()
+
+// V2 Phase 3 (migrations 0024-0025). Named separately so a scenario that
+// deliberately stops at the accepted Phase-2 schema can assert precisely what
+// should exist there, instead of skipping the check altogether.
+const PHASE_3_TABLES = [
+  'prompt_versions', 'template_prompt_versions', 'consent_versions',
+  'generation_jobs', 'generation_tasks', 'generated_assets',
+  'generation_attempts', 'provider_events', 'generation_usage_events',
+  'generation_dead_letters', 'generation_quota_windows', 'generation_limits',
+  'generation_asset_deletions',
+  'template_scaffolds', 'template_scaffold_scenes', 'template_scaffold_placeholders'
+]
+const PHASE_3_COLUMNS = [
+  ['preview_versions', 'generation_job_id'],
+  ['preview_versions', 'scene_count'],
+  ['preview_versions', 'manifest_checksum'],
+  ['preview_versions', 'watermark_label'],
+  ['preview_assets', 'generated_asset_id'],
+  ['preview_assets', 'is_watermarked'],
+  ['generation_tasks', 'output_asset_id'],
+  ['user_books', 'consent_version'],
+  ['prospects', 'consent_version']
+]
 
 const EXPECTED_TABLES = [
   'users', 'sessions', 'products', 'discounts', 'orders', 'order_items',
@@ -43,7 +67,9 @@ const EXPECTED_TABLES = [
   'cms_blocks', 'cms_nav_items', 'cms_footer_notes', 'cms_faqs', 'cms_pages',
   'announcements', 'site_settings', 'reviews',
   'currency_settings', 'countries', 'product_prices', 'variant_prices',
-  'shipping_rates', 'cms_page_localizations', 'redirects', 'seo_metadata'
+  'shipping_rates', 'cms_page_localizations', 'redirects', 'seo_metadata',
+  // V2 Phase 3 (migrations 0024-0025): generation pipeline
+  ...PHASE_3_TABLES
 ]
 
 const EXPECTED_NEW_COLUMNS = [
@@ -60,7 +86,30 @@ const EXPECTED_NEW_COLUMNS = [
   ['order_items', 'user_book_id'],
   ['order_items', 'personalization_input_revision'],
   // Phase 1
-  ['photo_uploads', 'revoked_at']
+  ['photo_uploads', 'revoked_at'],
+  // V2 Phase 3 (migrations 0024-0025)
+  ...PHASE_3_COLUMNS
+]
+
+/** The triggers migration 0024 introduces. */
+const PHASE_3_TRIGGERS = [
+  'trg_prompt_versions_identity_immutable',
+  'trg_prompt_versions_no_unpublish',
+  'trg_prompt_versions_no_revive',
+  'trg_prompt_versions_body_immutable',
+  'trg_template_prompt_versions_immutable_once_published',
+  'trg_consent_versions_identity_immutable',
+  'trg_generation_jobs_status_flow',
+  'trg_generation_jobs_identity_immutable',
+  'trg_generation_jobs_terminal_frozen',
+  'trg_generation_tasks_status_flow',
+  'trg_generated_assets_body_immutable',
+  'trg_generated_assets_validation_forward_only',
+  'trg_generation_attempts_no_update',
+  'trg_provider_events_no_update',
+  'trg_generation_usage_no_update',
+  'trg_generation_dead_letters_body_immutable',
+  'trg_preview_assets_must_be_watermarked'
 ]
 
 const EXPECTED_TRIGGERS = [
@@ -92,13 +141,16 @@ const EXPECTED_TRIGGERS = [
   'trg_products_money_insert',
   'trg_products_money_update',
   'trg_product_variants_currency_insert',
-  'trg_product_variants_currency_update'
+  'trg_product_variants_currency_update',
+  ...PHASE_3_TRIGGERS
 ]
 
-function assertTriggers(db, label) {
+
+
+function assertTriggers(db, label, expect = EXPECTED_TRIGGERS) {
   const rows = db.prepare("SELECT name FROM sqlite_master WHERE type = 'trigger'").all()
   const present = new Set(rows.map((r) => r.name))
-  const missing = EXPECTED_TRIGGERS.filter((t) => !present.has(t))
+  const missing = expect.filter((t) => !present.has(t))
   if (missing.length) {
     console.error(`FAIL [${label}]: missing trigger(s) after migration: ${missing.join(', ')}`)
     process.exit(1)
@@ -124,22 +176,27 @@ function applyMigrationSet(db, files, label) {
   }
 }
 
-function assertTables(db, label) {
+/**
+ * `expect` defaults to the full schema. A scenario that deliberately applies
+ * only PART of the migration set passes the subset it means, so "this migration
+ * set produced this schema" is still asserted rather than skipped.
+ */
+function assertTables(db, label, expect = { tables: EXPECTED_TABLES, columns: EXPECTED_NEW_COLUMNS }) {
   const rows = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all()
   const present = new Set(rows.map((r) => r.name))
-  const missing = EXPECTED_TABLES.filter((t) => !present.has(t))
+  const missing = expect.tables.filter((t) => !present.has(t))
   if (missing.length) {
     console.error(`FAIL [${label}]: missing tables after migration: ${missing.join(', ')}`)
     process.exit(1)
   }
-  for (const [table, column] of EXPECTED_NEW_COLUMNS) {
+  for (const [table, column] of expect.columns) {
     const cols = db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name)
     if (!cols.includes(column)) {
       console.error(`FAIL [${label}]: ${table}.${column} missing after migration`)
       process.exit(1)
     }
   }
-  console.log(`OK [${label}]: all ${EXPECTED_TABLES.length} expected tables + ${EXPECTED_NEW_COLUMNS.length} new columns present.`)
+  console.log(`OK [${label}]: all ${expect.tables.length} expected tables + ${expect.columns.length} new columns present.`)
 }
 
 // 1) Empty database — apply every migration file, once each, in order.
@@ -385,7 +442,9 @@ const ACCEPTED_PHASE_1_0009_MIGRATIONS = [
 {
   const db = new DatabaseSync(':memory:')
   const phase1 = allFiles.filter((f) => f < '0020_')
-  const phase2 = allFiles.filter((f) => f >= '0020_')
+  // Bounded above by 0023: the Phase-3 migrations are ALTER-based and are
+  // applied at most once, exactly like every ALTER-based migration before them.
+  const phase2 = allFiles.filter((f) => f >= '0020_' && f < '0024_')
   if (!phase2.length) {
     console.error('FAIL [phase2 upgrade]: no 0020+ migrations found')
     process.exit(1)
@@ -404,8 +463,18 @@ const ACCEPTED_PHASE_1_0009_MIGRATIONS = [
   `)
 
   applyMigrationSet(db, phase2, 'phase2-upgrade (apply 0020-0023)')
-  assertTables(db, 'phase2 upgrade')
-  assertTriggers(db, 'phase2 upgrade')
+  // This scenario stops at the accepted Phase-2 schema, so the PHASE-3 tables
+  // must NOT exist yet — asserted both ways rather than skipped.
+  assertTables(db, 'phase2 upgrade', {
+    tables: EXPECTED_TABLES.filter((t) => !PHASE_3_TABLES.includes(t)),
+    columns: EXPECTED_NEW_COLUMNS.filter(([table, column]) => !PHASE_3_COLUMNS.some(([t, c]) => t === table && c === column))
+  })
+  assertTriggers(db, 'phase2 upgrade', EXPECTED_TRIGGERS.filter((t) => !PHASE_3_TRIGGERS.includes(t)))
+  const phase3Leak = PHASE_3_TABLES.filter((t) => db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?").get(t))
+  if (phase3Leak.length) {
+    console.error(`FAIL [phase2 upgrade]: migration 0020-0023 created Phase-3 tables: ${phase3Leak.join(', ')}`)
+    process.exit(1)
+  }
 
   const fail = (msg) => {
     console.error(`FAIL [phase2 upgrade]: ${msg}`)
@@ -460,6 +529,159 @@ const ACCEPTED_PHASE_1_0009_MIGRATIONS = [
   if (membershipDupes !== 0) fail('re-applying produced duplicate collection memberships')
 
   console.log(`OK [phase2 upgrade]: 0020-0023 applied over existing rows; ${prices.length} currency prices, facts + cover derived, legacy aggregates neutralised, order untouched and unpaid, ${blocks} CMS blocks / ${navItems} nav entries / ${faqs} FAQs / ${media2} media rows stable across a re-apply.`)
+}
+
+// 2h) V2 Phase 3 upgrade (0024-0025) from the accepted Phase-2 schema with
+//     EXISTING rows: the new tables/columns must arrive, the scaffold and prompt
+//     versions must be seeded exactly once, and NO existing row may change.
+{
+  const db = new DatabaseSync(':memory:')
+  db.exec('PRAGMA foreign_keys = ON')
+  const phase2 = allFiles.filter((f) => f < '0024_')
+  const phase3 = allFiles.filter((f) => f >= '0024_')
+  if (!phase3.length) {
+    console.error('FAIL [phase3 upgrade]: no 0024+ migrations found')
+    process.exit(1)
+  }
+  applyMigrationSet(db, phase2, 'phase3-upgrade (baseline 0001-0023)')
+
+  // Pre-existing Phase-2-shaped rows, exactly as a live deployment would hold
+  // them: a product, a customer, an order, a guest prospect, a user book with
+  // an immutable revision, and a photo upload.
+  db.exec(`
+    INSERT INTO products (slug, title, price, price_minor, currency, image, age_min, age_max, active)
+      VALUES ('legacy-p3', 'Legacy Phase 2 Book', 29.99, 2999, 'USD', '/static/img/art/cover-the-quiet-drum.svg', 4, 8, 1);
+    INSERT INTO users (name, email, password_hash) VALUES ('Existing Customer', 'p3@example.com', 'hash123');
+    INSERT INTO orders (full_name, email, address, city, country, subtotal, discount, shipping, total, subtotal_minor, discount_minor, shipping_minor, total_minor, currency, status)
+      VALUES ('Existing Customer', 'p3@example.com', 'a', 'c', 'US', 29.99, 0, 0, 29.99, 2999, 0, 0, 2999, 'USD', 'pending_preview');
+    INSERT INTO prospects (id, capability_hash, expires_at) VALUES ('legacy-prospect', 'legacy-hash', 9999999999);
+    INSERT INTO photo_uploads (upload_key, owner_token, content_type, byte_size, width, height, expires_at, completed_at)
+      VALUES ('uploads/legacy-p3.jpg', 'prospect:legacy-prospect', 'image/jpeg', 50000, 900, 900, 9999999999, CURRENT_TIMESTAMP);
+    INSERT INTO user_books (public_id, product_id, prospect_id, state, current_revision, selected_upload_key, version)
+      VALUES ('ub_legacy00000000000000000000000000', (SELECT id FROM products WHERE slug='legacy-p3'), 'legacy-prospect', 'ready_to_generate', 1, 'uploads/legacy-p3.jpg', 3);
+    INSERT INTO personalization_inputs (user_book_id, revision, child_name, child_age, language_code, dedication, photo_upload_key)
+      SELECT id, 1, 'Existing Child', 6, 'en', 'A legacy dedication.', 'uploads/legacy-p3.jpg' FROM user_books WHERE public_id = 'ub_legacy00000000000000000000000000';
+  `)
+
+  // `consent_version` does not exist yet at this point — that is part of what
+  // 0024 adds, and the assertion below checks it is left NULL afterwards.
+  const beforeUserBook = db.prepare("SELECT state, version, current_revision FROM user_books WHERE public_id = 'ub_legacy00000000000000000000000000'").get()
+  const beforeOrder = db.prepare("SELECT status, total_minor FROM orders WHERE email = 'p3@example.com'").get()
+
+  applyMigrationSet(db, phase3, 'phase3-upgrade (apply 0024-0025)')
+  assertTables(db, 'phase3 upgrade')
+  assertTriggers(db, 'phase3 upgrade')
+
+  const fail = (msg) => {
+    console.error(`FAIL [phase3 upgrade]: ${msg}`)
+    process.exit(1)
+  }
+
+  // The scaffold and its scenes/placeholders are seeded exactly once.
+  const scaffolds = db.prepare('SELECT COUNT(*) AS n FROM template_scaffolds').get().n
+  const scenes = db.prepare('SELECT COUNT(*) AS n FROM template_scaffold_scenes').get().n
+  const placeholders = db.prepare('SELECT COUNT(*) AS n FROM template_scaffold_placeholders').get().n
+  if (scaffolds !== 1) fail(`expected exactly one template scaffold, got ${scaffolds}`)
+  if (scenes !== 6) fail(`expected six scaffold scenes, got ${scenes}`)
+  if (placeholders < 7) fail(`expected the scaffold placeholder contract, got ${placeholders}`)
+
+  // Prompt versions: one PUBLISHED local version per kind, plus a draft http
+  // sibling showing the documented real-adapter path.
+  const publishedPrompts = db.prepare("SELECT kind, COUNT(*) AS n FROM prompt_versions WHERE status = 'published' GROUP BY kind").all()
+  if (publishedPrompts.length !== 4) fail(`expected 4 published prompt kinds, got ${publishedPrompts.length}`)
+  const fakePrompts = db.prepare("SELECT COUNT(*) AS n FROM prompt_versions WHERE status = 'published' AND provider = 'deterministic-fake'").get().n
+  if (fakePrompts !== 4) fail(`every published prompt must use the offline provider by default (got ${fakePrompts})`)
+  const httpDrafts = db.prepare("SELECT COUNT(*) AS n FROM prompt_versions WHERE status = 'draft' AND provider = 'http'").get().n
+  if (httpDrafts !== 4) fail(`expected 4 draft http prompt versions documenting the real path (got ${httpDrafts})`)
+
+  // The consent version's stored hash matches its stored wording.
+  const consent = db.prepare("SELECT summary, text_hash, status FROM consent_versions WHERE key = 'personalization_photo_processing'").get()
+  if (!consent || consent.status !== 'published') fail('the consent version was not seeded as published')
+  if (createHash('sha256').update(consent.summary).digest('hex') !== consent.text_hash) {
+    fail('the seeded consent text_hash does not match the seeded wording')
+  }
+
+  // Generation limits are seeded with real (non-zero) caps.
+  const limits = db.prepare('SELECT key, value FROM generation_limits').all()
+  if (limits.length < 8) fail(`expected the generation limits to be seeded, got ${limits.length}`)
+  for (const limit of limits) {
+    if (!Number.isFinite(Number(limit.value)) || Number(limit.value) <= 0) fail(`generation limit ${limit.key} is not a positive number: ${limit.value}`)
+  }
+
+  // NO existing row changed.
+  const afterUserBook = db.prepare("SELECT state, version, current_revision, consent_version FROM user_books WHERE public_id = 'ub_legacy00000000000000000000000000'").get()
+  if (afterUserBook.state !== beforeUserBook.state) fail(`the upgrade changed the user book state (${beforeUserBook.state} -> ${afterUserBook.state})`)
+  if (afterUserBook.version !== beforeUserBook.version) fail('the upgrade changed the user book version (optimistic concurrency must be preserved)')
+  if (afterUserBook.current_revision !== beforeUserBook.current_revision) fail('the upgrade changed the immutable revision pointer')
+  if (afterUserBook.consent_version !== null) fail('the upgrade invented a consent version for a pre-existing book — it must be back-filled with NULL, never a guess')
+  const afterOrder = db.prepare("SELECT status, total_minor FROM orders WHERE email = 'p3@example.com'").get()
+  if (afterOrder.status !== beforeOrder.status || afterOrder.total_minor !== beforeOrder.total_minor) fail('the upgrade changed an existing order')
+  const revision = db.prepare('SELECT child_name FROM personalization_inputs WHERE revision = 1').get()
+  if (revision.child_name !== 'Existing Child') fail('the upgrade changed an existing personalization revision')
+
+  // Zero generation rows are invented by the migration.
+  for (const table of ['generation_jobs', 'generation_tasks', 'generated_assets', 'preview_versions', 'preview_assets', 'generation_attempts', 'generation_usage_events', 'generation_dead_letters']) {
+    const n = db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n
+    if (n !== 0) fail(`the migration invented ${n} row(s) in ${table}`)
+  }
+
+  // Re-applying the SEED migration must not duplicate any seeded row. 0024 is
+  // ALTER-based, so (like every ALTER-based migration in this project) it is
+  // applied at most once and is excluded here — the same rule the
+  // repeated-behaviour block below applies to the older files.
+  const phase3Repeatable = phase3.filter((f) => !/ALTER TABLE/i.test(readFileSync(join(migrationsDir, f), 'utf8')))
+  if (!phase3Repeatable.length) fail('no repeatable (CREATE-TABLE-only) phase-3 migration was found')
+  applyMigrationSet(db, phase3Repeatable, 'phase3-upgrade (re-apply the seed migration)')
+  if (db.prepare('SELECT COUNT(*) AS n FROM template_scaffolds').get().n !== scaffolds) fail('re-applying duplicated the template scaffold')
+  if (db.prepare('SELECT COUNT(*) AS n FROM template_scaffold_scenes').get().n !== scenes) fail('re-applying duplicated the scaffold scenes')
+  if (db.prepare('SELECT COUNT(*) AS n FROM template_scaffold_placeholders').get().n !== placeholders) fail('re-applying duplicated the scaffold placeholders')
+  if (db.prepare('SELECT COUNT(*) AS n FROM prompt_versions').get().n !== 8) fail('re-applying duplicated the prompt versions')
+  if (db.prepare('SELECT COUNT(*) AS n FROM generation_limits').get().n !== limits.length) fail('re-applying duplicated the generation limits')
+  if (db.prepare('SELECT COUNT(*) AS n FROM consent_versions').get().n !== 1) fail('re-applying duplicated the consent version')
+
+  // The database-level guarantees the pipeline depends on actually hold.
+  const jobInsert = (sql, args) => {
+    try {
+      db.prepare(sql).run(...args)
+      return true
+    } catch {
+      return false
+    }
+  }
+  // The unique idempotency authority: one job per (book, revision, template).
+  const templateId = db.prepare("INSERT INTO book_templates (product_id, language_code, version, status) SELECT id, 'en', 1, 'published' FROM products WHERE slug='legacy-p3'").run().lastInsertRowid
+  const bookId = db.prepare("SELECT id FROM user_books WHERE public_id = 'ub_legacy00000000000000000000000000'").get().id
+  const insertJob = `INSERT INTO generation_jobs (public_id, user_book_id, input_revision, template_id, correlation_id) VALUES (?, ?, 1, ?, 'corr')`
+  if (!jobInsert(insertJob, ['gj_one', bookId, templateId])) fail('a first generation job could not be inserted')
+  if (jobInsert(insertJob, ['gj_two', bookId, templateId])) fail('the idempotency unique index did NOT prevent a duplicate billable job')
+
+  // The status-flow trigger refuses an illegal jump.
+  if (jobInsert("UPDATE generation_jobs SET status = 'succeeded' WHERE public_id = 'gj_one'", [])) {
+    fail('the job status-flow trigger allowed queued -> succeeded (an illegal transition)')
+  }
+
+  // A preview asset must be watermarked.
+  db.prepare("INSERT INTO preview_versions (user_book_id, input_revision, template_id, status) VALUES (?, 1, ?, 'ready')").run(bookId, templateId)
+  const previewId = db.prepare('SELECT id FROM preview_versions ORDER BY id DESC LIMIT 1').get().id
+  let refusedUnwatermarked = false
+  try {
+    db.prepare("INSERT INTO preview_assets (preview_version_id, asset_type, object_key, checksum, is_watermarked) VALUES (?, 'page_preview', 'gen/preview/x.jpg', 'abc', 0)").run(previewId)
+  } catch (err) {
+    refusedUnwatermarked = /must be watermarked/.test(String(err.message))
+  }
+  if (!refusedUnwatermarked) fail('the schema accepted an UNWATERMARKED preview asset')
+
+  // The append-only ledgers really are append-only.
+  const usageId = db.prepare("INSERT INTO generation_usage_events (job_id, user_book_id, provider, model, unit, cost_minor) VALUES ((SELECT id FROM generation_jobs WHERE public_id='gj_one'), ?, 'p', 'm', 'validation', 3)").run(bookId).lastInsertRowid
+  let usageFrozen = false
+  try {
+    db.prepare('UPDATE generation_usage_events SET cost_minor = 0 WHERE id = ?').run(usageId)
+  } catch (err) {
+    usageFrozen = /append-only/.test(String(err.message))
+  }
+  if (!usageFrozen) fail('the cost ledger is not append-only')
+
+  console.log(`OK [phase3 upgrade]: 0024-0025 applied over existing Phase-2 rows; ${scaffolds} scaffold / ${scenes} scenes / ${placeholders} placeholders / 8 prompt versions (4 published offline, 4 draft http) / ${limits.length} limits / 1 consent version seeded once; every pre-existing row unchanged and no generation row invented; the duplicate-job, illegal-transition, unwatermarked-preview and append-only guarantees all hold.`)
 }
 
 // 3) Repeated migration behavior — `wrangler d1 migrations apply` tracks
