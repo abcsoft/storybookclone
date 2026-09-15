@@ -61,6 +61,25 @@ export type TestEnv = {
   STRIPE_WEBHOOK_SECRET?: string
   STRIPE_API_BASE?: string
   STRIPE_WEBHOOK_TOLERANCE_SECONDS?: string
+  /**
+   * V2 Phase 5 outbound email. UNSET by default: delivery is DISABLED and every
+   * queued message is recorded as `suppressed` — the same truthful default a real
+   * deployment ships with. Tests that want to observe a send either install a
+   * FakeEmailAdapter via setEmailAdapterForTests() (the pre-existing Phase-1
+   * mechanism) or set EMAIL_PROVIDER=deterministic-fake with
+   * ENVIRONMENT=development.
+   */
+  EMAIL_PROVIDER?: string
+  EMAIL_API_URL?: string
+  EMAIL_API_KEY?: string
+  EMAIL_FROM?: string
+  EMAIL_FROM_NAME?: string
+  EMAIL_TIMEOUT_MS?: string
+  /** Pepper for the stored IP digest. Optional; documented as low-sensitivity without it. */
+  IP_HASH_SECRET?: string
+  /** Optional overrides for the CUS-08 revision-request policy limits. */
+  REVISION_MAX_PER_REVISION?: string
+  REVISION_MAX_PER_BOOK?: string
   /** L-D: overrides for the single brand/identity boundary (src/brand.ts). */
   BRAND_NAME?: string
   BRAND_TAGLINE?: string
