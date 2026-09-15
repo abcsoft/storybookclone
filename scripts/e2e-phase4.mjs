@@ -176,11 +176,25 @@ export async function runPhase4Journeys({ browser, base, log, fail, attachDiagno
     if (stillUnpaid.payment_status !== 'unpaid' || stillUnpaid.paid_at) fail('phase4.6', 'a redirect-only return marked the order paid')
 
     // Visiting the return page in the browser (before paying) must ALSO say so.
+    // The page is server-rendered with an honest "nothing charged yet" line and
+    // is then RECONCILED by payment-return.js, which records the return and
+    // re-reads the ledger. Wait for that reconciliation (bounded), exactly as the
+    // paid-recovery step below does — otherwise this races the fetch instead of
+    // testing it, and would pass on the server HTML without exercising recovery.
     await page.goto(`${base}/order-success?cs=${encodeURIComponent(session.sessionId)}`)
     await page.waitForSelector('#order-payment-status')
-    const prePayText = await page.textContent('#order-payment-status')
-    if (/payment received/i.test(prePayText || '')) fail('phase4.6b', `the confirmation page claimed payment was received before it was: ${prePayText}`)
-    if (!/no payment has been recorded/i.test(prePayText || '')) fail('phase4.6b', `the confirmation page did not state the payment is not recorded: ${prePayText}`)
+    try {
+      await page.waitForFunction(
+        () => /no payment has been recorded/i.test(document.getElementById('order-payment-status')?.textContent || ''),
+        null,
+        { timeout: 20000 }
+      )
+    } catch {
+      const stuck = (await page.textContent('#order-payment-status')) || ''
+      fail('phase4.6b', `the confirmation page never reported the payment as not recorded: ${stuck}`)
+    }
+    const prePayText = (await page.textContent('#order-payment-status')) || ''
+    if (/payment received/i.test(prePayText)) fail('phase4.6b', `the confirmation page claimed payment was received before it was: ${prePayText}`)
 
     // ---------------------------------------------------------------- 7
     log('phase4.7', 'paying through the provider page delivers a SIGNED webhook, which is what marks it paid')
