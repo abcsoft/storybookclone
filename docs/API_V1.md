@@ -506,3 +506,56 @@ Every endpoint returns the canonical personalization error body:
 ```json
 { "error": { "code": "quota_exceeded", "message": "…", "fields": {}, "requestId": "…" } }
 ```
+
+---
+
+# Phase 4 — Cart, Quotes, Checkout, Payments and Refunds
+
+Money is ALWAYS an integer count of minor units (`*Minor` fields) plus an ISO-4217
+currency. Decimal fields are display mirrors. No endpoint accepts an amount from
+the caller; every amount in a response comes from a server-priced quote.
+
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/api/v1/cart` | The caller's durable server cart (lines, coupon, shipping method, item count). Never exposes an internal id, a storage key or a personalization id. |
+| `POST` | `/api/v1/cart/items` | Body `{ slug, variantCode?, qty?, userBookId? }`. An unknown/inactive product, a forged variant or an unowned/not-ready personalization is refused. |
+| `PATCH` | `/api/v1/cart/items/:id` | Body `{ qty }` (clamped to 1–10). |
+| `DELETE` | `/api/v1/cart/items/:id` | Removes one line. |
+| `DELETE` | `/api/v1/cart` | Empties the cart (and clears its coupon). |
+| `POST` | `/api/v1/cart/reconcile` | Adopts the caller's offline cart lines into the server cart. Body `{ items: [...] }`. Returns `{ adopted, rejected[] }` — an unvalidatable line is REPORTED, never silently dropped. |
+| `POST` | `/api/v1/cart/coupon` | Body `{ code }` (or `null` to clear). An unusable code is refused immediately and is NOT left on the cart. |
+| `POST` | `/api/v1/cart/shipping` | Body `{ method }`. Only a method with a rate row in the cart's own currency is accepted. |
+| `POST` | `/api/v1/cart/quote` | With NO `items` in the body: prices the SERVER cart and returns a durable, expiring quote (`quoteId`, `expiresAt`, `durable: true`). With `items`: the legacy DISPLAY preview (`durable: false`, `quoteId: null`) that is never used as a charged amount. |
+| `GET` | `/api/v1/checkout/quotes/:id` | Re-derives the quote from the catalogue. `409 quote_expired` / `quote_consumed` / `quote_changed` (with the fresh pricing) / `404` for another visitor. |
+| `POST` | `/api/v1/checkout/session` | Requires `Idempotency-Key`. Body `{ quoteId, email, shipping{...}, billing?, returnPath? }`. Creates the unpaid order and payment attempt and returns `{ sessionId, orderId, clientAction }`. Idempotent; `409 payment_in_progress` when a payment for the same cart is already open. |
+| `GET` | `/api/v1/checkout/sessions/:id` | The caller's own session plus its order's payment state. |
+| `POST` | `/api/v1/checkout/sessions/:id/return` | Records that the customer CAME BACK and reports the ledger's state. **It cannot mark an order paid.** |
+| `POST` | `/api/v1/webhooks/stripe` | Raw-body Stripe signature verification. `404` unless Stripe is configured. |
+| `POST` | `/api/v1/webhooks/deterministic-fake` | The offline test provider's signer. `404` unless the deterministic fake is the active provider (development only). |
+| `GET` | `/api/v1/payments/config` | Truthful availability: provider, configured flag, a non-secret detail, the advertised methods and `paypalAvailable: false`. |
+| `GET`/`POST`/`PATCH`/`DELETE` | `/api/v1/me/addresses` | The authenticated caller's address book (public id only). |
+| `POST` | `/api/v1/my/orders/:id/reorder` | Re-adds the caller's OWN order lines to their cart. Another customer's order is a `404`. |
+
+Admin HTML surfaces: `/admin/finance`, `/admin/finance/payments`,
+`/admin/finance/refunds`, `/admin/finance/disputes`, `/admin/finance/events`,
+`/admin/finance/reconciliation`, `POST /admin/orders/:id/refunds`,
+`POST /admin/discounts/:id/update`. All are permission-gated on the finance
+permissions and audited.
+
+### Error shape
+
+The Phase-1 shape, with the Phase-4 codes:
+`money_not_integer`, `money_negative`, `currency_invalid`, `currency_unsupported`,
+`currency_mismatch`, `unknown_product`, `unknown_variant`,
+`unavailable_in_currency`, `cart_empty`, `cart_full`, `cart_item_missing`,
+`coupon_rejected`, `shipping_unavailable`, `tax_mode_unsupported`,
+`quote_not_found`, `quote_expired`, `quote_consumed`, `quote_superseded`,
+`quote_changed`, `quote_required`, `idempotency_key_required`,
+`idempotency_conflict`, `payment_in_progress`, `payment_unavailable`,
+`cart_already_paid`, `order_out_of_date`, `shipping_address_invalid`,
+`email_invalid`, `nothing_captured`, `refund_exceeds_capture`,
+`refund_amount_invalid`, `refund_failed`, `rate_limited`, `forbidden`.
+
+```json
+{ "error": { "code": "quote_expired", "message": "This quote has expired. Please review your cart again." } }
+```

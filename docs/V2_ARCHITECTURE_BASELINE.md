@@ -463,3 +463,80 @@ generation_jobs / generation_tasks  ---->  GENERATION_QUEUE (producer, optional)
    HTTPS, and `GENERATION_DISABLED=1` force-disables every capability including
    face analysis.
 
+
+---
+
+# Phase 4 additions (server cart, money, quotes, payments and refunds)
+
+## The commerce flow, end to end
+
+```text
+offline localStorage cart  --(mirror, deduped)-->  DURABLE SERVER CART (carts/cart_items)
+                                                        |
+                            POST /api/v1/cart/quote  --> EXPIRING QUOTE (server-priced snapshot)
+                                                        |
+                   POST /api/v1/checkout/session  --> awaiting_payment ORDER (atomic snapshot) + payment attempt
+                                                        |
+                       provider (Stripe | offline deterministic fake) --> browser redirect
+                                                        |
+             provider webhook (RAW body, verified signature, unique event id)
+                                                        |
+                          ledger entry (capture) --> order.payment_status derived from the ledger
+                                                        |
+                              ADMIN REFUND --> ledger entry (refund) --> net revenue falls
+```
+
+## Where each Phase-4 responsibility lives
+
+| Concern | Module | Contract it enforces |
+|---|---|---|
+| Money arithmetic | `src/money.ts` | integer minor units only; half-up rounding with integer arithmetic; ISO currency validated against `iso_currencies` |
+| Catalogue pricing | `src/commerce/pricing.ts` | one resolution order (price version → variant price → product price → the variant's own base price in its own currency); the source is recorded per line; a forged/inactive variant is refused and a missing currency price is UNAVAILABLE, never converted |
+| Cart | `src/commerce/cart.ts` | owner-scoped, durable, canonical `line_key`, quantity clamped, a rejected personalization refused generically; the offline cart is adopted line by line and never trusted |
+| Quote | `src/commerce/quote.ts` | priced from the catalog every time; durable and EXPIRING; re-derived on read and superseded when the catalog moved; consumed by a compare-and-swap |
+| Checkout | `src/commerce/checkout.ts` | the server's amounts only; order + items + address snapshot + coupon redemptions in ONE batch; one order per cart; `recordCheckoutReturn` records a return and CANNOT pay |
+| Payments | `src/commerce/payments/*` | provider resolved from configuration only; raw-body signature verification; unique provider event ids; a compare-and-swap on the attempt and one capture per order |
+| Ledger | `src/commerce/ledger.ts` | append-only, signed (`direction`), the sole source of revenue; the order's money columns are a derived cache |
+| Refunds | `src/commerce/refunds.ts` | capped by the captured remainder in the service AND by a trigger inside the INSERT's transaction; idempotent by key; a settled refund is immutable |
+| Reporting | `src/commerce/reporting.ts` | revenue only from captures; unpaid/manual volume reported separately and labelled; never summed across currencies; reconciliation compares the cache to the ledger |
+| Cancellation eligibility | `src/orders-status.ts` | derived from the state machine, so `cancellationEligibility` and `transitionOrderStatus` can never disagree; an order that has been produced and shipped (`shipped`/`delivered`) cannot be cancelled, and the admin page states why. A shipped order can still be REFUNDED — a ledger operation on the payment axis |
+
+## Boundary rules Phase 4 makes explicit
+
+1. **The browser is never financial truth.** No endpoint accepts an amount. A
+   request that supplies its own totals gets a display-only preview or nothing at
+   all, and a checkout consumes a SERVER-issued quote id.
+2. **A redirect is a browser event, not evidence of money.** Only a
+   signature-verified, unique provider event may mark an order paid; the
+   payment-return route writes one column and reports what the ledger holds.
+3. **Revenue is summed from the ledger, never from `orders`.** An order with no
+   capture entry contributes exactly zero, so an unpaid, pending or manually
+   recorded order cannot appear as income.
+4. **Money invariants are the schema's job.** 0018's order/order_item/product
+   triggers are untouched and unchanged; every new money table carries its own
+   equivalent guards, and the refund cap is enforced inside the write itself.
+5. **Price history is append-only.** Changing a price appends a price version;
+   nothing rewrites what a past quote or order was priced from.
+6. **The tax boundary is configured, never fabricated.** The default is "no tax
+   model" with a zero rate; an exclusive (added-on-top) model is refused because
+   the published order-total identity cannot express it.
+7. **Payment providers cannot be enabled by accident.** `PAYMENT_PROVIDER` unset
+   means DISABLED; the real adapter additionally requires both credentials; the
+   offline fake requires `ENVIRONMENT=development` AND its explicit key; and
+   PayPal is not offered at all because it has no adapter or webhook.
+8. **Nothing about a provider is stored raw.** The event ledger holds bounded,
+   redacted fields; the credential is read from the environment, used in one
+   Authorization header, and never logged, returned or reported.
+
+## Deployment / configuration notes
+
+* No new binding is required to run this build: every payment variable is
+  optional and the default is DISABLED. A deployment that wants to take payments
+  sets `PAYMENT_PROVIDER=stripe` + `STRIPE_SECRET_KEY` + `STRIPE_WEBHOOK_SECRET`
+  and registers `POST /api/v1/webhooks/stripe`.
+* The webhook route must receive the RAW body. Cloudflare Pages/Workers passes
+  `request.text()` through untouched; no body-reading middleware is registered
+  before it.
+* The browser journey group runs against a SECOND local server started with the
+  offline provider, so the shipped default (payments disabled) stays under test
+  for every other journey.

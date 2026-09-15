@@ -265,3 +265,51 @@ npx wrangler deploy --config wrangler.generation-worker.jsonc
 Both deployments must bind the **same** D1 database and the **same** private R2
 bucket: the durable job rows in D1 are the source of truth, and a consumer bound
 to a different database would simply find no work.
+
+## V2 Phase 4 — commerce and payment configuration
+
+The storefront now has a first-class **server cart**, a **server-authoritative
+expiring quote**, **server-priced checkout**, **verified provider webhooks**, an
+append-only **financial ledger** and admin **refunds/reconciliation**. Money is
+always an integer count of minor units plus an ISO-4217 currency; no endpoint
+accepts an amount from the browser.
+
+**Payments are DISABLED by default.** With no payment provider configured,
+checkout records the order honestly as UNPAID and collects nothing — which is
+the shipped state of this repository, and why every automated run makes zero
+external calls.
+
+| Variable | Purpose |
+|---|---|
+| `PAYMENT_PROVIDER` | `stripe` \| `deterministic-fake` \| **unset = payments DISABLED** (the default) |
+| `PAYMENTS_DISABLED` | `1` force-disables the payment capability regardless of anything else |
+| `STRIPE_SECRET_KEY` | the Stripe secret key. Never returned, logged or rendered; only its presence and test/live prefix class affect behaviour and the health report |
+| `STRIPE_WEBHOOK_SECRET` | required for Stripe; without it, events could not be verified and payment state would never advance, so the adapter fails closed |
+| `STRIPE_API_BASE` | overrides the API base (tests/local mock). Must be HTTPS outside development |
+| `STRIPE_WEBHOOK_TOLERANCE_SECONDS` | the signature replay window (default 300) |
+| `PAYMENT_FAKE_WEBHOOK_SECRET` | development-only signing secret for the offline deterministic test provider |
+
+To take real payments: set `PAYMENT_PROVIDER=stripe` plus both credentials, and
+register `POST /api/v1/webhooks/stripe` with Stripe. The webhook handler reads
+the **raw** request body and verifies the signature before parsing anything, so
+no body-reading middleware may be registered ahead of it.
+
+**PayPal is not offered at all** — it has no adapter and no webhook processing in
+this build, so advertising it would be a false capability claim.
+
+The offline `deterministic-fake` provider exists for development and the automated
+browser journey. It is double-gated on `ENVIRONMENT=development` **and** the
+explicit `PAYMENT_PROVIDER` value, makes no external call, and moves no money; its
+authorisation page is labelled as such and is a 404 in a deployed environment.
+
+```bash
+npm run db:migrate:local   # applies 0026/0027 locally
+npm run test:e2e           # includes the phase4-commerce-payments journey
+npm run audit:frontend -- phase4-commerce
+```
+
+Admin surfaces: `/admin/finance` (ledger-derived revenue), `/admin/finance/payments`,
+`/admin/finance/refunds`, `/admin/finance/disputes`, `/admin/finance/events`
+(redacted provider events) and `/admin/finance/reconciliation` (read-only
+cache-vs-ledger comparison). Revenue is summed from the ledger only, so an unpaid
+or manually recorded order can never appear as revenue.

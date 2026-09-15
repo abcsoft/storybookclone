@@ -447,22 +447,27 @@ the **current** baseline status.
 
 ### 8.4 Commerce — `COM-01`…`COM-14` (owner phase 4 unless noted)
 
+**Status as of V2 Phase 4: COM-01…COM-14 are CLOSED.** The "Status" column below
+now records the phase that closed each ID; the original Phase-0 assessment is in
+the parenthetical. Per-ID code path, test/browser proof and limitation:
+`docs/V2_PHASE4_TRACEABILITY.md`.
+
 | ID | Status | Expected code proof | Expected test/browser proof |
 |---|---|---|---|
-| COM-01 | missing (client cart today) | server cart + items (0018) | Server cart CRUD tests |
-| COM-02 | **partial** (Phase 1: first-class `product_variants`, 0016) | variants/covers/price versions | Variant price tests; e2e cover-agreement |
-| COM-03 | **existing (USD)** (Phase 1: minor-unit truth, 0016) | integer minor units + ISO currency | Money-unit tests; integration backfill |
-| COM-04 | existing (floating) | server quote, expiring (fix D-09) | Quote expiry/consume tests |
-| COM-05 | existing (basic) | coupon scope/date/min/usage/stacking | Coupon rule tests |
-| COM-06 | missing | addresses/shipping/tax boundary | Shipping/tax quote tests |
-| COM-07 | missing | payment provider abstraction (Stripe first) | Fake provider unit tests |
-| COM-08 | missing | signed/deduped/out-of-order webhooks | Forged/replay/out-of-order tests |
-| COM-09 | missing | payment attempt/event/refund/dispute ledger (0019) | Ledger reconciliation |
-| COM-10 | existing | atomic order/item/personalization snapshot | `orders.test.ts` |
-| COM-11 | defective | explicit order state machine + history | transition tests |
-| COM-12 | missing | full/partial refunds + reconciliation | Refund > captured rejected |
-| COM-13 | existing (partial) | idempotency/double-submit/recovery | E2E double-submit |
-| COM-14 | **existing** (Phase 1: owned `userBookId` cross-sell) | sticker cross-sell without leakage (D-06) | Foreign-ref denial |
+| COM-01 | **completed (Phase 4)** — was: missing (client cart only) | `carts`/`cart_items`/`cart_events` (0026), `src/commerce/cart.ts`, `/api/v1/cart*` | `phase4-cart-quote.test.ts`; e2e phase4.1–4.3 |
+| COM-02 | **completed (Phase 4)** — was: partial (0016 variants) | `price_versions` (0026), `src/commerce/pricing.ts` with a recorded price source | `phase4-cart-quote.test.ts`; e2e phase4.5 snapshot agreement |
+| COM-03 | **completed (Phase 4)** — was: existing (USD only) | `src/money.ts` integer-only arithmetic; `percent_bps`; per-currency reporting | `phase4-cart-quote.test.ts` money cases; `phase4-refunds-admin.test.ts` per-currency revenue |
+| COM-04 | **completed (Phase 4)** — was: existing (floating) | `checkout_quotes`/`checkout_quote_lines` (0026), `src/commerce/quote.ts` (expiry, supersede, consume CAS) | `phase4-cart-quote.test.ts` expired/superseded/tampered-quote cases; e2e phase4.4 |
+| COM-05 | **completed (Phase 4)** — was: existing (basic) | coupon rule columns + `coupon_redemptions` (0026), `src/commerce/coupons.ts` | `phase4-cart-quote.test.ts` scope/date/min/usage/stacking cases |
+| COM-06 | **completed (Phase 4)** — was: missing | `addresses` (0026), `order_addresses`/`tax_settings` (0027), `resolveShipping`/`resolveTaxModel` | `phase4-cart-quote.test.ts` shipping/tax cases; e2e phase4.9 address snapshot |
+| COM-07 | **completed (Phase 4)** — was: missing | `src/commerce/payments/*` (contract, fail-closed, deterministic fake, Stripe, resolution, health) | `phase4-payments-webhooks.test.ts` (config validation, zero calls, PayPal hidden) |
+| COM-08 | **completed (Phase 4)** — was: missing | raw-body signature verification, `payment_events` uniqueness, `ingestProviderEvent` | `phase4-payments-webhooks.test.ts` forged/replayed/concurrent/out-of-order; e2e phase4.6–4.7 |
+| COM-09 | **completed (Phase 4)** — was: missing | `payment_attempts`/`payment_events`/`refunds`/`disputes`/`order_financial_entries` (0027), `src/commerce/ledger.ts` | `phase4-payments-webhooks.test.ts` ledger append-only/single-capture; `[phase4 upgrade]` |
+| COM-10 | **completed (Phase 4)** — was: existing (order+items only) | `createCheckoutSession` atomic snapshot; address snapshot; `UNIQUE(orders.cart_id)` | `phase4-payments-webhooks.test.ts`; e2e phase4.5 |
+| COM-11 | **completed (Phase 4)** — was: defective (string status) | `src/orders-status.ts` extended to the V2 §7 machine, every pre-existing edge preserved | `phase4-payments-webhooks.test.ts` state-machine cases; e2e phase4.9 timeline |
+| COM-12 | **completed (Phase 4)** — was: missing | `src/commerce/refunds.ts` + the refund-cap and settled-immutability triggers | `phase4-refunds-admin.test.ts` full/partial/excess/idempotent; e2e phase4.9–4.10 |
+| COM-13 | **completed (Phase 4)** — was: existing (partial: order idempotency) | `reconcileClientCart`, `recordCheckoutReturn` (never pays), `/order-success?cs=`, client mirror dedupe | `phase4-cart-quote.test.ts` + `phase4-payments-webhooks.test.ts`; e2e phase4.2/4.6/4.8/4.11 |
+| COM-14 | **completed (Phase 4)** — was: existing (owned `userBookId` cross-sell) | `line_key`/`hasPersonalization`, `/api/v1/my/orders/:id/reorder` with ownership in SQL | `phase4-cart-quote.test.ts` stickers + foreign-reorder denial; e2e phase4.3 |
 
 ### 8.5 Customer — `CUS-01`…`CUS-14` (owner phase 5 unless noted)
 
@@ -489,8 +494,8 @@ the **current** baseline status.
 |---|---|---|---|---|
 | ADM-01 | **existing** (Phase 1: env bootstrap driven and asserted by the e2e admin journey) | 1/6 | one-time bootstrap (`scripts/create-admin.mjs`, env bootstrap) | no-default-admin tests; e2e admin.1 |
 | ADM-02 | missing | 6 | RBAC + permission matrix | Permission matrix tests |
-| ADM-03 | defective | 4/6 | ledger-derived revenue | Revenue reconciliation |
-| ADM-04 | existing (partial) | 6 | orders/items/timeline/actions | Admin order tests |
+| ADM-03 | **completed (Phase 4)** — was: defective (order value labelled "not revenue") | 4/6 | `financialSummary` sums the capture ledger only; unpaid/manual volume reported separately | `phase4-refunds-admin.test.ts` (unpaid never revenue, per-currency); e2e phase4.9/4.11 |
+| ADM-04 | **completed (Phase 4)** — was: partial (status/notes/media only) | 6 | order page with attempts, ledger, timeline, address snapshot and the validated-action set | `phase4-refunds-admin.test.ts`; e2e phase4.9b |
 | ADM-05 | missing | 6 | customers/prospects/consent overview | Admin list tests |
 | ADM-06 | existing (partial) | 2/6 | catalog/variants/prices/media CRUD | Admin catalog tests |
 | ADM-07 | existing (partial) | 2/6 | homepage/PDP/blog/FAQ/legal CMS | CMS edit tests |
@@ -498,11 +503,11 @@ the **current** baseline status.
 | ADM-09 | missing | 3/6/8 | languages/translations/completeness | Completeness tests |
 | ADM-10 | missing | 3/6 | generation jobs/attempts/cost/review | Job operation tests |
 | ADM-11 | missing | 3/6 | preview/revision/approval queues | Queue tests |
-| ADM-12 | missing | 4/6 | payments/refunds/disputes/reconciliation | Finance tests |
+| ADM-12 | **completed (Phase 4)** — was: missing | 4/6 | `src/admin_finance.ts` + `registerFinanceAdminRoutes` (payments/refunds/disputes/events/reconciliation, refund action, permission gate) | `phase4-refunds-admin.test.ts` (incl. permission denial); e2e phase4.9–4.10 |
 | ADM-13 | missing | 7 | PDF/print/fulfilment/shipment queues | Fulfilment queue tests |
 | ADM-14 | existing (partial) | 6 | support inbox/assignment/SLA | Support tests |
 | ADM-15 | missing | 2/6 | reviews moderation | Moderation tests |
-| ADM-16 | existing (partial) | 2/6 | discounts/promotions | Promotion tests |
+| ADM-16 | **completed (Phase 4)** — was: partial (code + percent + min_books) | 2/6 | integer basis-point rate, scope, date window, minimum, usage limits, stacking, cap — create + edit | `phase4-refunds-admin.test.ts` ADM-16 cases |
 | ADM-17 | existing (partial) | 6 | provider health/flags without secrets | No-secret display test |
 | ADM-18 | missing | 6/8 | privacy/retention/deletion failures | Admin privacy tests |
 | ADM-19 | missing | 6 | webhook/event visibility redacted | Redaction test |
