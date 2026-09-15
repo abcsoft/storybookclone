@@ -24,8 +24,15 @@ export const CSRF_COOKIE = 'ww_csrf'
 export const CSRF_FORM_FIELD = 'csrf_token'
 export const CSRF_HEADER = 'x-csrf-token'
 
-/** Cookies that authenticate or authorize a mutation (any one of these makes a POST a credentialed mutation). */
-export const AUTH_COOKIES = ['ww_session', 'ww_upload', 'ww_prospect'] as const
+/**
+ * Cookies that authenticate or authorize a mutation (any one of these makes a POST a credentialed mutation).
+ *
+ * `ww_cart` (V2 Phase 4) is here for the same reason `ww_prospect` is: it is a
+ * bearer capability for a durable server cart, so a mutation that carries it
+ * MUST present a same-origin proof. Without this, a foreign page could add or
+ * remove cart lines using the visitor's own capability.
+ */
+export const AUTH_COOKIES = ['ww_session', 'ww_upload', 'ww_prospect', 'ww_cart'] as const
 
 const CSRF_TTL_SECONDS = 60 * 60 * 8 // 8h; re-issued lazily after that
 
@@ -279,7 +286,23 @@ const CSP = [
 ].join('; ')
 
 /** Paths that carry a session/guest capability, a token, or private data. */
-const PRIVATE_PATH_PREFIXES = ['/admin', '/my-books', '/my/', '/checkout', '/order-success', '/reset-password', '/photos/', '/api/v1/my/', '/api/v1/user-books', '/api/v1/uploads']
+const PRIVATE_PATH_PREFIXES = [
+  '/admin',
+  '/my-books',
+  '/my/',
+  '/checkout',
+  '/order-success',
+  '/reset-password',
+  '/photos/',
+  '/api/v1/my/',
+  '/api/v1/user-books',
+  '/api/v1/uploads',
+  // V2 Phase 4: the cart capability and a checkout session are per-caller
+  // financial state — never cached by an intermediary.
+  '/api/v1/cart',
+  '/api/v1/checkout',
+  '/api/v1/me/'
+]
 
 export function securityHeaders(): MiddlewareHandler {
   return async (c, next) => {

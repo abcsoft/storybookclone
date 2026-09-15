@@ -18,6 +18,11 @@ import { adminCatalogProducts } from './admin_catalog'
 import { adminCmsHome, adminCmsNavigation, adminCmsPages, adminCmsPageEditor, adminCmsSettings } from './admin_cms'
 import { adminReviews } from './admin_reviews'
 import { registerAdminStoreRoutes } from './admin_routes'
+import { registerCommerceRoutes, resolveCheckoutReturnOrderId } from './commerce/routes'
+import { orderFinancePanel } from './admin_finance'
+import { financialSummary } from './commerce/reporting'
+import { hasFinancePermission } from './admin_routes'
+import { FINANCE_PERMISSIONS } from './commerce/types'
 import {
   queryProducts,
   getProductBySlug,
@@ -72,7 +77,7 @@ import { getGenerationProviders } from './generation/providers'
 import { loadJob, latestVisibleJobForBook } from './generation/jobs'
 import { jobView, previewAssetUrl } from './generation/routes'
 import { renderGenerationPanel, type GenerationPanelState } from './pages_generation'
-import { transitionOrderStatus, transitionPreviewStatus } from './orders-status'
+import { statusLabel, transitionOrderStatus, transitionPreviewStatus } from './orders-status'
 import { brand, configureBrand } from './brand'
 import { createProduct, updateProduct } from './product-variants'
 import {
@@ -183,6 +188,23 @@ export type Bindings = {
   BRAND_X?: string
   BRAND_LOGO_PATH?: string
   BRAND_COPYRIGHT_YEAR?: string
+  // ---- V2 Phase 4: payments (COM-07/COM-08) ----
+  // Deployment-wide kill switch: '1' makes the payment capability resolve to its
+  // fail-closed adapter, so checkout cannot take a payment.
+  PAYMENTS_DISABLED?: string
+  // Which adapter to use: 'stripe' (only when FULLY configured below) or
+  // 'deterministic-fake' (development only). Unset = payment DISABLED, which is
+  // the default this repository ships with.
+  PAYMENT_PROVIDER?: string
+  // Stripe credentials. Neither is ever returned, logged or rendered — only
+  // their PRESENCE and the key's test/live prefix class affect behaviour and the
+  // health report (src/commerce/payments/stripe.ts::stripeConfig).
+  STRIPE_SECRET_KEY?: string
+  STRIPE_WEBHOOK_SECRET?: string
+  STRIPE_API_BASE?: string
+  STRIPE_WEBHOOK_TOLERANCE_SECONDS?: string
+  // Development-only signing secret for the offline deterministic test provider.
+  PAYMENT_FAKE_WEBHOOK_SECRET?: string
 }
 export type Vars = { user: AuthUser | null; requestId: string | null; csrfToken?: string } & Partial<PageContextVars>
 
@@ -283,7 +305,9 @@ export async function bootstrapLocalDefaults(db: D1Database, bootstrap?: { email
   }
   await db
     .prepare(
-      "INSERT OR IGNORE INTO discounts (code, percent, min_books, applies_to, auto_apply, active) VALUES ('EXTRA20', 20, 2, 'books', 1, 1)"
+      // `percent_bps` is the AUTHORITATIVE rate (2000 = 20%); `percent` is kept
+      // as a display mirror, so no pricing path ever reads a REAL value (COM-05).
+      "INSERT OR IGNORE INTO discounts (code, percent, percent_bps, min_books, applies_to, scope, auto_apply, active, stackable, priority) VALUES ('EXTRA20', 20, 2000, 2, 'books', 'books', 1, 1, 0, 100)"
     )
     .run()
   // Fallback catalog seed if products table is empty (mirrors seed.sql)
@@ -876,9 +900,19 @@ app.get('/order-success', async (c) => {
   // ever leaking to a third-party resource's server via a Referer header
   // if one were ever loaded from this page.
   c.header('Referrer-Policy', 'no-referrer')
-  const id = Number(c.req.query('id') || '')
+  let id = Number(c.req.query('id') || '')
   const token = c.req.query('token') || ''
   const user = c.get('user')
+
+  // COM-13: the PAYMENT RETURN recovery path. A checkout session redirects the
+  // customer back with `?cs=<session public id>`; the session is resolved
+  // against the caller's OWN cart capability/session (never the id alone, which
+  // would let anyone enumerate orders), and its order is then rendered through
+  // exactly the same authorization as an id/token view.
+  if (!id && c.req.query('cs')) {
+    const sessionOrderId = await resolveCheckoutReturnOrderId(c)
+    if (sessionOrderId) id = sessionOrderId
+  }
 
   let order: any = null
   let items: any[] = []
@@ -940,6 +974,21 @@ app.get('/order-success', async (c) => {
     })
     .join('')
 
+  // COM-12/ADM-03: the payment line is rendered from the ORDER's ledger-derived
+  // columns, so it can only ever say what actually happened. A browser redirect
+  // cannot make this say "paid" — only a verified provider event can.
+  const paymentStatus = String(order.payment_status || 'unpaid')
+  const capturedMinor = Number(order.amount_captured_minor ?? 0)
+  const refundedMinor = Number(order.amount_refunded_minor ?? 0)
+  const paymentLine =
+    capturedMinor > 0
+      ? refundedMinor > 0
+        ? `<p>Payment received: ${money(capturedMinor / 100)}${refundedMinor > 0 ? ` — ${money(refundedMinor / 100)} refunded, so ${money((capturedMinor - refundedMinor) / 100)} remains paid.` : '.'}</p>`
+        : `<p>Payment received: ${money(capturedMinor / 100)}. Thank you.</p>`
+      : paymentStatus === 'failed'
+        ? `<p>No payment was taken — the payment attempt was declined. Your cart is unchanged, so you can try again.</p>`
+        : `<p>Nothing has been charged for this order yet.</p>`
+
   return html(
     c,
     'Order confirmed',
@@ -947,13 +996,15 @@ app.get('/order-success', async (c) => {
       <h1>Thank you!</h1>
       ${/* T-01: no preview-email promise — no email/outbox worker exists, so
            nothing is emailed to anyone. T-03: no PDF either. */ ''}
-      <p>Your order #${order.id} has been saved. Nothing has been charged.</p>
-      <p class="tiny muted">Status: ${String(order.status).replace(/_/g, ' ')} · ${items.length} item${items.length === 1 ? '' : 's'} · Total ${money(order.total)}</p>
-      <p class="tiny">This version does not send emails, generate previews or produce PDFs yet, so do not wait for a confirmation or preview message.</p>
+      <p>Your order #${order.id} has been saved.</p>
+      <div id="order-payment-status" data-order-id="${order.id}" data-payment-status="${esc(paymentStatus)}">${paymentLine}</div>
+      <p class="tiny muted">Order status: ${String(order.status).replace(/_/g, ' ')} · Payment: ${esc(statusLabel(paymentStatus))} · ${items.length} item${items.length === 1 ? '' : 's'} · Total ${money(Number(order.total_minor ?? order.total * 100) / 100)}</p>
+      <p class="tiny">This version does not send emails or produce PDFs yet, so do not wait for a confirmation message. Previews are generated only when you ask for one from the reader page.</p>
       ${readerLinks ? `<ul class="order-success-items">${readerLinks}</ul>` : ''}
       ${!user ? `<p class="tiny">Bookmark this page to check back. Guest orders cannot be linked to an account in this version, so creating one will not add this order to My Books.</p>` : ''}
       <a class="btn" href="${user ? '/my-books' : '/'}">${user ? 'View my books' : 'Continue shopping'}</a>
     </section>
+    ${c.req.query('cs') ? `<script type="module" src="/static/payment-return.js"></script>` : ''}
     ${
       !user
         ? `<script>
@@ -1028,6 +1079,14 @@ app.get('/photos/:key{.+}', async (c) => {
 // Homepage/CMS blocks, catalog, collections, PDP, blog/FAQ/legal content,
 // robots/sitemap, locale selection and the review endpoints.
 registerStorefrontRoutes(app)
+
+// ================= COMMERCE ROUTES (V2 Phase 4) =================
+// Server cart, expiring quotes, checkout sessions, provider webhooks and the
+// address book (COM-01..COM-14). Registered BEFORE the legacy display-only
+// quote/order handlers below so the canonical /api/v1/cart/quote path is the
+// server-cart one; a request that supplies its own `items` still gets the legacy
+// display pricing, which is what keeps the existing UX identical.
+registerCommerceRoutes(app)
 
 // ================= PUBLIC API =================
 
@@ -1331,9 +1390,13 @@ app.get('/admin', async (c) => {
     one('SELECT COUNT(*) n FROM contacts WHERE resolved = 0')
   ])
   // INTEGER minor units are the authoritative total (D-09). This is order
-  // VALUE, not revenue — no payment ledger exists before Phase 4 (S-10).
+  // VALUE, not revenue (S-10/ADM-03) — the revenue tiles come from the ledger.
   const orderValueMinor =
     (await db.prepare("SELECT COALESCE(SUM(total_minor),0) n FROM orders WHERE status <> 'cancelled'").first<{ n: number }>())?.n ?? 0
+  // ADM-03: captured/refunded/net come from `order_financial_entries` ONLY, so an
+  // unpaid or manually-recorded order can never be counted as revenue.
+  const summary = await financialSummary(db, {})
+  const unpaidOrders = summary.unpaid.orders
   const recent =
     (
       await db
@@ -1343,7 +1406,25 @@ app.get('/admin', async (c) => {
         )
         .all()
     ).results || []
-  return c.html(adminDashboard({ orders, orderValue: minorToMajor(orderValueMinor), users, products: productsN, pending, messages, recentOrders: recent }))
+  return c.html(
+    adminDashboard({
+      orders,
+      orderValue: minorToMajor(orderValueMinor),
+      users,
+      products: productsN,
+      pending,
+      messages,
+      recentOrders: recent,
+      revenue: summary.revenueByCurrency.map((r) => ({
+        currency: r.currency,
+        capturedMinor: r.capturedMinor,
+        refundedMinor: r.refundedMinor,
+        netMinor: r.netMinor,
+        paidOrders: r.paidOrders
+      })),
+      unpaidOrders
+    })
+  )
 })
 
 app.get('/admin/orders', async (c) => {
@@ -1359,10 +1440,31 @@ app.get('/admin/orders', async (c) => {
 
 app.get('/admin/orders/:id', async (c) => {
   const id = Number(c.req.param('id'))
-  const order = await c.env.DB.prepare('SELECT * FROM orders WHERE id = ?').bind(id).first()
+  const db = c.env.DB
+  const order = await db.prepare('SELECT * FROM orders WHERE id = ?').bind(id).first<Record<string, any>>()
   if (!order) return c.html(adminPage404())
-  const items = (await c.env.DB.prepare('SELECT * FROM order_items WHERE order_id = ?').bind(id).all()).results || []
-  return c.html(adminOrderDetail(order, items, c.req.query('saved') ? 'Saved.' : undefined, c.req.query('error') || undefined))
+  const items = (await db.prepare('SELECT * FROM order_items WHERE order_id = ?').bind(id).all()).results || []
+  // ADM-04/ADM-12: the payment, ledger, address and timeline evidence for this
+  // order, rendered only for a caller with the finance read permission.
+  const [attempts, refunds, ledger, timeline, addresses] = await Promise.all([
+    db.prepare('SELECT * FROM payment_attempts WHERE order_id = ? ORDER BY id DESC').bind(id).all<Record<string, unknown>>(),
+    db.prepare('SELECT * FROM refunds WHERE order_id = ? ORDER BY id DESC').bind(id).all<Record<string, unknown>>(),
+    db.prepare('SELECT * FROM order_financial_entries WHERE order_id = ? ORDER BY id').bind(id).all<Record<string, unknown>>(),
+    db.prepare('SELECT * FROM order_state_events WHERE order_id = ? ORDER BY id').bind(id).all<Record<string, unknown>>(),
+    db.prepare('SELECT * FROM order_addresses WHERE order_id = ? ORDER BY kind').bind(id).all<Record<string, unknown>>()
+  ])
+  const financeRead = hasFinancePermission(c.get('user'), FINANCE_PERMISSIONS.read)
+  const financeHtml = orderFinancePanel({
+    order,
+    attempts: attempts.results || [],
+    refunds: refunds.results || [],
+    ledger: ledger.results || [],
+    timeline: timeline.results || [],
+    addresses: addresses.results || [],
+    canRefund: hasFinancePermission(c.get('user'), FINANCE_PERMISSIONS.refund),
+    canRead: financeRead
+  })
+  return c.html(adminOrderDetail(order, items, c.req.query('saved') ? 'Saved.' : undefined, c.req.query('error') || undefined, financeHtml))
 })
 
 app.post('/admin/orders/:id/status', async (c) => {
@@ -1669,10 +1771,20 @@ app.post('/admin/products/:id/pdp/faq/delete', async (c) => {
   return c.redirect(`/admin/products/${p.id}/pdp?#faqs`)
 })
 
-// ---- discounts ----
+// ---- discounts / promotions (ADM-16) ----
+// The form is a UX convenience; the SERVER is the authority. Every rule field is
+// validated here and the authoritative rate is an INTEGER basis-point value, so
+// no pricing path ever reads the legacy REAL `percent` column.
 app.get('/admin/discounts', async (c) => {
-  const rows = (await c.env.DB.prepare('SELECT * FROM discounts ORDER BY id').all<DiscountRow>()).results || []
-  return c.html(adminDiscounts(rows, c.req.query('saved') ? 'Saved.' : undefined, c.req.query('error') || undefined))
+  const rows = (await c.env.DB.prepare('SELECT * FROM discounts ORDER BY priority, id').all<DiscountRow & Record<string, unknown>>()).results || []
+  const usage =
+    (
+      await c.env.DB
+        .prepare('SELECT discount_id, COUNT(*) AS n, COALESCE(SUM(amount_minor), 0) AS total FROM coupon_redemptions GROUP BY discount_id')
+        .all<{ discount_id: number; n: number; total: number }>()
+    ).results || []
+  const usageMap = new Map(usage.map((u) => [Number(u.discount_id), { count: Number(u.n), totalMinor: Number(u.total) }]))
+  return c.html(adminDiscounts(rows, usageMap, c.req.query('saved') ? 'Saved.' : undefined, c.req.query('error') || undefined))
 })
 
 app.post('/admin/discounts', async (c) => {
@@ -1681,18 +1793,150 @@ app.post('/admin/discounts', async (c) => {
   const percent = Number(b.percent || 0)
   const minBooks = Number(b.min_books || 0)
   const appliesTo = String(b.applies_to || 'books')
-  // Server-side validation (the browser's min/max are UX only).
-  if (!/^[A-Z0-9_-]{2,32}$/.test(code) || !Number.isFinite(percent) || percent <= 0 || percent > 100 || !Number.isInteger(minBooks) || minBooks < 0 || minBooks > 100 || !['books', 'all'].includes(appliesTo)) {
-    return c.redirect('/admin/discounts?error=' + encodeURIComponent('Invalid discount: check the code, percent (1-100), minimum books (0-100) and scope.'))
+  const scope = String(b.scope || appliesTo)
+  const percentBps = Math.round(percent * 100)
+  const optionalInt = (raw: unknown, label: string, min: number, max: number): { ok: true; value: number | null } | { ok: false; error: string } => {
+    const text = String(raw ?? '').trim()
+    if (!text) return { ok: true, value: null }
+    const n = Number(text)
+    if (!Number.isInteger(n) || n < min || n > max) return { ok: false, error: `${label} must be a whole number between ${min} and ${max} (or left blank).` }
+    return { ok: true, value: n }
   }
+  const dateField = (raw: unknown, label: string): { ok: true; value: string | null } | { ok: false; error: string } => {
+    const text = String(raw ?? '').trim()
+    if (!text) return { ok: true, value: null }
+    const parsed = new Date(text)
+    if (Number.isNaN(parsed.getTime())) return { ok: false, error: `${label} must be a date.` }
+    return { ok: true, value: parsed.toISOString() }
+  }
+  const minSubtotalMajor = optionalInt(b.min_subtotal, 'Minimum subtotal', 0, 1_000_000)
+  const maxUses = optionalInt(b.max_uses, 'Total usage limit', 1, 1_000_000)
+  const maxPerOwner = optionalInt(b.max_uses_per_owner, 'Per-customer limit', 1, 1_000_000)
+  const maxDiscountMajor = optionalInt(b.max_discount, 'Maximum discount', 0, 1_000_000)
+  const startsAt = dateField(b.starts_at, 'Start date')
+  const endsAt = dateField(b.ends_at, 'End date')
+
+  const problems: string[] = []
+  if (!/^[A-Z0-9_-]{2,32}$/.test(code)) problems.push('The code must be 2–32 characters of A–Z, 0–9, underscore or dash.')
+  if (!Number.isFinite(percent) || percent <= 0 || percent > 100) problems.push('The percentage must be between 1 and 100.')
+  if (!Number.isInteger(minBooks) || minBooks < 0 || minBooks > 100) problems.push('The minimum number of books must be a whole number between 0 and 100.')
+  if (!['books', 'all'].includes(appliesTo)) problems.push('Choose whether the code applies to books only or the whole cart.')
+  if (!['books', 'stickers', 'all'].includes(scope)) problems.push('The scope must be books, stickers or the whole cart.')
+  for (const [result, label] of [
+    [minSubtotalMajor, 'minimum subtotal'],
+    [maxUses, 'total usage limit'],
+    [maxPerOwner, 'per-customer limit'],
+    [maxDiscountMajor, 'maximum discount'],
+    [startsAt, 'start date'],
+    [endsAt, 'end date']
+  ] as const) {
+    if (!result.ok) problems.push(result.error)
+    void label
+  }
+  if (startsAt.ok && endsAt.ok && startsAt.value && endsAt.value && endsAt.value <= startsAt.value) {
+    problems.push('The end date must be after the start date.')
+  }
+  if (problems.length) return c.redirect('/admin/discounts?error=' + encodeURIComponent(problems[0]))
+
+  // Validation passed, so every parse result is a success: read the values once,
+  // explicitly, rather than re-narrowing a union at each use site.
+  const vStartsAt = startsAt.ok ? startsAt.value : null
+  const vEndsAt = endsAt.ok ? endsAt.value : null
+  const vMinSubtotalMinor = minSubtotalMajor.ok && minSubtotalMajor.value != null ? Math.round(minSubtotalMajor.value * 100) : null
+  const vMaxUses = maxUses.ok ? maxUses.value : null
+  const vMaxPerOwner = maxPerOwner.ok ? maxPerOwner.value : null
+  const vMaxDiscountMinor = maxDiscountMajor.ok && maxDiscountMajor.value != null ? Math.round(maxDiscountMajor.value * 100) : null
+
   try {
-    await c.env.DB.prepare('INSERT INTO discounts (code, percent, min_books, applies_to, auto_apply, active) VALUES (?, ?, ?, ?, ?, 1)')
-      .bind(code, percent, minBooks, appliesTo, b.auto_apply ? 1 : 0)
+    await c.env.DB.prepare(
+      `INSERT INTO discounts (code, percent, percent_bps, min_books, applies_to, scope, auto_apply, active,
+                              stackable, priority, starts_at, ends_at, min_subtotal_minor, max_uses, max_uses_per_owner, max_discount_minor)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+      .bind(
+        code,
+        percent,
+        percentBps,
+        minBooks,
+        appliesTo,
+        scope,
+        b.auto_apply ? 1 : 0,
+        b.stackable ? 1 : 0,
+        Number.isInteger(Number(b.priority)) ? Number(b.priority) : 100,
+        vStartsAt,
+        vEndsAt,
+        vMinSubtotalMinor,
+        vMaxUses,
+        vMaxPerOwner,
+        vMaxDiscountMinor
+      )
       .run()
   } catch {
     return c.redirect('/admin/discounts?error=' + encodeURIComponent('That discount code already exists.'))
   }
-  await auditAdmin(c, 'discount.create', 'discount', code, null, { percent, minBooks, appliesTo, autoApply: b.auto_apply ? 1 : 0 })
+  await auditAdmin(c, 'discount.create', 'discount', code, null, {
+    percentBps,
+    minBooks,
+    appliesTo,
+    scope,
+    autoApply: b.auto_apply ? 1 : 0,
+    stackable: b.stackable ? 1 : 0
+  })
+  return c.redirect('/admin/discounts?saved=1')
+})
+
+/** Editing an existing promo's rules (ADM-16). The authoritative rate stays an integer. */
+app.post('/admin/discounts/:id/update', async (c) => {
+  const id = Number(c.req.param('id'))
+  const existing = await c.env.DB.prepare('SELECT * FROM discounts WHERE id = ?').bind(id).first<DiscountRow & Record<string, unknown>>()
+  if (!existing) return c.redirect('/admin/discounts?error=' + encodeURIComponent('That discount code no longer exists.'))
+  const b = await c.req.parseBody()
+  const percent = Number(b.percent ?? existing.percent)
+  if (!Number.isFinite(percent) || percent <= 0 || percent > 100) {
+    return c.redirect('/admin/discounts?error=' + encodeURIComponent('The percentage must be between 1 and 100.'))
+  }
+  const optionalMinor = (raw: unknown): number | null => {
+    const text = String(raw ?? '').trim()
+    if (!text) return null
+    const n = Number(text)
+    return Number.isFinite(n) && n >= 0 ? Math.round(n * 100) : null
+  }
+  const optionalCount = (raw: unknown): number | null => {
+    const text = String(raw ?? '').trim()
+    if (!text) return null
+    const n = Number(text)
+    return Number.isInteger(n) && n >= 1 ? n : null
+  }
+  const dateValue = (raw: unknown): string | null => {
+    const text = String(raw ?? '').trim()
+    if (!text) return null
+    const parsed = new Date(text)
+    return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString()
+  }
+  await c.env.DB.prepare(
+    `UPDATE discounts SET percent = ?, percent_bps = ?, applies_to = ?, scope = ?, stackable = ?, priority = ?,
+            starts_at = ?, ends_at = ?, min_subtotal_minor = ?, max_uses = ?, max_uses_per_owner = ?, max_discount_minor = ?,
+            active = ?
+      WHERE id = ?`
+  )
+    .bind(
+      percent,
+      Math.round(percent * 100),
+      String(b.applies_to ?? existing.applies_to),
+      String(b.scope ?? existing.scope),
+      b.stackable ? 1 : 0,
+      Number.isInteger(Number(b.priority)) ? Number(b.priority) : Number(existing.priority ?? 100),
+      b.starts_at !== undefined ? dateValue(b.starts_at) : (existing.starts_at as string | null),
+      b.ends_at !== undefined ? dateValue(b.ends_at) : (existing.ends_at as string | null),
+      b.min_subtotal !== undefined ? optionalMinor(b.min_subtotal) : (existing.min_subtotal_minor as number | null),
+      b.max_uses !== undefined ? optionalCount(b.max_uses) : (existing.max_uses as number | null),
+      b.max_uses_per_owner !== undefined ? optionalCount(b.max_uses_per_owner) : (existing.max_uses_per_owner as number | null),
+      b.max_discount !== undefined ? optionalMinor(b.max_discount) : (existing.max_discount_minor as number | null),
+      b.active ? 1 : 0,
+      id
+    )
+    .run()
+  await auditAdmin(c, 'discount.update', 'discount', id, null, { percentBps: Math.round(percent * 100) })
   return c.redirect('/admin/discounts?saved=1')
 })
 
