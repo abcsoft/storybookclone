@@ -19,6 +19,9 @@ import { adminCmsHome, adminCmsNavigation, adminCmsPages, adminCmsPageEditor, ad
 import { adminReviews } from './admin_reviews'
 import { registerAdminStoreRoutes } from './admin_routes'
 import { registerCommerceRoutes, resolveCheckoutReturnOrderId } from './commerce/routes'
+import { registerAccountApiRoutes } from './account/routes'
+import { registerAccountWebRoutes } from './account/web'
+import { getCustomerOrder, listCustomerOrders, paymentStatusLabel } from './account/orders'
 import { orderFinancePanel } from './admin_finance'
 import { financialSummary } from './commerce/reporting'
 import { hasFinancePermission } from './admin_routes'
@@ -79,11 +82,15 @@ import { jobView, previewAssetUrl } from './generation/routes'
 import { renderGenerationPanel, type GenerationPanelState } from './pages_generation'
 import { statusLabel, transitionOrderStatus, transitionPreviewStatus } from './orders-status'
 import { brand, configureBrand } from './brand'
+import { mailProviderStatus, type MailEnv } from './mail/provider'
+import { sendVerificationEmail } from './account/profile'
+import { recordSecurityEvent, ipDigest } from './account/security'
 import { createProduct, updateProduct } from './product-variants'
 import {
   csrfGuard,
   corsGuard,
   securityHeaders,
+  clientIp as clientIpOf,
   secureCookieOptions,
   injectCsrfFormTokens,
   hasSessionCookie,
@@ -205,6 +212,27 @@ export type Bindings = {
   STRIPE_WEBHOOK_TOLERANCE_SECONDS?: string
   // Development-only signing secret for the offline deterministic test provider.
   PAYMENT_FAKE_WEBHOOK_SECRET?: string
+  // ---- V2 Phase 5: customer account, email, downloads (CUS-01..CUS-14, PLT-05)
+  // Which outbound email adapter this deployment resolves to. UNSET means email
+  // delivery is DISABLED and truthful — queued messages are recorded as
+  // `suppressed` rather than pretended to have been sent. See
+  // src/mail/provider.ts and docs/EMAIL_PROVIDER.md. A real provider is only
+  // constructed when ALL of EMAIL_PROVIDER=http, EMAIL_API_URL, EMAIL_API_KEY and
+  // EMAIL_FROM are present; no credential exists in this repository and no real
+  // send is ever made from it.
+  EMAIL_PROVIDER?: string
+  EMAIL_API_URL?: string
+  EMAIL_API_KEY?: string
+  EMAIL_FROM?: string
+  EMAIL_FROM_NAME?: string
+  EMAIL_TIMEOUT_MS?: string
+  // Optional pepper for the IP DIGEST stored on sessions and security events.
+  // Without it the digest of an IPv4 address is brute-forceable, so it is treated
+  // as a low-sensitivity "same network" hint and never as an identity.
+  IP_HASH_SECRET?: string
+  // Optional overrides for the CUS-08 revision-request policy limits.
+  REVISION_MAX_PER_REVISION?: string
+  REVISION_MAX_PER_BOOK?: string
 }
 export type Vars = { user: AuthUser | null; requestId: string | null; csrfToken?: string } & Partial<PageContextVars>
 
@@ -550,6 +578,16 @@ registerPersonalizationRoutes(app)
 // src/generation/*.
 registerGenerationRoutes(app)
 
+// V2 Phase 5 customer account domain (CUS-01..CUS-14, GEN-09/11, PER-08/09,
+// PLT-05): profile/verification/email change, session listing and revocation,
+// the address book pages, verified guest claiming, the book library with its
+// preview/version history, revision requests, exact-version approval, entitled
+// expiring downloads, support tickets, notification preferences, privacy intake
+// and the durable email outbox. Both surfaces (server-rendered forms and the
+// /api/v1 JSON API) call the SAME services — see src/account/*.
+registerAccountApiRoutes(app)
+registerAccountWebRoutes(app)
+
 // Every browser (guest or logged-in) gets a stable, opaque, httpOnly upload
 // ownership token. It has nothing to do with login — it's what lets order
 // creation reject a photo upload key that belongs to a DIFFERENT browser
@@ -628,8 +666,10 @@ app.post('/login', async (c) => {
   if (!user || !(await verifyPassword(password, user.password_hash))) {
     return html(c, 'Login', authPage('login', 'Invalid email or password.'), 'my-books')
   }
-  // S-02: authentication always rotates the session id.
-  await rotateSessionOnLogin(c, c.env.DB, user.id)
+  // S-02: authentication always rotates the session id. V2 Phase 5: the new
+  // session records a DEVICE description and an IP DIGEST (never an address), so
+  // the customer can recognise and revoke it from their account page.
+  await rotateSessionOnLogin(c, c.env.DB, user.id, { userAgent: c.req.header('user-agent'), ipDigest: await callerIpDigestFor(c) })
   return c.redirect(user.role === 'admin' ? '/admin' : '/my-books')
 })
 
@@ -649,8 +689,18 @@ app.post('/register', async (c) => {
     const r = await c.env.DB.prepare('INSERT INTO users (name, email, password_hash) VALUES (?, ?, ?)')
       .bind(name, email, await hashPassword(password))
       .run()
+    const userId = Number(r.meta.last_row_id)
     // S-02: rotate (destroy any pre-registration session) on authentication.
-    await rotateSessionOnLogin(c, c.env.DB, Number(r.meta.last_row_id))
+    await rotateSessionOnLogin(c, c.env.DB, userId, { userAgent: c.req.header('user-agent'), ipDigest: await callerIpDigestFor(c) })
+    // V2 Phase 5 (CUS-01/PLT-05): a new account is UNVERIFIED, and the
+    // confirmation link is QUEUED for delivery. Best-effort by design — the
+    // account exists either way, and the profile page says truthfully whether the
+    // link could actually be delivered (this deployment has no provider, so it
+    // cannot be). Nothing here verifies the address; only opening the link does.
+    await recordSecurityEvent(c.env.DB, { userId, eventType: 'registered', ipDigest: await callerIpDigestFor(c), userAgent: c.req.header('user-agent') }).catch(() => undefined)
+    await sendVerificationEmail(c.env.DB, mailEnvOf(c), { userId, email, name, baseUrl: new URL(c.req.url).origin, correlationId: c.get('requestId') || undefined }).catch((err) => {
+      console.error(`[register] the verification email could not be queued: ${err instanceof Error ? err.message : 'unknown'}`)
+    })
     return c.redirect('/my-books')
   } catch {
     return html(c, 'Create Account', authPage('register', 'That email is already registered.'), 'my-books')
@@ -725,7 +775,6 @@ app.post('/reset-password', async (c) => {
     // fragment (see public/static/reader.js) — fragments are never sent
     // to the server, so this header is defense in depth for any other
     // sensitive query param (e.g. photoKey) this page's URL does carry.
-    c.header('Referrer-Policy', 'no-referrer')
     const slug = c.req.param('slug')
     const q = c.req.query()
 
@@ -894,12 +943,13 @@ async function loadGenerationPanelState(
 // see src/orders.ts) is. Without a valid token this deliberately shows the
 // same generic page a stranger guessing sequential IDs would see.
 app.get('/order-success', async (c) => {
-  // This page's own URL carries the guest capability token as a query
-  // param (?token=) — that's a pre-existing, already-reviewed design.
-  // Referrer-Policy here is defense in depth: it stops that token from
-  // ever leaking to a third-party resource's server via a Referer header
-  // if one were ever loaded from this page.
-  c.header('Referrer-Policy', 'no-referrer')
+  // This page's own URL carries the guest capability token as a query param
+  // (?token=) — a pre-existing, already-reviewed design. It is protected by the
+  // application-wide `strict-origin-when-cross-origin` policy (src/security.ts),
+  // which sends only the ORIGIN cross-origin and therefore never the token. This
+  // route deliberately does NOT set its own `no-referrer`: a page-level
+  // no-referrer makes the browser send `Origin: null` on this page's own form
+  // submissions, which the CSRF guard refuses (found by the Phase-5 journey).
   let id = Number(c.req.query('id') || '')
   const token = c.req.query('token') || ''
   const user = c.get('user')
@@ -909,13 +959,27 @@ app.get('/order-success', async (c) => {
   // against the caller's OWN cart capability/session (never the id alone, which
   // would let anyone enumerate orders), and its order is then rendered through
   // exactly the same authorization as an id/token view.
+  // `authorizedByReturn` records that the order id came from resolving the
+  // caller's OWN checkout session (by their cart/prospect/session capability, never
+  // by the id alone). That resolution IS an authorization, so the guest who just
+  // paid can see their own order — previously this path resolved the id but then
+  // failed the ownership check, and a GUEST returning from payment was told their
+  // own order "could not be shown" (found by the Phase-5 browser journey).
+  let authorizedByReturn = false
   if (!id && c.req.query('cs')) {
     const sessionOrderId = await resolveCheckoutReturnOrderId(c)
-    if (sessionOrderId) id = sessionOrderId
+    if (sessionOrderId) {
+      id = sessionOrderId
+      authorizedByReturn = true
+    }
   }
 
   let order: any = null
   let items: any[] = []
+  // V2 Phase 5 (CUS-04): a signed-in visitor who proves the order with its OWN
+  // capability token can add it to their account — the token is the capability,
+  // and knowing the order id is never enough.
+  let canClaim = false
   if (id) {
     const isOwner = user ? await c.env.DB.prepare('SELECT id FROM orders WHERE id = ? AND user_id = ?').bind(id, user.id).first() : null
     let guestOk = false
@@ -929,9 +993,13 @@ app.get('/order-success', async (c) => {
         // can be verified — treat as "not authorized", not a crash.
       }
     }
-    if (isOwner || guestOk) {
+    if (isOwner || guestOk || authorizedByReturn) {
       order = await c.env.DB.prepare('SELECT * FROM orders WHERE id = ?').bind(id).first()
       if (order) items = (await c.env.DB.prepare('SELECT * FROM order_items WHERE order_id = ?').bind(id).all()).results || []
+      // Claiming is offered only when the caller holds the capability AND is
+      // signed in AND does not already own it: a guest with no account is told
+      // how to claim instead (see the copy below).
+      canClaim = !!user && !isOwner && guestOk
     }
   }
 
@@ -989,19 +1057,39 @@ app.get('/order-success', async (c) => {
         ? `<p>No payment was taken — the payment attempt was declined. Your cart is unchanged, so you can try again.</p>`
         : `<p>Nothing has been charged for this order yet.</p>`
 
+  // T-01/T-03 (preserved, now data-driven): this deployment states exactly what
+  // it can and cannot do. Phase 5 added a durable outbox, so the honest answer is
+  // no longer a flat "no email" — it is whatever the resolved provider actually is.
+  const mailStatus = mailProviderStatus(c.env)
+  const emailLine =
+    mailStatus.deliveryMode === 'live' || mailStatus.deliveryMode === 'test-double'
+      ? 'A confirmation for this order has been recorded and queued for delivery.'
+      : mailStatus.deliveryMode === 'development-console'
+        ? 'This is a development environment: the order confirmation was written to the local server log and no real email was sent.'
+        : 'This deployment cannot send email, so do not wait for a confirmation message — this page and My Books are the record of your order.'
+  const claimBlock = canClaim
+    ? `<form method="post" action="/account/claim-order">
+        <input type="hidden" name="orderId" value="${order.id}">
+        <input type="hidden" name="guestToken" value="${esc(token)}">
+        <button class="btn btn-primary" type="submit">Add this order to my account</button>
+      </form>
+      <p class="tiny">You are signed in, and this page's own confirmation link proves the order is yours, so it can be moved to your account now.</p>`
+    : !user
+      ? `<p class="tiny">Bookmark this page to check back. If you create an account, you can add this order to it from <a class="link" href="/account/claims">Guest orders</a> — either with this page's confirmation link (the part of the address after <code>token=</code>), or by confirming the email address the order used. Knowing an email address alone never moves an order.</p>`
+      : ''
   return html(
     c,
     'Order confirmed',
     `<section class="page-hero">
       <h1>Thank you!</h1>
-      ${/* T-01: no preview-email promise — no email/outbox worker exists, so
-           nothing is emailed to anyone. T-03: no PDF either. */ ''}
+      ${c.req.query('ok') ? `<p class="notice ok" role="status">${esc(String(c.req.query('ok')))}</p>` : ''}
+      ${c.req.query('error') ? `<p class="notice error" role="alert">${esc(String(c.req.query('error')))}</p>` : ''}
       <p>Your order #${order.id} has been saved.</p>
       <div id="order-payment-status" data-order-id="${order.id}" data-payment-status="${esc(paymentStatus)}">${paymentLine}</div>
       <p class="tiny muted">Order status: ${String(order.status).replace(/_/g, ' ')} · Payment: ${esc(statusLabel(paymentStatus))} · ${items.length} item${items.length === 1 ? '' : 's'} · Total ${money(Number(order.total_minor ?? order.total * 100) / 100)}</p>
-      <p class="tiny">This version does not send emails or produce PDFs yet, so do not wait for a confirmation message. Previews are generated only when you ask for one from the reader page.</p>
+      <p class="tiny">${emailLine} A print-ready PDF is not produced yet, so there is nothing to download until the print pipeline arrives. Previews are generated only when you ask for one from the reader page.</p>
       ${readerLinks ? `<ul class="order-success-items">${readerLinks}</ul>` : ''}
-      ${!user ? `<p class="tiny">Bookmark this page to check back. Guest orders cannot be linked to an account in this version, so creating one will not add this order to My Books.</p>` : ''}
+      ${claimBlock}
       <a class="btn" href="${user ? '/my-books' : '/'}">${user ? 'View my books' : 'Continue shopping'}</a>
     </section>
     ${c.req.query('cs') ? `<script type="module" src="/static/payment-return.js"></script>` : ''}
@@ -1269,33 +1357,106 @@ app.get('/api/v1/orders/:id/guest', async (c) => {
   return c.json({ order, items })
 })
 
+/** The request's IP DIGEST (never the raw address), for session/security metadata. */
+async function callerIpDigestFor(c: Context<{ Bindings: Bindings; Variables: Vars }>): Promise<string | null> {
+  try {
+    return await ipDigest({ IP_HASH_SECRET: c.env.IP_HASH_SECRET, GUEST_ORDER_TOKEN_SECRET: c.env.GUEST_ORDER_TOKEN_SECRET }, clientIpOf(c))
+  } catch {
+    return null
+  }
+}
+
+function mailEnvOf(c: Context<{ Bindings: Bindings; Variables: Vars }>): MailEnv {
+  return {
+    ENVIRONMENT: c.env.ENVIRONMENT,
+    EMAIL_PROVIDER: c.env.EMAIL_PROVIDER,
+    EMAIL_API_URL: c.env.EMAIL_API_URL,
+    EMAIL_API_KEY: c.env.EMAIL_API_KEY,
+    EMAIL_FROM: c.env.EMAIL_FROM,
+    EMAIL_FROM_NAME: c.env.EMAIL_FROM_NAME
+  }
+}
+
 // Logged-in customer's own orders — ownership enforced by user_id match,
 // never by the client-supplied order id alone. Canonical: /api/v1/my/orders[.../:id].
 // Legacy aliases kept, tested: /api/my/orders[.../:id].
 async function handleMyOrders(c: Context<{ Bindings: Bindings; Variables: Vars }>) {
   const auth = requireAuth(c)
   if (auth instanceof Response) return auth
-  const orders = (
-    await c.env.DB.prepare(
-      `SELECT o.id, o.full_name, o.email, o.city, o.country, o.subtotal, o.discount, o.shipping, o.total, o.status, o.created_at,
-              (SELECT COUNT(*) FROM order_items i WHERE i.order_id = o.id) AS item_count
-       FROM orders o WHERE o.user_id = ? ORDER BY o.id DESC LIMIT 100`
-    )
-      .bind(auth.id)
-      .all()
-  ).results || []
+  // V2 Phase 5 (CUS-05/CUS-10): the read model adds the ledger-derived payment
+  // state, the real totals in minor units and the per-order affordances, while
+  // every field the pre-Phase-5 client read (id, created_at, item_count, status,
+  // total, total_minor) keeps its exact place and meaning.
+  const rows = await listCustomerOrders(c.env.DB, auth.id)
+  const orders = rows.map((o) => ({
+    id: o.id,
+    full_name: o.full_name,
+    email: o.email,
+    city: o.city,
+    country: o.country,
+    subtotal: o.subtotal,
+    discount: o.discount,
+    shipping: o.shipping,
+    total: o.total,
+    status: o.status,
+    created_at: o.created_at,
+    item_count: o.itemCount,
+    subtotal_minor: o.subtotal_minor,
+    discount_minor: o.discount_minor,
+    shipping_minor: o.shipping_minor,
+    total_minor: o.total_minor ?? Math.round(Number(o.total || 0) * 100),
+    currency: o.currency,
+    payment_status: o.payment_status,
+    payment_status_label: paymentStatusLabel(o.payment_status),
+    amount_captured_minor: o.amount_captured_minor,
+    amount_refunded_minor: o.amount_refunded_minor,
+    total_label: o.totalLabel,
+    captured_label: o.capturedLabel
+  }))
   return c.json({ orders })
 }
 async function handleMyOrderDetail(c: Context<{ Bindings: Bindings; Variables: Vars }>) {
   const auth = requireAuth(c)
   if (auth instanceof Response) return auth
   const id = Number(c.req.param('id'))
-  const order = await c.env.DB.prepare('SELECT * FROM orders WHERE id = ? AND user_id = ?').bind(id, auth.id).first()
-  if (!order) return c.json({ error: 'Order not found' }, 404)
-  const items = (
-    await c.env.DB.prepare('SELECT * FROM order_items WHERE order_id = ?').bind(id).all()
-  ).results || []
-  return c.json({ order, items })
+  if (!Number.isInteger(id) || id <= 0) return c.json({ error: 'Order not found' }, 404)
+  const detail = await getCustomerOrder(c.env.DB, auth.id, id)
+  // "not yours" and "does not exist" are deliberately the same answer.
+  if (!detail) return c.json({ error: 'Order not found' }, 404)
+
+  const order = await c.env.DB.prepare('SELECT * FROM orders WHERE id = ?').bind(id).first<Record<string, unknown>>()
+  const itemRows = (await c.env.DB.prepare('SELECT * FROM order_items WHERE order_id = ? ORDER BY id').bind(id).all<Record<string, unknown>>()).results || []
+  const entitlements = (await c.env.DB.prepare('SELECT public_id, order_item_id, status, expires_at FROM download_entitlements WHERE order_id = ?').bind(id).all<{ public_id: string; order_item_id: number; status: string; expires_at: number }>()).results || []
+  const byItem = new Map(entitlements.map((e) => [Number(e.order_item_id), e]))
+
+  return c.json({
+    order: order || {},
+    items: itemRows,
+    // ---- V2 Phase 5 additions (CUS-06/CUS-10) ----
+    // The timeline is the append-only order_state_events log itself: every entry
+    // is something that was recorded, with its actor and reason.
+    timeline: detail.timeline,
+    payments: detail.payments,
+    refunds: detail.refunds,
+    addresses: detail.addresses,
+    production: detail.order.production,
+    summary: {
+      currency: detail.order.currency,
+      totalLabel: detail.order.totalLabel,
+      capturedLabel: detail.order.capturedLabel,
+      refundedLabel: detail.order.refundedLabel,
+      outstandingMinor: detail.order.outstandingMinor,
+      paymentStatus: detail.order.payment_status,
+      paymentStatusLabel: paymentStatusLabel(detail.order.payment_status),
+      itemCount: detail.order.itemCount
+    },
+    itemsDetail: detail.items,
+    downloads: itemRows.map((row) => {
+      const e = byItem.get(Number(row.id))
+      return { orderItemId: Number(row.id), entitlementId: e?.public_id ?? null, status: e?.status ?? null, expiresAt: e ? new Date(Number(e.expires_at) * 1000).toISOString() : null }
+    }),
+    receiptUrl: `/my/orders/${id}/receipt`
+  })
 }
 app.get('/api/v1/my/orders', handleMyOrders)
 app.get('/api/my/orders', handleMyOrders)

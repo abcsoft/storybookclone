@@ -301,7 +301,19 @@ const PRIVATE_PATH_PREFIXES = [
   // financial state — never cached by an intermediary.
   '/api/v1/cart',
   '/api/v1/checkout',
-  '/api/v1/me/'
+  '/api/v1/me/',
+  // V2 Phase 5: the account surfaces carry personal data, and the token-landing
+  // and capability routes carry a single-use secret in their URL. None of them
+  // may ever be retained by a browser or an intermediary.
+  '/account',
+  '/verify-email',
+  '/my/downloads',
+  '/my/previews',
+  '/my/orders',
+  '/api/v1/downloads',
+  '/api/v1/support',
+  '/api/v1/privacy',
+  '/api/v1/platform'
 ]
 
 export function securityHeaders(): MiddlewareHandler {
@@ -309,10 +321,27 @@ export function securityHeaders(): MiddlewareHandler {
     await next()
     c.header('X-Content-Type-Options', 'nosniff')
     c.header('X-Frame-Options', 'DENY')
+    // ONE referrer policy for the whole application, applied unconditionally.
+    //
+    // It is deliberately NOT overridable per route. A route-level `no-referrer`
+    // on a page that also renders forms is actively harmful: a browser then treats
+    // the page's origin as opaque for its own form submissions and sends
+    // `Origin: null`, which the central CSRF guard refuses (correctly — an opaque
+    // origin is not a same-origin proof). The Phase-5 browser journey found exactly
+    // that: the reader page's logout button was rejected with `csrf_origin`.
+    //
+    // `strict-origin-when-cross-origin` already gives the property the
+    // token-bearing pages need: a cross-origin request receives the ORIGIN only,
+    // never the URL, so a guest token or photo key in a query string cannot leak
+    // through a Referer.
     c.header('Referrer-Policy', 'strict-origin-when-cross-origin')
     c.header('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=()')
     c.header('Cross-Origin-Opener-Policy', 'same-origin')
-    c.header('Content-Security-Policy', CSP)
+    // The CSP is the ONE header a route MAY tighten: it does not affect the
+    // request headers a browser sends, so a stricter per-response policy cannot
+    // break the CSRF guard. The private attachment route uses that to sandbox its
+    // response. Everything else gets the baseline below.
+    if (!c.res.headers.get('Content-Security-Policy')) c.header('Content-Security-Policy', CSP)
     // HSTS only makes sense once the origin is HTTPS; a plaintext dev origin
     // must not be told to remember HTTPS-only.
     const proto = c.req.header('X-Forwarded-Proto') || 'http'

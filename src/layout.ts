@@ -271,6 +271,7 @@ export function page(opts: PageOptions): string {
         ${
           opts.loggedIn
             ? `<a class="icon-btn my-books-link" href="/my-books" aria-label="My Books">${icon('book-open')}</a>
+        <a class="icon-btn" href="/account" aria-label="My account" id="account-link" title="My account">${icon('user')}</a>
         <form class="logout-form" method="post" action="/logout">
           <button type="submit" class="icon-btn" id="logout-btn" aria-label="Log out" title="Log out">${icon('right-from-bracket')}</button>
         </form>`

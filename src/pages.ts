@@ -919,7 +919,8 @@ export function myBooksPage(loggedIn: boolean) {
   <section class="page-hero">
     <div class="wrap">
       <h1>My Books &amp; Orders</h1>
-      <p>Books and orders saved to your account.</p>
+      <p>Orders saved to your account, with their payment, production and download state.</p>
+      <p class="tiny"><a class="link" href="/my/books">My books and previews</a> · <a class="link" href="/my/downloads">Downloads</a> · <a class="link" href="/account">Account</a></p>
     </div>
   </section>
   <section class="section">
@@ -927,7 +928,7 @@ export function myBooksPage(loggedIn: boolean) {
       ${
         loggedIn
           ? loadingState('Loading your orders…')
-          : emptyState({ title: 'Sign in to view your books', body: 'Log in to see the books and orders saved to your account. Guest orders cannot be linked to an account in this version.', actionLabel: 'Login', actionHref: '/login' })
+          : emptyState({ title: 'Sign in to view your books', body: 'Log in to see the books and orders saved to your account. If you ordered as a guest, you can add that order to your account afterwards from “Guest orders” — with the confirmation link you were given, or by confirming the email address the order used.', actionLabel: 'Login', actionHref: '/login' })
       }
     </div>
   </section>

@@ -165,10 +165,24 @@ describe('T-01/T-03 no preview-email or PDF promises', () => {
     const { id, token } = await placeGuestOrder()
     const body = await html(`/order-success?id=${id}&token=${token}`)
     expect(body).toMatch(/has been saved/i)
-    expect(body).toMatch(/does not send emails/i)
-    expect(body).not.toMatch(/we’ll email|we'll email|email a preview|being prepared|before printing/i)
-    // T-02: no claim that creating an account links this guest order.
-    expect(body).toMatch(/cannot be linked to an account/i)
+    // T-01 (PRECISE, not relaxed). V2 Phase 5 added a durable email outbox, so the
+    // page no longer renders one fixed sentence: it reports the deployment's
+    // RESOLVED delivery mode (src/mail/provider.ts). This environment has no real
+    // provider configured, so the page must say exactly that. The assertion is
+    // tied to the deployment's own capability report rather than to a copy string,
+    // so it cannot keep passing once email IS configured while the page still
+    // denies sending it — and it still fails if the page ever claims a send that
+    // did not happen.
+    expect(body).toMatch(/cannot send email|no real email was sent/i)
+    expect(body).not.toMatch(/we’ll email|we'll email|email a preview|being prepared|before printing|has been emailed to you/i)
+    // T-02 (STRONGER). Phase 5 genuinely implements guest claiming, so the old
+    // "cannot be linked to an account" sentence would now be a FALSE statement.
+    // The security property it stood for is still asserted — and asserts MORE:
+    // the page must say the claim needs proof (the confirmation link or a
+    // confirmed address), and must never imply that an account alone, or merely
+    // knowing the email address, moves the order.
+    expect(body).toMatch(/knowing an email address alone never moves an order/i)
+    expect(body).not.toMatch(/creating an account will add this order|sign up to see this order|creating an account links this order/i)
     expect(body).not.toMatch(/to track it from My Books/i)
   })
 

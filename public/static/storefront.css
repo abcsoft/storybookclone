@@ -366,3 +366,89 @@ pre, code, table { max-width: 100%; overflow-x: auto; }
     scroll-behavior: auto !important;
   }
 }
+
+/* ==========================================================================
+   V2 Phase 5 — customer account surfaces (CUS-01..CUS-14)
+   --------------------------------------------------------------------------
+   Every rule here follows the same guarantees as the rest of this file: no
+   fixed pixel width that can overflow at 360px, no colour-only meaning, no
+   zero-height section, and a visible focus ring on every control (inherited
+   from the global focus rules above).
+
+   The timeline marks production stages with a left border AND a text label
+   ("recorded by …"), so the distinction survives a monochrome print-out.
+   ========================================================================== */
+
+.acct-nav { margin-bottom: var(--sp-6); }
+.acct-nav ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2) var(--sp-4);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-bottom: 1px solid var(--line, #e5e5e5);
+  padding-bottom: var(--sp-3);
+}
+.acct-nav a { color: var(--purple-dark, #5b21b6); text-decoration: none; }
+.acct-nav a:hover { text-decoration: underline; }
+.acct-nav a[aria-current="page"] { font-weight: 700; text-decoration: underline; }
+
+.acct-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
+  gap: var(--sp-3) var(--sp-5);
+  margin: 0 0 var(--sp-5);
+}
+.acct-row { display: flex; flex-direction: column; gap: var(--sp-1); min-width: 0; }
+.acct-row dt { font-size: var(--fs-sm); color: var(--muted); margin: 0; }
+.acct-row dd { margin: 0; overflow-wrap: anywhere; }
+
+.acct-form { max-width: 34rem; }
+.acct-form label { display: block; margin-top: var(--sp-3); }
+
+.acct-list { list-style: none; margin: 0 0 var(--sp-5); padding: 0; display: flex; flex-direction: column; gap: var(--sp-4); }
+.acct-list-plain { gap: var(--sp-2); margin-bottom: var(--sp-4); }
+.acct-list > li {
+  border: 1px solid var(--line, #e5e5e5);
+  border-radius: var(--radius-sm);
+  padding: var(--sp-4);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.acct-list-plain > li { border: none; padding: 0; }
+.acct-list-title { margin: 0 0 var(--sp-1); font-weight: 600; }
+
+.acct-actions { display: flex; flex-wrap: wrap; gap: var(--sp-3); align-items: center; margin-top: var(--sp-3); }
+.acct-actions form { margin: 0; display: inline-flex; }
+
+.acct-check { display: flex; align-items: flex-start; gap: var(--sp-2); }
+.acct-check input { margin-top: 0.2rem; }
+
+.acct-timeline { list-style: none; margin: 0 0 var(--sp-5); padding: 0; display: flex; flex-direction: column; gap: var(--sp-3); }
+.acct-timeline > li {
+  border-left: 3px solid var(--line, #e5e5e5);
+  padding: 0 0 0 var(--sp-3);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.acct-timeline > li.acct-timeline-production { border-left-color: var(--purple, #7c3aed); }
+
+.acct-badge-ok { background: #e7f6ec; color: #14532d; }
+.acct-badge-warn { background: #fdf1dc; color: #7a4a05; }
+
+.acct-version {
+  border: 1px solid var(--line, #e5e5e5);
+  border-radius: var(--radius-sm);
+  padding: var(--sp-4);
+  margin-bottom: var(--sp-5);
+  min-width: 0;
+}
+.acct-pages { list-style: none; margin: var(--sp-3) 0; padding: 0; display: flex; flex-wrap: wrap; gap: var(--sp-3); }
+.acct-pages > li { flex: 1 1 12rem; max-width: 20rem; min-width: 0; }
+.acct-pages img { display: block; width: 100%; height: auto; border-radius: var(--radius-sm); background: var(--soft, #f6f5f1); }
+
+@media (max-width: 480px) {
+  .acct-list > li, .acct-version { padding: var(--sp-3); }
+  .acct-actions .btn { width: 100%; justify-content: center; }
+}

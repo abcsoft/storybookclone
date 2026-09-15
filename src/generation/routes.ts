@@ -545,9 +545,10 @@ export function registerGenerationRoutes(app: Hono<any>) {
     const headers = new Headers()
     headers.set('Content-Type', object.contentType)
     headers.set('Cache-Control', 'private, no-store')
-    // Defence in depth: a preview URL must never leak through a Referer to a
-    // third party, and must never be indexed.
-    headers.set('Referrer-Policy', 'no-referrer')
+    // A private preview must never be indexed. Referrer leakage is handled by the
+    // ONE application-wide policy (src/security.ts), which sends only the origin
+    // cross-origin — so this URL's key never travels; a route-level `no-referrer`
+    // is not used anywhere because it would break form POSTs on pages that use it.
     headers.set('X-Robots-Tag', 'noindex, noimageindex')
     return new Response(object.bytes, { headers })
   })
