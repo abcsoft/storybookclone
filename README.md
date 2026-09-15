@@ -1,13 +1,24 @@
-# WonderWraps — Fullstack Clone
+# Storybook Studio — personalised storybook storefront
 
-A full-stack clone of [wonderwraps.com](https://wonderwraps.com/) — personalized children's storybooks and sticker packs, now with a **real backend**: Cloudflare D1 database, R2 photo storage, session auth, server-side pricing, and a complete **admin panel**.
+A personalised-children's-book storefront with a **real backend**: Cloudflare D1
+database, R2 photo storage, session auth, server-authoritative pricing, a
+CMS-driven storefront and a complete **admin panel**.
+
+> **Identity is placeholder, not final.** The owner has not chosen the trading
+> name yet, so the neutral default is **`Storybook Studio`** and the contact
+> address is the RFC-2606 reserved `support@storybook-studio.example`. Every
+> identity string comes from the ONE brand boundary (`src/brand.ts`, overridable
+> per deployment by `BRAND_*` or in admin under **Brand & settings**), so
+> renaming the site needs no code change. The catalogue titles, stories and all
+> artwork are **original content authored for this project** (see
+> "Original artwork" below); nothing is copied from any other storefront.
 
 ## Project Overview
-- **Name**: WonderWraps
-- **Goal**: Full-stack personalized bookstore matching the reference site: browse → personalize (name/age/language/dedication/photo) → cart → checkout → order pipeline → admin fulfillment.
-- **Tech Stack**: Hono + TypeScript + Cloudflare Pages + D1 (SQLite) + R2 (photos) + custom CSS
+- **Name**: Storybook Studio (neutral placeholder — see above)
+- **Goal**: browse → personalise (name/age/language/dedication/photo) → read every page → cart → checkout → order pipeline → admin operations, with a storefront whose navigation, homepage, catalogue, FAQ, blog and legal pages are all editable in admin.
+- **Tech Stack**: Hono + TypeScript + Cloudflare Pages + D1 (SQLite) + R2 (photos) + an original CSS design system (no UI framework, no CDN)
 
-## How personalization works (mirrors the reference flow)
+## How personalization works
 1. Customer picks a storybook → fills child's name, age, language, dedication, uploads a photo.
 2. As of Phase 2, the photo and every personalization field are attached to
    a durable, private **user_book** (see "Personalization domain" below) —
@@ -40,18 +51,28 @@ API contract: `docs/API_V1.md`'s "Phase 2" section. In short:
 
 ## URLs
 ### Storefront
-- **Home**: `/` · **Books**: `/books` (`?gender=girl|boy`, `?career=1`, `?q=`) · **Ages**: `/books/age/2-4|4-6|6-8`
-- **Product**: `/books/:slug` (books and legacy sticker URLs), `/stickers/:slug` · **Stickers**: `/stickers`
+- **Home**: `/` — rendered from the ordered **CMS block list** (announcement, hero, product grids, steps, photo guidance, age grid, sticker cross-sell, FAQ preview, final CTA, newsletter).
+- **Catalogue**: `/books`, `/stickers` — composed filters (`q`, `audience`, `age`, `theme`, `language`, `format`, `availability`, `price_min/max`), sorting (`featured|price-asc|price-desc|newest|title`), `per_page`, `page`; the URL is the canonical state and every filter is a removable chip. Legacy age URLs (`/books/age/2-4|4-6|6-8|8-100`) 301-redirect into it.
+- **Collections**: `/collections` and `/collections/:slug` (audience, theme, age, career, sticker, editorial) with original copy and FAQs.
+- **Product**: `/books/:slug`, `/stickers/:slug` — gallery, product facts, server-priced variants, upload/personalisation CTA, process steps, related items, published reviews, FAQs, sticky mobile CTA.
+- **Content**: `/blog`, `/blog/:slug`, `/faqs`, `/how-it-works`, `/support`, `/contact`, `/support/privacy-policy`, `/support/terms-and-conditions`, `/support/refund-policy`, `/support/shipping`, `/support/photo-guidelines`. An unpublished or unknown slug is a real 404.
 - **Commerce**: `/cart`, `/checkout`, `/order-success?id=`
 - **Account**: `/login`, `/register`, `/forgot-password`, `POST /logout` (GET is a no-op redirect — S-03), `/my-books`
-- **Help/Legal/Blog**: `/faqs`, `/support`, `/contact`, `/support/privacy-policy`, `/support/terms-and-conditions`, `/blog`, `/blog/:slug`
+- **Locale**: `POST /locale` (set country/currency, server-validated), `GET /api/v1/locale` (what the server actually supports)
+- **SEO**: `/robots.txt`, `/sitemap.xml`
 
 ### Admin panel — `/admin` (role-gated)
 - **Login**: `/admin/login` — no default admin account exists. Create one locally with `npm run admin:bootstrap -- --email you@example.com --password '<strong password>'` (see "Local admin bootstrap" below).
 - `/admin` dashboard (revenue, orders, customers, pending previews, unread messages, latest orders)
 - `/admin/orders` (+`?status=`) — pipeline management, `/admin/orders/:id` — status, notes, per-item preview status, child photo review
 - `/admin/products` — full catalog CRUD (`/admin/products/new`, `/admin/products/:id`), flags: bestseller/new/career/active
-- **📝 `/admin/products/:id/pdp`** — WonderWraps PDP editor (tabbed): **Banner & Hero** · **Gallery** (thumb + main slider) · **Hero accordions** · **Start-Personalising** steps · **Photo tips** (Bad/Good) · **Magic slider** (before/after) · **Why-trust** cards · **Reactions** · **Featured-on** logos · **Also-like** picker · **FAQs** — every label/image/text is editable.
+- **📝 `/admin/products/:id/pdp`** — per-product PDP editor (tabbed): **Banner & Hero** · **Gallery** · **Hero accordions** · **Start-Personalising** steps · **Photo tips** · **Magic slider** · **Why-trust** cards · **Also-like** picker · **FAQs** — every label/image/text is editable.
+- **`/admin/catalog`** — filterable, paginated product list; **`/admin/products/:id/variants`** — per-variant prices and per-currency prices in integer minor units (a currency with no price row means the title is not offered in it).
+- **`/admin/collections`**, **`/admin/collections/:id`** — collection CRUD and ordered membership (this is what the homepage sections and collection pages read).
+- **`/admin/media`** — media library with alt text and a focal point; private (uploaded) assets are never rendered publicly.
+- **`/admin/cms`** — the homepage as an ordered list of typed blocks (add / edit / reorder / hide / delete), **`/admin/cms/navigation`** — primary, mobile and footer navigation plus the time-windowed announcement banner, **`/admin/cms/pages`** — blog, FAQ, legal and content pages, **`/admin/cms/faqs`** — the global FAQ.
+- **`/admin/reviews`** — moderation queue: a submitted review is `pending` and invisible until published; rejecting requires a reason; `verified purchase` is derived from a real order row.
+- **`/admin/settings`** — brand & site settings (the identity boundary), **`/admin/localization`** — configured languages, currencies and countries, and which translations genuinely exist.
 - `/admin/discounts` — discount codes (create, activate/deactivate); `EXTRA20` = 20% off 2+ books, auto-applied
 - `/admin/users` — customers with order counts
 - `/admin/messages` — support inbox (resolve/reopen)
@@ -88,8 +109,8 @@ API contract: `docs/API_V1.md`'s "Phase 2" section. In short:
 4. Admin reviews photos, marks previews ready, moves the order through the pipeline.
 
 ## Recent UI and flow updates
-- Product pages now mirror the reference flow with a sticky gallery, sale pricing, review summary, benefits, upload dropzone, expandable photo tips, privacy messaging, and a three-step personalisation section.
-- `/books/girls-sticker-pack` now renders the sticker product page directly, matching the reference URL while preserving `/stickers/girls-sticker-pack`.
+- Product pages carry a sticky gallery, the server-priced variant choice, product facts, the upload/personalisation panel, expandable photo tips, privacy messaging and the moderation-backed review section.
+- Sticker packs render under `/stickers/:slug`; `/books/:slug` 404s for a sticker slug rather than silently rendering the wrong page.
 - Personalisation requires a child name and a successfully uploaded photo (JPG or PNG, 800–4000px, ≤10MB — see `src/photo-policy.ts` / `GET /api/v1/uploads/photo-policy`) before an item can enter the cart; the order API validates this server-side too, with a real image decode, not just a header check.
 
 ## Local environment setup
@@ -171,14 +192,15 @@ security and truth recovery) result. As of the Phase 1
   no AI generation (`POST /api/generate-book` → honest `501`).
 - **The legal pages are drafts** with a visible "requires review by the owner
   and legal counsel" banner (`S-14`). Do not treat them as final terms.
-- **Reference content**: the reference-brand screenshots, product mockups and
-  the six tracked real-person photographs (two of them children) used as UI
-  artwork have been deleted and replaced with the app's own neutral SVG
-  placeholders (**S-12/S-13**). The catalog `cover-*.webp` artwork and the
-  `WonderWraps` name/logo are still reference-derived and are replaced by the
-  Phase 2 CMS/branding work. **The removed photographs remain in git history** —
-  removing them from history requires an owner decision (no history rewrite was
-  performed).
+- **Original content only (Phase 2, SF-01).** Every product title, tagline,
+  story, blog post, FAQ answer and marketing string is original content authored
+  for this project, and all imagery is generated by the committed scripts below.
+  The reference-brand screenshots, product mockups, press logos, catalogue cover
+  artwork and the tracked real-person photographs (two of them children) are
+  **deleted**; `test/unit/phase2-authz-original-content.test.ts` fails if any of
+  them, or a third-party font/icon CDN URL, comes back. **The removed
+  photographs remain in git history** — removing them from history requires an
+  owner decision (no history rewrite was performed).
 - **`npm audit` reports 3 high** in the dev-only `sharp ← miniflare ← wrangler`
   chain (`npm audit --omit=dev` is clean); resolving it needs a pre-release
   `wrangler` bump.
@@ -190,7 +212,9 @@ security and truth recovery) result. As of the Phase 1
 
 ## Deployment
 - **Platform**: Cloudflare Pages + D1 + R2
-- **Local**: `npm install` → `npm run db:migrate:local` → `npx wrangler d1 execute webapp-production --local --file=./seed.sql` → `npx wrangler d1 execute webapp-production --local --file=./seed_pdp.sql` → `npm run admin:bootstrap -- --email you@example.com --password '...'` → `npm run build` → `pm2 start ecosystem.config.cjs` (or `npx wrangler pages dev dist --d1=webapp-production --r2=webapp-photos --local --port 3000`)
+- **Local**: `npm install` → `npm run db:reset` (deletes the local D1 state, applies `migrations/` **and** `seed.sql`) → `npm run admin:bootstrap -- --email you@example.com --password '...'` → `npm run build` → `npx wrangler pages dev dist --d1=webapp-production --r2=webapp-photos --local --port 3000`.
+- **Per-currency prices, variant prices, collection membership, product facts and media rows are derived from the seeded products** by the app's idempotent bootstrap on the first request (the same derivation migrations 0020/0023 apply to an existing database), so there is no second seed file to keep in sync.
+- **Original artwork**: `node scripts/generate-original-art.mjs` regenerates the 50 illustrations in `public/static/img/art/`, and `node scripts/generate-icons.mjs` regenerates the 57 UI icons plus `public/static/icons.css`. Both are deterministic (`--check` verifies the committed files match) and are asserted by the unit suite.
 - **Reset local DB**: `npm run db:reset`
 - **Before any production deploy**: run `npm run check`, review `docs/SECURITY_INCIDENT_REMEDIATION.md`, configure real (non-placeholder) D1/R2 bindings in `wrangler.jsonc`, set `GUEST_ORDER_TOKEN_SECRET` (and rotate `GUEST_ORDER_TOKEN_SECRET_PREV` if applicable), leave `ENVIRONMENT` unset (absence means production rules apply), and have the legal pages reviewed and replaced (`S-14`).
 - **No scheduled work is deployed**: `wrangler.jsonc` has no `triggers.crons`, so the retention sweep never runs automatically (`S-11` — Phase 8).

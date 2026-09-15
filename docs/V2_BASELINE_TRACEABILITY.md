@@ -606,3 +606,20 @@ claim. Full detail, exact commands and observed output are in
 `src/index.tsx`'s admin product create/update handlers had a column/argument
 arity defect that made the admin product form unable to create or save a
 product at all. Fixed by routing both handlers through `src/product-variants.ts`.
+
+---
+
+## Phase 2 (original storefront / catalog / CMS) — see `docs/V2_PHASE2_TRACEABILITY.md`
+
+Phase 2's requirement rows (SF-01…SF-12, ADM-06/07/15/16 and the storefront
+portions of PLT-06/07/08/09/16) are tracked in their own file so this document
+stays the Phase-0/1 baseline registry. Two of its entries change status here:
+
+* **S-13** (reference content) is now **fixed** rather than "partial": the
+  reference catalogue titles/stories/artwork, the press-logo SVGs and the
+  real-person photographs are deleted, replaced by original content and
+  generated art, with a guard test.
+* The **fabricated review/testimonial data** (`pdp_reactions`, `pdp_media`,
+  `products.reviews`/`rating`, and `seed_pdp.sql`) is removed; migration `0022`
+  neutralises the legacy aggregate columns and every review now comes from the
+  moderated `reviews` table.

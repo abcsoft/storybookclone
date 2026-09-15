@@ -416,3 +416,60 @@ that into `order_items` (plus new `order_items.user_book_id` and
 `ready_to_generate`, owned by the resolved caller, and for the same
 product as the cart item — otherwise the whole order is rejected. A
 `userBookId`-less item continues to work exactly as in Phase 1.
+
+---
+
+## V2 Phase 2 additions (storefront, catalogue, CMS, reviews, locale, SEO)
+
+### Catalogue and search
+
+| Endpoint | Method | Notes |
+|---|---|---|
+| `/api/v1/search/suggest?q=` | GET | Suggestions from the **live catalogue** (title/tagline/description/story match, max 8). Returns `{ query, suggestions: [{ slug, title, category, ages, href, price }] }`. `price` is the server-formatted price in the visitor's selected currency, or `null` when the title is not offered in it. Rate limited per client identity. |
+| `/api/v1/locale` | GET | The availability the server actually has: `{ country, countryName, currency, currencySymbol, countries[], currencies[], languages[], contentLanguage, hasTranslatedContent }`. A client may only choose from these lists. |
+| `/locale` | POST | Sets the persisted country/currency choice. `country` is validated against the `countries` table; an unsupported value changes nothing. `next` must be a same-site path (anything else redirects to `/`). Responds `303`. |
+
+The catalog itself is server-rendered HTML at `/books`, `/stickers` and
+`/collections/:slug`. Its state is the URL: `q`, `audience` (repeatable),
+`age`, `theme` (repeatable), `language` (repeatable), `format` (repeatable),
+`availability`, `price_min`, `price_max`, `sort`, `per_page`, `page`. Every
+value is validated; unknown values are dropped, and `category` is never a
+parameter (the route implies it). `sort` ∈ `featured | price-asc | price-desc |
+newest | title`; `availability` ∈ `all | available | unavailable`.
+
+### Currency and pricing
+
+The quote and order endpoints take **no currency from the request**. The server
+resolves it from the persisted country choice and prices every line from
+`variant_prices` → `product_prices` → the variant's own currency row:
+
+* a line whose product has no price row for that currency is returned in
+  `invalid` (it is never converted);
+* `POST /api/v1/cart/quote` returns `currency` and all amounts as integer minor
+  units (`subtotalMinor`, `discountMinor`, `shippingMinor`, `totalMinor`)
+  alongside the legacy decimal twins;
+* `POST /api/v1/orders` writes the snapshotted currency and minor amounts to the
+  order, and any `currency` in the body is overwritten by the server's choice.
+
+### Reviews
+
+| Endpoint | Method | Notes |
+|---|---|---|
+| `/api/v1/products/:slug/reviews` | GET | Published reviews plus the aggregate computed from them (`{ summary: { publishedCount, averageRating, histogram }, reviews[] }`). `averageRating` is `null` when nothing is published — never a fabricated default. |
+| `/api/v1/products/:slug/reviews` | POST | Creates a **pending** review. `{ rating (1–5), title?, body (20–2000 chars, no links/markup), authorName (2–60) }`. `verified_purchase` is derived server-side from a real order; a client cannot request it. Rate limited (5/hour per identity); a signed-in customer may review a product once. JSON responses are `201`/`400`/`429`; a form post redirects back to the product page with `reviewNotice` or `reviewError`. |
+
+A review is visible on the storefront only after an admin publishes it at
+`POST /admin/reviews/:id/moderate` (rejecting requires a reason).
+
+### SEO
+
+| Endpoint | Method | Notes |
+|---|---|---|
+| `/robots.txt` | GET | Disallows every private/transactional prefix (`/admin`, `/my-books`, `/my/`, `/cart`, `/checkout`, `/order-success`, `/reset-password`, `/forgot-password`, `/login`, `/register`, `/photos/`, `/api/`, `/search`). A sitemap line is emitted only when `SEO_ALLOW_INDEXING=true`. |
+| `/sitemap.xml` | GET | Real, canonical URLs only: the static pages, every active product, every active collection and every published page. Private paths are never listed. |
+
+Product pages emit `application/ld+json` with `Product`, `Brand` and a
+breadcrumb; `offers` appears **only** when a price row exists for the selected
+currency, `aggregateRating`/`review` only from published reviews, and there is
+no `availability` claim (this build holds no inventory). `hreflang` alternates
+are emitted only for languages with published content.

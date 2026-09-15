@@ -2,189 +2,176 @@
 
 Purpose: a single, current record of what was done autonomously, what is
 verified, what still needs an owner/external input, and what the next automatic
-action would be. Written for handoff — every claim here was executed in this
-session; nothing is aspirational.
+action would be. Every claim here was executed; nothing is aspirational.
 
 ## 1. Branch / commits
 
 | Item | Value |
 |---|---|
-| Branch | `fix/phase2-critical-recovery` |
-| Audited baseline | `f6f9873` (`docs(phase1): completion report, traceability, architecture and README/API updates`) |
-| Task origin | V2 Phase-1 Independent Audit (findings M-1…M-3, L-A…L-E) |
-| Phase-0 audited tip | `6e080e8` |
-| `main` | `4d76779` — **untouched** (never merged, never pushed, never checked out) |
-| Pushed? | **No.** Nothing was pushed; AutoCoder reviews and pushes. |
-| History rewritten? | **No.** `f6f9873` was not amended, rebased or rewritten; all work is new commits on top. |
+| Branch | `feat/original-storefront-cms` |
+| Baseline HEAD (accepted Phase-1 tip) | `24f342a8f1e9b8ee3c2bd6b8b7610cfd59141bce` |
+| Phase | **V2 Phase 2 — Original Brand, Storefront, Catalog and CMS** |
+| `main` | `4d76779` — **untouched** (never merged, never checked out, never pushed) |
+| Pushed? | **No.** AutoCoder reviews and pushes. |
+| History rewritten? | **No.** Every change is a new commit on top of `24f342a8`. |
+| Migrations added | `0020`, `0021`, `0022`, `0023` (forward-only; `0001`–`0019` byte-identical) |
 
-Coherent fix commits added (on top of `f6f9873`):
+Final HEAD: this branch's tip after the Phase-2 commits (`git rev-parse HEAD` on
+`feat/original-storefront-cms`).
 
-| SHA | One-line summary |
+## 2. Migration ledger
+
+| Migration | Contents |
 |---|---|
-| `35288cc` | `fix(orders)`: make the status CAS and its history event one atomic operation (M-1) |
-| `7e3e3e1` | `fix(security)`: verified trusted-proxy client identity + guest origin proof (M-2, L-A) |
-| `4195b3a` | `fix(personalization)`: harden the HTTP face-provider boundary (M-3) |
-| `9969b81` | `fix(commerce)`: database-enforced money invariants + exactly-one-default variant rule (L-B, L-C) |
-| `7119720` | `fix(identity)`: one brand/configuration boundary, no legacy brand, no dead payment CSS (L-D, L-E) |
-| _this commit_ | `docs(phase1)`: correction-cycle report, traceability rows and this progress record |
+| `0020_catalog_collections_media.sql` | `collections`, `collection_products`, `collection_faqs`, `media_assets` (alt text + focal point), `product_media`, `product_facts`; seeds the original collections, theme memberships, media rows and factual specs |
+| `0021_cms_content.sql` | `cms_blocks`, `cms_nav_items`, `cms_footer_notes`, `cms_faqs`, `cms_pages`, `announcements`, `site_settings`; seeds the homepage block list, navigation, footer, FAQ, blog and legal drafts (brand override keys start EMPTY so an environment-configured brand is never shadowed) |
+| `0022_reviews.sql` | `reviews` (moderation state, server-derived `verified_purchase`, moderation columns + indexes); **neutralises the legacy invented review aggregates**. Seeds nothing — no fabricated review is ever created |
+| `0023_locale_pricing_seo.sql` | `currency_settings`, `countries`, `product_prices`, `variant_prices`, `shipping_rates`, `cms_page_localizations`, `redirects`, `seo_metadata`; seeds the supported countries/currencies and the documented static per-currency prices |
 
-**Final SHA:** the branch tip after this docs commit (`git rev-parse HEAD` on
-`fix/phase2-critical-recovery`).
-
-## 2. Migrations
-
-| Migration | State | Contents |
-|---|---|---|
-| `0001`–`0017` | **PUBLISHED — untouched** (verified by diff) | — |
-| `0018_money_invariants.sql` | **new, forward-only** | `iso_currencies` ISO-4217 allowlist; deterministic NULL-minor reconciliation that never marks an order paid; `BEFORE INSERT` / `BEFORE UPDATE OF <money cols>` triggers on `orders`, `order_items`, `products`, `product_variants` (L-B) |
-| `0019_neutral_ai_settings_defaults.sql` | **new, forward-only** | neutralises the brand-derived `ai_settings` seed values that the admin AI page renders; only a row still carrying all three legacy values is rewritten (L-D) |
-
-Both are idempotent and were re-applied by the migration smoke test's
-"repeated behavior" scenario.
+All four are idempotent and were re-applied by the new integration scenario.
 
 ## 3. Requirement IDs
 
-### 3.1 Audit findings — all closed
+### 3.1 Delivered (detail: `docs/V2_PHASE2_TRACEABILITY.md`)
 
-| ID | Severity | Status | Regression test |
-|---|---|---|---|
-| M-1 | blocker | **closed** | `test/unit/phase1-transition-atomicity.test.ts` |
-| M-2 | major | **closed** | `test/unit/phase1-client-identity.test.ts` |
-| M-3 | major | **closed** | `test/unit/phase1-face-provider-hardening.test.ts` |
-| L-A | lesser | **closed** | `test/unit/phase1-guest-origin.test.ts` |
-| L-B | lesser | **closed** | `test/unit/phase1-money-invariants.test.ts` + `scripts/test-integration.mjs` |
-| L-C | lesser | **closed** | `test/unit/phase1-variant-invariant.test.ts` |
-| L-D | lesser | **closed** | `test/unit/phase1-brand-boundary.test.ts` + e2e identity gate |
-| L-E | lesser | **closed** | `test/unit/phase1-brand-boundary.test.ts` (dead-selector assertions) |
+**Complete:** SF-01…SF-12, ADM-06, ADM-07, ADM-15, ADM-16, and the storefront
+portions of PLT-06 (readiness), PLT-07, PLT-08, PLT-09, PLT-16.
 
-### 3.2 Phase-1 C/D/T/S IDs
+**Previously open, now closed:**
 
-No Phase-1 ID was re-opened by this cycle, and two status wordings were
-corrected in `docs/V2_BASELINE_TRACEABILITY.md`:
+* **S-13** reference content → fixed (original titles/stories/art; the press
+  logos and the real-person photographs are deleted; a guard test fails if any
+  of them comes back).
+* The fabricated review/testimonial data (`pdp_reactions`, `pdp_media`,
+  `products.reviews`/`rating`, and `seed_pdp.sql`) → removed; the `reviews`
+  table is now the only source of customer feedback.
 
-- **S-07** — annotated as corrected by M-1 (atomic CAS + event).
-- **S-06** — annotated as corrected by M-2 (verified trusted-proxy boundary).
-- **S-13** — the earlier "partial (rendered reference assets/copy removed)"
-  wording **overclaimed** and is corrected to "partial — not complete": the
-  reference screenshots/mockups and the legacy brand string are gone, but the
-  reference site's catalog cover/marketing artwork is still shipped and the
-  owner must supply the final brand + artwork (Phase 2 / SF-01).
+### 3.2 Still open, each with an owning phase
 
-### 3.3 Deferred / open (unchanged from the Phase-1 report)
+| ID | Status | Owner |
+|---|---|---|
+| S-08 (RBAC), S-09 (re-auth), ADM-20 (audit UI) | open | Phase 6 — the audit *trail* already exists and every Phase-2 mutation writes to it |
+| S-11 (retention not scheduled) | open | Phase 8 |
+| S-14 (legal text is a draft) | open — kept explicitly marked | owner + counsel, before real customers |
+| COM-01/04/05/06/07… (server cart, quote, coupons, payment) | open | Phase 4 — Phase 2 prices the cart server-side per currency, but the cart itself is still client-held |
+| GEN-01…GEN-12 (generation/preview) | open | Phase 3 — the PDP states plainly that no pages are generated |
+| CUS-* (account depth) | open | Phase 5 |
+| FUL-* (PDF/print/fulfilment) | open | Phase 7 |
 
-S-08 (RBAC, Phase 6), S-09 (re-auth, Phase 6), S-11 (retention not scheduled,
-Phase 8), S-14 (legal content is a draft requiring owner + counsel), plus the
-owner decision on whether to rewrite history for the previously removed
-personal photographs. None of these is a regression; each has an owning phase.
-
-## 4. Exact verification (this session, final code state)
+## 4. Exact verification (final code state)
 
 | Command | Exit | Result |
 |---|---|---|
 | `npm run typecheck` | `0` | 0 errors |
-| `npm run test` | `0` | **428 passed / 428** across 26 files (baseline was 343/19; +85 new tests) |
-| `npm run test:integration` | `0` | **9/9** scenarios, "Migration smoke tests passed" (45 tables + 12 new columns; 0018 triggers asserted; legacy order still unpaid) |
-| `npm run secrets:scan` | `0` | git mode: no matches across 186 files (includes this record) |
-| `npm run secrets:scan -- --mode=archive` | `0` | archive mode: no matches across 187 files |
-| `npm run build` | `0` | `dist/_worker.js` 291.75 kB (gzip 87.40 kB) |
-| `npm run test:e2e` | `0` | all 10 journey groups passed, real Chromium against a locally-built server |
-| `npm run audit:frontend -- phase1-correction` | `0` | 0 findings, desktop 1280 + mobile 390, every public/admin route |
+| `npm run test` | `0` | **491 passed / 491** across 30 files (baseline 428/26; **+63 tests in 4 new files**) |
+| `npm run test:integration` | `0` | 10/10 scenarios including the new `[phase2 upgrade]` (67 expected tables; 0020-0023 applied over existing rows; 5 currency prices derived; legacy aggregates neutralised; existing order untouched and unpaid; CMS defaults stable across a re-apply) |
+| `npm run secrets:scan` | `0` | no matches |
+| `npm run secrets:scan -- --mode=archive` | `0` | no matches |
+| `npm run build` | `0` | `dist/_worker.js` 421.20 kB (gzip 117.15 kB) |
+| `npm run test:e2e` | `0` | 11 journey groups incl. the new `phase2-storefront-cms` group |
+| `npm run audit:frontend -- phase2-storefront-cms` | `0` | **0 findings** across 29 public + 21 admin routes at 360/390/768/1024/1440/1920 + the accessibility pass |
 | `npm audit --omit=dev` | `0` | 0 vulnerabilities |
-| `npm audit` | `1` | 3 high — dev-only `sharp <0.35.4` ← `miniflare` ← `wrangler` (not shipped in `_worker.js`); **pre-existing, unchanged** |
+| `npm audit` | `1` | 3 high, dev-only `sharp <0.35.4` ← `miniflare` ← `wrangler`; pre-existing, not in the worker bundle (**unchanged**) |
 
-New test files and counts: `phase1-transition-atomicity` 6,
-`phase1-client-identity` 11, `phase1-face-provider-hardening` 21,
-`phase1-guest-origin` 9, `phase1-money-invariants` 14,
-`phase1-variant-invariant` 15, `phase1-brand-boundary` 9 → **85 new tests**.
+New test files: `phase2-catalog.test.ts` (15), `phase2-cms-catalog-content.test.ts`
+(25), `phase2-authz-original-content.test.ts` (18), `phase2-catalogue-seed.test.ts` (5).
 
-## 5. Browser journeys (real Chromium, local D1 + R2, no external calls)
+## 5. Browser journeys (real Chromium, local D1 + R2, zero external calls)
 
-`npm run test:e2e` passed all of: identity gate (repo + live server fingerprint,
-now brand-derived from `src/brand.ts`, and it fails the run if any legacy brand
-renders), guest journey (product → upload → personalize → cart → checkout →
-order success → reader → PDF status), authenticated journey (checkout, My Books,
-cross-customer denial, logout/login, password reset), double-submission race,
-multi-face selection, upload-attack denials, cart reload, cover/variant
-agreement, CSRF/origin (including the no-proof and foreign-Origin rejections),
-admin (rendered picker, transitions, concurrent renders) and
-disabled-capability truthfulness.
+The pre-existing 10 groups (guest, authenticated, double-submission, multi-face,
+upload-attack, cart-reload, cover-agreement, CSRF, admin, disabled-capability)
+plus the new **`phase2-storefront-cms`** group:
 
-`npm run audit:frontend -- phase1-correction` produced 0 findings at both
-viewports across every public and admin route (screenshots + `findings.json` in
-the gitignored `audit-evidence/phase1-correction/`).
+1. the homepage renders ≥8 CMS sections and their product grids;
+2. an admin edit to a homepage block is visible on the storefront in the same run;
+3. a collection membership change is visible on the collection page;
+4. composed catalog filters + canonical URL state + price-asc ordering;
+5. a filter chip removes exactly its own filter;
+6. an impossible query shows a real empty state with zero cards;
+7. pagination renders for a multi-page result set;
+8. the PDP shows server-priced variants, product facts and the honest
+   no-reviews-yet state (and refuses to render a production estimate);
+9. a submitted review is stored `pending` and is NOT visible on the storefront;
+10. publishing it in admin makes it visible, and an order-less review is not
+    marked as a verified purchase;
+11. an unknown blog slug is a genuine 404;
+12. selecting GB changes the server-rendered price (USD $39.99 → GBP £31.59) and
+    the in-page server quote reports `GBP` with integer minor units;
+13. the drawer and the search dialog are fully keyboard-operable, with real
+    catalogue suggestions, Escape to close and focus return.
+
+Viewport widths checked for every public and admin route: **360, 390, 768, 1024,
+1440, 1920**.
 
 ## 6. Audit verdict
 
-All eight audit findings (M-1…M-3, L-A…L-E) are **fixed with real regression
-tests** and the full gate set is green. The one remaining red gate is
-`npm audit` (3 high in the dev-only `wrangler`/`miniflare`/`sharp` chain), which
-is pre-existing, unrelated to this cycle, and not shipped in the worker bundle.
+`npm run audit:frontend -- phase2-storefront-cms` reports **0 findings**: no
+horizontal overflow at any of the six widths, no console error, no failed or
+4xx/5xx request, no overclaim copy, and a clean accessibility pass (alt
+attributes, accessible names, landmarks, heading structure, visible focus
+indicator, reduced motion, no colour-only state).
+
+The one remaining red gate is `npm audit` (3 high in the dev-only
+`wrangler`/`miniflare`/`sharp` chain) — pre-existing and unchanged from Phase 1.
 
 ## 7. External credentials / owner inputs still required
 
-Nothing below blocks the work completed here; each is an owner/Phase input.
+Nothing below blocks the work completed here.
 
-1. **Final brand + artwork (L-D / SF-01).** The neutral default is
-   `Storybook Studio` and the contact address is the RFC-2606 reserved
-   `support@storybook-studio.example`. The owner must supply the real name,
-   logo, tagline, contact address, social handles and legal entity (set the
-   `BRAND_*` values / CMS), plus replacement catalog cover artwork — the
-   reference site's artwork is still shipped.
-2. **Legal review (S-14).** The legal pages are explicit drafts and must be
-   replaced by counsel-reviewed, jurisdiction-aware text before accepting real
+1. **Final brand + artwork (SF-01).** Neutral default `Storybook Studio`;
+   contact `support@storybook-studio.example` (RFC-2606 reserved). The owner
+   supplies the real name/logo/tagline/contact/social/legal entity — in
+   `/admin/settings` or via `BRAND_*`, with no code change — plus any
+   commissioned artwork to replace the generated illustration set.
+2. **Legal review (S-14).** Privacy/terms/refund/shipping are explicit drafts,
+   visibly marked, and must be replaced by counsel-reviewed text before real
    customers, payments or child photographs.
 3. **History decision (S-12).** The previously removed personal photographs are
-   still reachable in git history; the owner must decide whether to rewrite
-   history (and, if this repo was ever pushed, treat them as disclosed).
-4. **Face-analysis provider (M-3 / GEN-03, Phase 3).** The hardened HTTP adapter
-   is production-configurable but no provider credential is configured, so the
-   honest behaviour today is `manual_photo_review`. Configuring a real provider
-   needs its endpoint + bearer key as deployment secrets.
-5. **Deploy/notifications/revenue (later phases).** No real payment (Phase 4),
-   email provider (Phase 3/5), PDF/print/fulfilment (Phase 7), AI generation
-   (Phase 3), shipping/refunds/tracking (Phase 4/7), retention cron (Phase 8) or
-   RBAC/re-auth (Phase 6). All are disabled with honest responses; none was
-   faked.
-6. **`npm audit` dev chain.** Fixing the 3 high advisories requires bumping
-   `wrangler`/`miniflare`/`sharp` — a toolchain change the owner should
-   schedule deliberately (it was left untouched to keep this cycle
-   dependency-neutral).
+   still reachable in git history; the owner decides whether to rewrite it.
+4. **Multi-currency policy (PLT-07).** The non-USD prices are static authored
+   catalogue prices (documented fixture rates in migration 0023). A real
+   multi-currency store needs an owner pricing policy, and a rates feed only if
+   live conversion is wanted.
+5. **Translations (PLT-06).** The storefront honestly reports English-only; the
+   languages/fallback/RTL/hreflang machinery activates when published
+   localizations exist.
+6. **Face-analysis provider (Phase 3)** and every later-phase provider
+   (payment, email, PDF/print, AI generation) remains unconfigured and honestly
+   disabled.
+7. **`npm audit` dev chain.** Fixing the 3 high advisories needs a deliberate
+   `wrangler`/`miniflare`/`sharp` bump.
 
 ## 8. Next automatic action
 
-**None without owner input.** The audit correction is complete and verified;
-starting V2 Phase 2 (original storefront / catalog / CMS) was explicitly out of
-scope for this task. When authorised, the next automatic action would be:
-
-1. create `feat/original-storefront-cms` from this branch tip;
-2. begin with the owner-input items in §7.1/§7.2 (brand + artwork + legal text
-   feed the CMS boundary created in `src/brand.ts`);
-3. keep the rendered-route truth guards
-   (`test/unit/phase1-truthful-claims.test.ts`) and the brand guard
-   (`test/unit/phase1-brand-boundary.test.ts`) in place while the CMS content
-   replaces the hard-coded catalog/blog/FAQ data.
+**None without owner input for Phase 3's provider credentials.** When
+authorised, the next automatic action is V2 **Phase 3 — Templates, Real AI
+Generation and Preview Pipeline** on a new branch from this tip, starting with
+GEN-01/GEN-02 (versioned templates + provider interfaces with deterministic
+fakes; the tables already exist from migration 0010) before any real provider
+call.
 
 ## 9. Deviations and disclosures
 
-- **Commit hygiene:** the deletion of the two unreferenced reference-content
-  images (`public/static/img/expressions.webp`,
-  `public/static/img/cart-cross-sell-bubble.webp`) landed in commit `35288cc`
-  (the M-1 commit) rather than the L-D commit, because `git rm` stages the
-  deletion and every subsequent `git commit` publishes the whole index.
-  Amending history is prohibited by the task constraints, so the record is
-  corrected in commit `7119720`'s message and here instead. No other file was
-  affected and no finding's verdict depends on it.
-- **Extra defect fixed:** the admin product create/update handlers had a
-  pre-existing column/argument arity defect (24 columns vs 21–23 bound values)
-  that made the admin product form unable to create or save a product at all.
-  It was found on the required L-C repair path and fixed there; it was not in
-  the audit list.
-- **No test was weakened, skipped or deleted.** Existing tests were updated only
-  where the new, stronger contract required it: money fixtures now supply the
-  minor-unit values 0018 mandates, and e2e browser API calls that carry cookies
-  now send the Origin header a real same-origin browser sends (including one
-  guest-journey request whose status was previously never asserted, now
-  asserted).
-- **No real external call** was made by any test or gate: mocked fetch,
-  deterministic fakes, local D1/R2 and a local dev server only.
-- `.openclaw_test_out.txt` (untracked diagnostic) was never staged.
+- **Fixture updates, not assertion changes.** Four test files and two audit
+  paths were edited to use the new catalogue's slugs and cover paths, because
+  replacing the reference-derived catalogue was itself a Phase-2 requirement.
+  No assertion was weakened, skipped or deleted, and the new tests assert
+  strictly more than before.
+- **`seed_pdp.sql` deleted.** It existed only to seed invented testimonials,
+  press logos and shipping promises for one product. Replacing that content was
+  the requirement; deletion (rather than editing) makes it impossible for the
+  fabricated data to return through a seed step.
+- **Two shell bugs were found by the gates, not by inspection:** the `[hidden]`
+  attribute losing to a component's `display: flex` (an invisible overlay
+  swallowing every click on the page), and `reader.js` silently disabling its
+  later widgets when an earlier one threw. Both are fixed, and both are why the
+  E2E suite is green again.
+- **The art and icons are generated, not hand-drawn.**
+  `scripts/generate-original-art.mjs` and `scripts/generate-icons.mjs` are
+  committed and deterministic, so the artwork is reviewable, regenerable and
+  provably original; the unit suite asserts the committed files match the
+  generators.
+- **The per-currency prices are static data, not a conversion.** They are
+  authored once in migration 0023 from documented fixture rates; nothing
+  recalculates them and the browser never sees a rate.
+- **`.openclaw_test_out.txt`** (untracked diagnostic) was never staged.
