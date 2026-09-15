@@ -233,6 +233,15 @@ const ADMIN_ROUTES = [
   ['/admin/localization', 'admin-localization'],
   ['/admin/settings', 'admin-settings'],
   ['/admin/discounts', 'admin-discounts'],
+  // V2 Phase 4 (ADM-03/ADM-12): the ledger-derived finance and reconciliation
+  // surfaces. These are rendered for the REAL admin account by the audit run, so
+  // the pages must stand on their own with an empty (or live) ledger.
+  ['/admin/finance', 'admin-finance'],
+  ['/admin/finance/payments', 'admin-finance-payments'],
+  ['/admin/finance/refunds', 'admin-finance-refunds'],
+  ['/admin/finance/disputes', 'admin-finance-disputes'],
+  ['/admin/finance/events', 'admin-finance-events'],
+  ['/admin/finance/reconciliation', 'admin-finance-reconciliation'],
   ['/admin/users', 'admin-users'],
   ['/admin/messages', 'admin-messages'],
   ['/admin/ai-settings', 'admin-ai-settings']

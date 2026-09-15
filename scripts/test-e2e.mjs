@@ -18,6 +18,7 @@
 import { chromium } from 'playwright'
 import { runPhase2Journeys } from './e2e-phase2.mjs'
 import { runPhase3Journeys } from './e2e-phase3.mjs'
+import { runPhase4Journeys } from './e2e-phase4.mjs'
 import jpegCodec from 'jpeg-js'
 import { spawn, execFileSync } from 'node:child_process'
 import { writeFileSync, mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs'
@@ -138,7 +139,7 @@ function killServerTree(pid) {
  * Starts the repo's built app on the isolated port and returns { server, logs }.
  * Cleanup is the caller's responsibility (killServerTree) — always in a finally.
  */
-function startServer(port) {
+function startServer(port, extraBindings = []) {
   log('setup', `starting wrangler pages dev on :${port}`)
   const server = spawn(
     'npx',
@@ -161,7 +162,8 @@ function startServer(port) {
       // gets a real admin account: the app hashes the password itself with
       // src/auth.ts, so the fixture cannot drift from the real credential path.
       '--binding', `ADMIN_BOOTSTRAP_EMAIL=${ADMIN_EMAIL}`,
-      '--binding', `ADMIN_BOOTSTRAP_PASSWORD=${ADMIN_PASSWORD}`
+      '--binding', `ADMIN_BOOTSTRAP_PASSWORD=${ADMIN_PASSWORD}`,
+      ...extraBindings
     ],
     { cwd: root, shell: true, stdio: ['ignore', 'pipe', 'pipe'] }
   )
@@ -262,8 +264,8 @@ function assertClean(diag, label) {
 }
 
 /** Shared product-page flow: personalize, upload a real photo, add to cart. Returns the cart item's userBookId. */
-async function personalizeAndAddToCart(page, { slug, childName, photoPath, coverType }) {
-  await page.goto(`${BASE}/books/${slug}`)
+export async function personalizeAndAddToCart(page, { slug, childName, photoPath, coverType, base = BASE }) {
+  await page.goto(`${base}/books/${slug}`)
   await page.waitForSelector('#personalise-form')
   await page.fill('#child-name', childName)
   await page.fill('#child-age', '6')
@@ -282,7 +284,7 @@ async function personalizeAndAddToCart(page, { slug, childName, photoPath, cover
   await page.click('#personalise-form button[type=submit]')
   await page.waitForSelector('#book-preview-modal:not([hidden])', { timeout: 15000 })
   await page.click('#btn-confirm-order')
-  await page.waitForURL(`${BASE}/cart`)
+  await page.waitForURL(`${base}/cart`)
 
   const cartStorage = await page.evaluate(() => localStorage.getItem('ww_cart_v1'))
   if (!cartStorage || cartStorage.includes('data:image')) fail('personalize', 'cart storage missing or contains a base64 photo')
@@ -1418,6 +1420,48 @@ async function main() {
   execFileSync('npm', ['run', 'db:reset'], { cwd: root, stdio: 'inherit', shell: true })
   execFileSync('npm', ['run', 'build'], { cwd: root, stdio: 'inherit', shell: true })
 
+  // V2 Phase 4 runs against its OWN server instance, started here (before the
+  // main one) with the offline payment provider configured. See
+  // scripts/e2e-phase4.mjs for why: with a provider configured, the paid path is
+  // the ONLY checkout path — which would change what the other journeys test.
+  const tmpDirForPhase4 = mkdtempSync(join(tmpdir(), 'ww-e2e-p4-'))
+  let phase4Browser = null
+  const phase4PhotoPath = join(tmpDirForPhase4, 'child-photo.jpg')
+  writeFileSync(phase4PhotoPath, buildRealJpeg(900, 900))
+  let phase4Server = null
+  try {
+    const phase4Port = await findFreePort(PORT + 1)
+    const phase4Base = `http://127.0.0.1:${phase4Port}`
+    const started = startServer(phase4Port, [
+      // The DETERMINISTIC OFFLINE payment provider. It makes no external call
+      // and no real money moves; it is itself gated on ENVIRONMENT=development
+      // AND this explicit key, so it cannot activate in a deployed environment.
+      '--binding', 'PAYMENT_PROVIDER=deterministic-fake'
+    ])
+    phase4Server = started.server
+    log('setup', `starting the payment-enabled server for the phase-4 journey on :${phase4Port}`)
+    if (!(await waitFor(phase4Base + '/', 45000))) {
+      console.error(started.logs.value)
+      fail('setup', 'the payment-enabled server did not become ready in time')
+    }
+    phase4Browser = await chromium.launch()
+    await runPhase4Journeys({
+      browser: phase4Browser,
+      base: phase4Base,
+      log,
+      fail,
+      attachDiagnostics,
+      assertClean,
+      admin: { email: ADMIN_EMAIL, password: ADMIN_PASSWORD },
+      queryD1,
+      helpers: { personalizeAndAddToCart, photoPath: phase4PhotoPath }
+    })
+  } finally {
+    if (phase4Browser) await phase4Browser.close().catch(() => {})
+    if (phase4Server) killServerTree(phase4Server.pid)
+    rmSync(tmpDirForPhase4, { recursive: true, force: true })
+  }
+
   const { server, logs } = startServer(PORT)
   let tmpDir = null
   let browser = null
@@ -1488,7 +1532,7 @@ async function main() {
       queryD1
     })
 
-    console.log('\n[e2e] ALL JOURNEYS PASSED (guest, authenticated, double-submission, multi-face, upload-attack, cart-reload, cover-agreement, csrf, admin, disabled-claims, phase2-storefront-cms, phase3-generation-preview)\n')
+    console.log('\n[e2e] ALL JOURNEYS PASSED (guest, authenticated, double-submission, multi-face, upload-attack, cart-reload, cover-agreement, csrf, admin, disabled-claims, phase2-storefront-cms, phase3-generation-preview, phase4-commerce-payments)\n')
   } catch (err) {
     // Surface the local server log on failure only — never written to a file.
     if (logs.value) console.error(`\n[e2e] server log:\n${logs.value}`)

@@ -45,6 +45,65 @@ const PHASE_3_COLUMNS = [
   ['prospects', 'consent_version']
 ]
 
+// V2 Phase 4 (migrations 0026-0027). Named separately so the Phase-3 scenario
+// can assert precisely that they do NOT exist yet at the Phase-3 schema.
+const PHASE_4_TABLES = [
+  'price_versions', 'carts', 'cart_items', 'cart_events', 'addresses',
+  'checkout_quotes', 'checkout_quote_lines', 'checkout_sessions', 'tax_settings',
+  'coupon_redemptions', 'order_addresses',
+  'payment_attempts', 'payment_events', 'refunds', 'disputes', 'order_financial_entries'
+]
+const PHASE_4_COLUMNS = [
+  ['orders', 'payment_method'],
+  ['orders', 'payment_status'],
+  ['orders', 'amount_captured_minor'],
+  ['orders', 'amount_refunded_minor'],
+  ['orders', 'paid_at'],
+  ['orders', 'tax_minor'],
+  ['orders', 'shipping_method_label'],
+  ['orders', 'cart_id'],
+  ['orders', 'checkout_session_id'],
+  ['discounts', 'percent_bps'],
+  ['discounts', 'scope'],
+  ['discounts', 'starts_at'],
+  ['discounts', 'ends_at'],
+  ['discounts', 'min_subtotal_minor'],
+  ['discounts', 'max_uses'],
+  ['discounts', 'max_uses_per_owner'],
+  ['discounts', 'stackable'],
+  ['discounts', 'priority'],
+  ['discounts', 'max_discount_minor']
+]
+const PHASE_4_TRIGGERS = [
+  'trg_price_versions_no_update',
+  'trg_price_versions_no_delete',
+  'trg_discounts_rate_insert',
+  'trg_discounts_rate_update',
+  'trg_coupon_redemptions_no_update',
+  'trg_coupon_redemptions_no_delete',
+  'trg_cart_events_no_update',
+  'trg_cart_events_no_delete',
+  'trg_checkout_quote_lines_math_insert',
+  'trg_checkout_quote_lines_no_update',
+  'trg_checkout_quote_lines_no_delete',
+  'trg_orders_payment_status_insert',
+  'trg_orders_payment_status_update',
+  'trg_order_addresses_immutable',
+  'trg_order_addresses_no_delete',
+  'trg_payment_attempts_identity_immutable',
+  'trg_payment_attempts_status_flow',
+  'trg_payment_attempts_refund_cap',
+  'trg_payment_events_outcome_only',
+  'trg_payment_events_no_delete',
+  'trg_checkout_sessions_attempt_matches_order',
+  'trg_refunds_cap_insert',
+  'trg_refunds_cap_update',
+  'trg_refunds_settled_immutable',
+  'trg_disputes_no_delete',
+  'trg_financial_entries_no_update',
+  'trg_financial_entries_no_delete'
+]
+
 const EXPECTED_TABLES = [
   'users', 'sessions', 'products', 'discounts', 'orders', 'order_items',
   'contacts', 'newsletter', 'pdp_page', 'pdp_gallery', 'pdp_accordions',
@@ -69,7 +128,9 @@ const EXPECTED_TABLES = [
   'currency_settings', 'countries', 'product_prices', 'variant_prices',
   'shipping_rates', 'cms_page_localizations', 'redirects', 'seo_metadata',
   // V2 Phase 3 (migrations 0024-0025): generation pipeline
-  ...PHASE_3_TABLES
+  ...PHASE_3_TABLES,
+  // V2 Phase 4 (migrations 0026-0027): cart, quotes, payments, ledger
+  ...PHASE_4_TABLES
 ]
 
 const EXPECTED_NEW_COLUMNS = [
@@ -88,7 +149,9 @@ const EXPECTED_NEW_COLUMNS = [
   // Phase 1
   ['photo_uploads', 'revoked_at'],
   // V2 Phase 3 (migrations 0024-0025)
-  ...PHASE_3_COLUMNS
+  ...PHASE_3_COLUMNS,
+  // V2 Phase 4 (migrations 0026-0027)
+  ...PHASE_4_COLUMNS
 ]
 
 /** The triggers migration 0024 introduces. */
@@ -142,7 +205,9 @@ const EXPECTED_TRIGGERS = [
   'trg_products_money_update',
   'trg_product_variants_currency_insert',
   'trg_product_variants_currency_update',
-  ...PHASE_3_TRIGGERS
+  ...PHASE_3_TRIGGERS,
+  // V2 Phase 4 (migrations 0026-0027): money, ledger and refund integrity
+  ...PHASE_4_TRIGGERS
 ]
 
 
@@ -466,10 +531,13 @@ const ACCEPTED_PHASE_1_0009_MIGRATIONS = [
   // This scenario stops at the accepted Phase-2 schema, so the PHASE-3 tables
   // must NOT exist yet — asserted both ways rather than skipped.
   assertTables(db, 'phase2 upgrade', {
-    tables: EXPECTED_TABLES.filter((t) => !PHASE_3_TABLES.includes(t)),
-    columns: EXPECTED_NEW_COLUMNS.filter(([table, column]) => !PHASE_3_COLUMNS.some(([t, c]) => t === table && c === column))
+    tables: EXPECTED_TABLES.filter((t) => !PHASE_3_TABLES.includes(t) && !PHASE_4_TABLES.includes(t)),
+    columns: EXPECTED_NEW_COLUMNS.filter(
+      ([table, column]) =>
+        !PHASE_3_COLUMNS.some(([t, c]) => t === table && c === column) && !PHASE_4_COLUMNS.some(([t, c]) => t === table && c === column)
+    )
   })
-  assertTriggers(db, 'phase2 upgrade', EXPECTED_TRIGGERS.filter((t) => !PHASE_3_TRIGGERS.includes(t)))
+  assertTriggers(db, 'phase2 upgrade', EXPECTED_TRIGGERS.filter((t) => !PHASE_3_TRIGGERS.includes(t) && !PHASE_4_TRIGGERS.includes(t)))
   const phase3Leak = PHASE_3_TABLES.filter((t) => db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?").get(t))
   if (phase3Leak.length) {
     console.error(`FAIL [phase2 upgrade]: migration 0020-0023 created Phase-3 tables: ${phase3Leak.join(', ')}`)
@@ -538,7 +606,10 @@ const ACCEPTED_PHASE_1_0009_MIGRATIONS = [
   const db = new DatabaseSync(':memory:')
   db.exec('PRAGMA foreign_keys = ON')
   const phase2 = allFiles.filter((f) => f < '0024_')
-  const phase3 = allFiles.filter((f) => f >= '0024_')
+  // Bounded above by 0025: the Phase-4 migrations are ALTER-based and are applied
+  // at most once, exactly like every ALTER-based migration before them — this
+  // scenario asserts the accepted PHASE-3 schema specifically.
+  const phase3 = allFiles.filter((f) => f >= '0024_' && f < '0026_')
   if (!phase3.length) {
     console.error('FAIL [phase3 upgrade]: no 0024+ migrations found')
     process.exit(1)
@@ -569,8 +640,18 @@ const ACCEPTED_PHASE_1_0009_MIGRATIONS = [
   const beforeOrder = db.prepare("SELECT status, total_minor FROM orders WHERE email = 'p3@example.com'").get()
 
   applyMigrationSet(db, phase3, 'phase3-upgrade (apply 0024-0025)')
-  assertTables(db, 'phase3 upgrade')
-  assertTriggers(db, 'phase3 upgrade')
+  // This scenario stops at the accepted Phase-3 schema, so the PHASE-4 tables
+  // must NOT exist yet — asserted both ways rather than skipped.
+  assertTables(db, 'phase3 upgrade', {
+    tables: EXPECTED_TABLES.filter((t) => !PHASE_4_TABLES.includes(t)),
+    columns: EXPECTED_NEW_COLUMNS.filter(([table, column]) => !PHASE_4_COLUMNS.some(([t, c]) => t === table && c === column))
+  })
+  assertTriggers(db, 'phase3 upgrade', EXPECTED_TRIGGERS.filter((t) => !PHASE_4_TRIGGERS.includes(t)))
+  const phase4Leak = PHASE_4_TABLES.filter((t) => db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?").get(t))
+  if (phase4Leak.length) {
+    console.error(`FAIL [phase3 upgrade]: migration 0024-0025 created Phase-4 tables: ${phase4Leak.join(', ')}`)
+    process.exit(1)
+  }
 
   const fail = (msg) => {
     console.error(`FAIL [phase3 upgrade]: ${msg}`)
@@ -682,6 +763,268 @@ const ACCEPTED_PHASE_1_0009_MIGRATIONS = [
   if (!usageFrozen) fail('the cost ledger is not append-only')
 
   console.log(`OK [phase3 upgrade]: 0024-0025 applied over existing Phase-2 rows; ${scaffolds} scaffold / ${scenes} scenes / ${placeholders} placeholders / 8 prompt versions (4 published offline, 4 draft http) / ${limits.length} limits / 1 consent version seeded once; every pre-existing row unchanged and no generation row invented; the duplicate-job, illegal-transition, unwatermarked-preview and append-only guarantees all hold.`)
+}
+
+// 2i) V2 Phase 4 upgrade (0026-0027) from the accepted Phase-3 schema with
+//     EXISTING rows: the new tables/columns/guards must arrive, the price-version
+//     and tax-boundary defaults must be derived from what is already there, NO
+//     existing row may change, and NOTHING may be marked paid.
+{
+  const db = new DatabaseSync(':memory:')
+  db.exec('PRAGMA foreign_keys = ON')
+  const phase3 = allFiles.filter((f) => f < '0026_')
+  const phase4 = allFiles.filter((f) => f >= '0026_')
+  if (!phase4.length) {
+    console.error('FAIL [phase4 upgrade]: no 0026+ migrations found')
+    process.exit(1)
+  }
+  applyMigrationSet(db, phase3, 'phase4-upgrade (baseline 0001-0025)')
+
+  // Pre-existing Phase-3-shaped rows: a product with its variant and per-currency
+  // price rows, a customer, an UNPAID order with an item, a legacy discount code
+  // and a shipping rate.
+  db.exec(`
+    INSERT INTO products (slug, title, price, price_minor, currency, image, category, age_min, age_max, active)
+      VALUES ('legacy-p4', 'Legacy Phase 3 Book', 29.99, 2999, 'USD', '/static/img/art/cover-the-quiet-drum.svg', 'book', 4, 8, 1);
+    INSERT INTO product_variants (product_id, code, label, price_minor, currency, is_default, sort_order)
+      SELECT id, 'hardcover', 'Hardcover', 2999, 'USD', 1, 0 FROM products WHERE slug = 'legacy-p4';
+    INSERT INTO variant_prices (variant_id, currency, price_minor)
+      SELECT v.id, 'GBP', 2499 FROM product_variants v JOIN products p ON p.id = v.product_id WHERE p.slug = 'legacy-p4';
+    INSERT INTO product_prices (product_id, currency, price_minor)
+      SELECT id, 'EUR', 2799 FROM products WHERE slug = 'legacy-p4';
+    INSERT INTO users (name, email, password_hash) VALUES ('Existing Customer', 'p4@example.com', 'hash123');
+    INSERT INTO orders (full_name, email, address, city, country, subtotal, discount, shipping, total, subtotal_minor, discount_minor, shipping_minor, total_minor, currency, status, discount_code)
+      VALUES ('Existing Customer', 'p4@example.com', 'a', 'c', 'US', 29.99, 5.99, 12, 36.00, 2999, 599, 1200, 3600, 'USD', 'pending_preview', 'LEGACY20');
+    INSERT INTO order_items (order_id, product_id, slug, title, kind, unit_price, qty, unit_price_minor, currency, variant_code)
+      SELECT id, (SELECT id FROM products WHERE slug='legacy-p4'), 'legacy-p4', 'Legacy Phase 3 Book', 'book', 29.99, 1, 2999, 'USD', 'hardcover' FROM orders WHERE email = 'p4@example.com';
+    INSERT INTO discounts (code, percent, min_books, applies_to, auto_apply, active)
+      VALUES ('LEGACY20', 20, 1, 'all', 0, 1);
+    INSERT OR IGNORE INTO shipping_rates (method, currency, label, price_minor, sort_order)
+      SELECT 'standard', 'USD', 'Standard — recorded only, not scheduled', 1200, 10
+      WHERE NOT EXISTS (SELECT 1 FROM shipping_rates WHERE method = 'standard' AND currency = 'USD');
+  `)
+  const beforeTotals = db.prepare("SELECT total_minor, status, id FROM orders WHERE email = 'p4@example.com'").get()
+  const beforeDiscount = db.prepare("SELECT percent FROM discounts WHERE code = 'LEGACY20'").get()
+
+  applyMigrationSet(db, phase4, 'phase4-upgrade (apply 0026-0027)')
+  assertTables(db, 'phase4 upgrade')
+  assertTriggers(db, 'phase4 upgrade')
+
+  const fail = (msg) => {
+    console.error(`FAIL [phase4 upgrade]: ${msg}`)
+    process.exit(1)
+  }
+
+  // ---- the legacy rows are UNTOUCHED, and nothing was marked paid ----
+  const order = db.prepare('SELECT * FROM orders WHERE id = ?').get(beforeTotals.id)
+  if (order.total_minor !== beforeTotals.total_minor) fail('the upgrade changed an existing order total')
+  if (order.status !== beforeTotals.status) fail(`the upgrade changed the order status (${beforeTotals.status} -> ${order.status})`)
+  if (order.payment_status !== 'unpaid') fail(`an existing order was marked ${order.payment_status} — NOTHING may be back-filled as paid`)
+  if (order.paid_at !== null) fail('the upgrade invented a paid_at for an existing order')
+  if (order.amount_captured_minor !== 0) fail('the upgrade invented a captured amount for an existing order')
+  const discount = db.prepare("SELECT * FROM discounts WHERE code = 'LEGACY20'").get()
+  if (discount.percent !== beforeDiscount.percent) fail('the upgrade changed a legacy discount percentage')
+  if (discount.percent_bps !== 2000) fail(`the legacy discount was not given its basis-point twin: ${discount.percent_bps}`)
+  if (discount.scope !== 'all') fail(`the legacy discount scope was not derived from applies_to: ${discount.scope}`)
+  if (discount.stackable !== 0) fail('the upgrade invented stacking for a legacy discount')
+
+  // ---- price versions are BACK-FILLED from the rows that already existed ----
+  const versions = db
+    .prepare(
+      `SELECT vp.currency AS currency, vp.price_minor AS price_minor, vp.source AS source
+         FROM price_versions vp JOIN product_variants v ON v.id = vp.variant_id JOIN products p ON p.id = v.product_id
+        WHERE p.slug = 'legacy-p4' ORDER BY vp.currency`
+    )
+    .all()
+  const byCurrency = Object.fromEntries(versions.map((v) => [v.currency, v]))
+  if (!byCurrency.USD) fail('no USD price version was derived for the pre-existing variant')
+  if (byCurrency.USD.price_minor !== 2999 || byCurrency.USD.source !== 'variant_base') {
+    fail(`the USD price version was not derived from the variant's own price: ${JSON.stringify(byCurrency.USD)}`)
+  }
+  if (!byCurrency.GBP || byCurrency.GBP.price_minor !== 2499 || byCurrency.GBP.source !== 'migration_backfill') {
+    fail(`the GBP price version was not derived from the existing variant_prices row: ${JSON.stringify(byCurrency.GBP)}`)
+  }
+  const versionCount = versions.length
+  if (versionCount !== 2) fail(`expected exactly 2 price versions (USD variant base + GBP variant price), got ${versionCount}`)
+
+  // ---- the tax boundary is CONFIGURED but claims no rate ----
+  const tax = db.prepare('SELECT mode, rate_basis_points FROM tax_settings WHERE id = 1').get()
+  if (!tax) fail('the tax boundary row was not created')
+  if (tax.mode !== 'none' || tax.rate_basis_points !== 0) fail(`the upgrade fabricated a tax rate: ${JSON.stringify(tax)}`)
+
+  // ---- no cart/quote/payment/refund/ledger row is invented ----
+  for (const table of ['carts', 'cart_items', 'cart_events', 'addresses', 'checkout_quotes', 'checkout_quote_lines', 'checkout_sessions', 'coupon_redemptions', 'order_addresses', 'payment_attempts', 'payment_events', 'refunds', 'disputes', 'order_financial_entries']) {
+    const n = db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n
+    if (n !== 0) fail(`the migration invented ${n} row(s) in ${table}`)
+  }
+
+  // ---- re-applying the CREATE-TABLE-only part must not duplicate anything ----
+  const phase4Repeatable = phase4.filter((f) => !/ALTER TABLE/i.test(readFileSync(join(migrationsDir, f), 'utf8')))
+  if (phase4Repeatable.length) {
+    applyMigrationSet(db, phase4Repeatable, 'phase4-upgrade (re-apply repeatable files)')
+    if (db.prepare('SELECT COUNT(*) AS n FROM price_versions').get().n !== versionCount) {
+      fail('re-applying the migration duplicated the derived price versions')
+    }
+    if (db.prepare('SELECT COUNT(*) AS n FROM tax_settings').get().n !== 1) fail('re-applying duplicated the tax boundary row')
+  }
+
+  // ---- the database-level guarantees the payment flow depends on ----
+  const now = Math.floor(Date.now() / 1000)
+  db.exec(`INSERT INTO carts (public_id, guest_secret_hash, currency, expires_at) VALUES ('c_p4', 'hash-p4', 'USD', ${now + 3600})`)
+  const cartId = db.prepare("SELECT id FROM carts WHERE public_id = 'c_p4'").get().id
+  db.exec(`INSERT INTO cart_items (public_id, cart_id, product_id, variant_id, variant_code, qty, line_key, recorded_unit_price_minor, currency)
+           SELECT 'ci_p4', ${cartId}, p.id, v.id, 'hardcover', 1, 'k1', 2999, 'USD' FROM products p JOIN product_variants v ON v.product_id = p.id WHERE p.slug = 'legacy-p4'`)
+  // Exactly one ACTIVE cart per owner capability, enforced by a partial unique index.
+  let secondCartRefused = false
+  try {
+    db.exec(`INSERT INTO carts (public_id, guest_secret_hash, currency, expires_at) VALUES ('c_p4b', 'hash-p4', 'USD', ${now + 3600})`)
+  } catch (err) {
+    secondCartRefused = /UNIQUE/i.test(String(err.message))
+  }
+  if (!secondCartRefused) fail('a SECOND active cart for the same guest capability was accepted')
+
+  // A quote's total identity, and a quote line's arithmetic, are schema-enforced.
+  db.exec(`INSERT INTO checkout_quotes (public_id, cart_id, owner_key, currency, subtotal_minor, discount_minor, shipping_minor, tax_minor, total_minor, expires_at)
+           VALUES ('q_p4', ${cartId}, 'guest:c_p4', 'USD', 2999, 0, 1200, 0, 4199, ${now + 900})`)
+  const quoteId = db.prepare("SELECT id FROM checkout_quotes WHERE public_id = 'q_p4'").get().id
+  let badQuoteRefused = false
+  try {
+    db.exec(`INSERT INTO checkout_quotes (public_id, cart_id, owner_key, currency, subtotal_minor, discount_minor, shipping_minor, total_minor, expires_at)
+             VALUES ('q_bad', ${cartId}, 'guest:c_p4', 'USD', 1000, 0, 0, 9999, ${now + 900})`)
+  } catch (err) {
+    badQuoteRefused = /CHECK/i.test(String(err.message))
+  }
+  if (!badQuoteRefused) fail('a quote whose total contradicts its own lines was accepted')
+  db.exec(`INSERT INTO checkout_quote_lines (quote_id, product_id, variant_id, variant_code, kind, title, qty, unit_price_minor, line_total_minor, currency, price_source)
+           VALUES (${quoteId}, (SELECT id FROM products WHERE slug = 'legacy-p4'), NULL, 'hardcover', 'book', 'Legacy', 1, 2999, 2999, 'USD', 'price_version')`)
+  let badLineRefused = false
+  try {
+    db.exec(`INSERT INTO checkout_quote_lines (quote_id, product_id, variant_code, kind, title, qty, unit_price_minor, line_total_minor, currency, price_source)
+             VALUES (${quoteId}, (SELECT id FROM products WHERE slug = 'legacy-p4'), 'hardcover', 'book', 'Legacy', 2, 2999, 1, 'USD', 'price_version')`)
+  } catch (err) {
+    badLineRefused = /quote_line_invariant/.test(String(err.message))
+  }
+  if (!badLineRefused) fail('a quote line whose total did not equal unit x qty was accepted')
+
+  // EXACTLY ONE ORDER PER CART, by unique index.
+  db.exec(`INSERT INTO checkout_sessions (public_id, cart_id, quote_id, owner_key, currency, provider, idempotency_key, payload_hash, expires_at)
+           VALUES ('cs_p4', ${cartId}, ${quoteId}, 'guest:c_p4', 'USD', 'deterministic-fake', 'idem-cs-p4', 'hash', ${now + 3600})`)
+  const sessionId = db.prepare("SELECT id FROM checkout_sessions WHERE public_id = 'cs_p4'").get().id
+  db.exec(`UPDATE orders SET cart_id = ${cartId} WHERE id = ${beforeTotals.id}`)
+  db.exec(`UPDATE checkout_sessions SET order_id = ${beforeTotals.id} WHERE id = ${sessionId}`)
+  let secondOrderRefused = false
+  try {
+    db.exec(`INSERT INTO orders (full_name, email, address, city, country, subtotal, discount, shipping, total, subtotal_minor, discount_minor, shipping_minor, total_minor, currency, cart_id)
+             VALUES ('Second', 's@example.com', 'a', 'c', 'US', 10, 0, 0, 10, 1000, 0, 0, 1000, 'USD', ${cartId})`)
+  } catch (err) {
+    secondOrderRefused = /UNIQUE/i.test(String(err.message))
+  }
+  if (!secondOrderRefused) fail('a SECOND order for the same cart was accepted')
+
+  // The payment status machine, the captured-total invariant and the ledger.
+  const orderId = beforeTotals.id
+  db.exec(`INSERT INTO payment_attempts (public_id, order_id, checkout_session_id, provider, provider_intent_id, amount_minor, currency, status, idempotency_key)
+           VALUES ('pa_p4', ${orderId}, ${sessionId}, 'deterministic-fake', 'pi_p4', 3600, 'USD', 'captured', 'idem-pa-p4')`)
+  const attemptId = db.prepare("SELECT id FROM payment_attempts WHERE public_id = 'pa_p4'").get().id
+  db.exec(`UPDATE checkout_sessions SET payment_attempt_id = ${attemptId} WHERE id = ${sessionId}`)
+  let illegalTransition = false
+  try {
+    db.exec(`UPDATE payment_attempts SET status = 'requires_action' WHERE id = ${attemptId}`)
+  } catch (err) {
+    illegalTransition = /illegal payment status transition/.test(String(err.message))
+  }
+  if (!illegalTransition) fail('the payment-attempt trigger allowed captured -> requires_action')
+
+  let paidWithoutTimestamp = false
+  try {
+    db.exec(`UPDATE orders SET payment_status = 'captured', amount_captured_minor = 3600 WHERE id = ${orderId}`)
+  } catch (err) {
+    paidWithoutTimestamp = /orders_payment_invariant/.test(String(err.message))
+  }
+  if (!paidWithoutTimestamp) fail('an order was allowed to claim "captured" with no paid_at')
+  db.exec(`UPDATE orders SET payment_status = 'captured', amount_captured_minor = 3600, paid_at = CURRENT_TIMESTAMP WHERE id = ${orderId}`)
+  db.exec(`INSERT INTO order_financial_entries (order_id, payment_attempt_id, provider, entry_type, direction, amount_minor, currency, provider_reference)
+           VALUES (${orderId}, ${attemptId}, 'deterministic-fake', 'capture', 'credit', 3600, 'USD', 'pi_p4')`)
+  let doubleCapture = false
+  try {
+    db.exec(`INSERT INTO order_financial_entries (order_id, payment_attempt_id, provider, entry_type, direction, amount_minor, currency, provider_reference)
+             VALUES (${orderId}, ${attemptId}, 'deterministic-fake', 'capture', 'credit', 3600, 'USD', 'pi_p4')`)
+  } catch (err) {
+    doubleCapture = /UNIQUE/i.test(String(err.message))
+  }
+  if (!doubleCapture) fail('a SECOND capture entry for one order was accepted')
+  let ledgerMutable = false
+  try {
+    db.exec(`UPDATE order_financial_entries SET amount_minor = 1 WHERE order_id = ${orderId}`)
+  } catch (err) {
+    ledgerMutable = /append-only/.test(String(err.message))
+  }
+  if (!ledgerMutable) fail('the financial ledger is not append-only')
+
+  // The refund cap, enforced at insert AND on a revival from 'failed'.
+  db.exec(`INSERT INTO refunds (public_id, order_id, payment_attempt_id, amount_minor, currency, status, provider, idempotency_key)
+           VALUES ('rf_p4', ${orderId}, ${attemptId}, 1000, 'USD', 'succeeded', 'deterministic-fake', 'rk-p4')`)
+  let excessRefund = false
+  try {
+    db.exec(`INSERT INTO refunds (public_id, order_id, payment_attempt_id, amount_minor, currency, status, provider, idempotency_key)
+             VALUES ('rf_p4_over', ${orderId}, ${attemptId}, 9999, 'USD', 'succeeded', 'deterministic-fake', 'rk-p4-over')`)
+  } catch (err) {
+    excessRefund = /refund_cap/.test(String(err.message))
+  }
+  if (!excessRefund) fail('a refund larger than the captured amount was accepted')
+  db.exec(`INSERT INTO refunds (public_id, order_id, payment_attempt_id, amount_minor, currency, status, provider, idempotency_key)
+           VALUES ('rf_p4_failed', ${orderId}, ${attemptId}, 2700, 'USD', 'failed', 'deterministic-fake', 'rk-p4-failed')`)
+  let revivedBeyondCap = false
+  try {
+    db.exec(`UPDATE refunds SET status = 'succeeded' WHERE public_id = 'rf_p4_failed'`)
+  } catch (err) {
+    revivedBeyondCap = /refund_cap/.test(String(err.message))
+  }
+  if (!revivedBeyondCap) fail('a failed refund could be revived past the captured remainder')
+  let settledRefundEdited = false
+  try {
+    db.exec(`UPDATE refunds SET amount_minor = 5 WHERE public_id = 'rf_p4'`)
+  } catch (err) {
+    settledRefundEdited = /immutable/.test(String(err.message))
+  }
+  if (!settledRefundEdited) fail('a succeeded refund was editable')
+
+  // Provider-event idempotency: the unique event id is the authority.
+  db.exec(`INSERT INTO payment_events (provider, provider_event_id, event_type, order_id, payment_attempt_id, signature_verified) VALUES ('deterministic-fake', 'evt_p4', 'payment_intent.succeeded', ${orderId}, ${attemptId}, 1)`)
+  let duplicateEvent = false
+  try {
+    db.exec(`INSERT INTO payment_events (provider, provider_event_id, event_type) VALUES ('deterministic-fake', 'evt_p4', 'payment_intent.succeeded')`)
+  } catch (err) {
+    duplicateEvent = /UNIQUE/i.test(String(err.message))
+  }
+  if (!duplicateEvent) fail('a DUPLICATE provider event was accepted')
+  let eventRewritten = false
+  try {
+    db.exec(`UPDATE payment_events SET event_type = 'x' WHERE provider_event_id = 'evt_p4'`)
+  } catch (err) {
+    eventRewritten = /immutable/.test(String(err.message))
+  }
+  if (!eventRewritten) fail('a recorded provider event was editable')
+
+  // The append-only cart history and the immutable address snapshot.
+  let cartEventImmutable = false
+  try {
+    db.exec(`INSERT INTO cart_events (cart_id, event_type) VALUES (${cartId}, 'cart.created')`)
+    db.exec(`UPDATE cart_events SET event_type = 'x' WHERE cart_id = ${cartId}`)
+  } catch (err) {
+    cartEventImmutable = /immutable/.test(String(err.message))
+  }
+  if (!cartEventImmutable) fail('cart history is not append-only')
+  let addressImmutable = false
+  try {
+    db.exec(`INSERT INTO order_addresses (order_id, kind, full_name, line1, city, country, address_hash) VALUES (${orderId}, 'shipping', 'A', 'x', 'y', 'US', 'h')`)
+    db.exec(`UPDATE order_addresses SET city = 'z' WHERE order_id = ${orderId}`)
+  } catch (err) {
+    addressImmutable = /immutable/.test(String(err.message))
+  }
+  if (!addressImmutable) fail('the order address snapshot is not immutable')
+
+  console.log(`OK [phase4 upgrade]: 0026-0027 applied over existing Phase-3 rows; ${versionCount} price versions derived (USD variant base + GBP variant price), the legacy discount gained its basis-point twin and scope, the tax boundary is configured at ZERO rate, every pre-existing row unchanged and NOTHING marked paid, and no cart/quote/payment/refund/ledger row invented. The one-active-cart, quote-identity, one-order-per-cart, payment-state, single-capture, refund-cap and append-only guarantees all hold at the schema level.`)
 }
 
 // 3) Repeated migration behavior — `wrangler d1 migrations apply` tracks
