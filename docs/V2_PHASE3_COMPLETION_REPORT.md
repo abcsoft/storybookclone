@@ -171,11 +171,11 @@ HTML screens `/admin/generation/{templates,jobs,previews}(/:id)`.
 | `npm run typecheck` | 0 | 0 errors |
 | `npm run test` | 0 | **547 passed / 547** across 32 files (baseline 492/30; **+55 tests in 3 new files**) |
 | `npm run test:integration` | 0 | **11/11 scenarios**, including the new `[phase3 upgrade]` (83 tables; 0024-0025 applied over existing Phase-2 rows; scaffold/prompts/limits/consent seeded once; every pre-existing row unchanged; no generation row invented; duplicate-job, illegal-transition, unwatermarked-preview and append-only guarantees asserted) |
-| `npm run secrets:scan` | 0 | no matches (293 files) |
-| `npm run secrets:scan -- --mode=archive` | 0 | no matches (294 files) |
-| `npm run build` | 0 | `dist/_worker.js` 577.40 kB (gzip 155.33 kB) |
+| `npm run secrets:scan` | 0 | no matches (294 files) |
+| `npm run secrets:scan -- --mode=archive` | 0 | no matches (295 files) |
+| `npm run build` | 0 | `dist/_worker.js` 577.88 kB (gzip 155.45 kB) |
 | `npm run test:e2e` | 0 | 12 journey groups, including the new `phase3-generation-preview` group |
-| `npm run audit:frontend -- phase3-generation` | 0 | 0 findings across 29 public + 24 admin routes at 360/390/768/1024/1440/1920 plus the accessibility pass |
+| `npm run audit:frontend -- phase3-generation` | 0 | **0 findings**: 29 public routes at 360/390/768/1024/1440/1920, the admin surfaces at desktop + mobile, and the accessibility pass at all six widths |
 | `npm audit --omit=dev` | 0 | 0 vulnerabilities |
 | `npm audit` | 1 | 3 high, dev-only `sharp <0.35.4` ← `miniflare` ← `wrangler`; **pre-existing and unchanged** (fixing it is a deliberate toolchain bump) |
 
