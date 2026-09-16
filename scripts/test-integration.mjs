@@ -150,6 +150,31 @@ const PHASE_5_TRIGGERS = [
   'trg_privacy_request_events_no_update'
 ]
 
+// V2 Phase 6 (migration 0033). Named separately so the Phase-5 scenario can
+// assert precisely that they do NOT exist at the accepted Phase-5 schema.
+const PHASE_6_TABLES = [
+  'admin_roles', 'admin_permissions', 'admin_role_permissions', 'admin_user_roles',
+  'admin_reauth_challenges', 'admin_reauth_events', 'admin_media_tokens',
+  'feature_flags', 'export_jobs'
+]
+const PHASE_6_COLUMNS = [
+  ['admin_audit_events', 'actor_role'],
+  ['admin_audit_events', 'request_id'],
+  ['admin_audit_events', 'source'],
+  ['support_tickets', 'first_response_at'],
+  ['support_tickets', 'resolved_by_user_id']
+]
+const PHASE_6_TRIGGERS = [
+  'trg_admin_reauth_events_no_update',
+  'trg_admin_reauth_events_no_delete',
+  'trg_admin_media_tokens_no_reuse',
+  'trg_export_jobs_no_delete'
+]
+/** The seeded Phase-6 rows that are expected to exist after the migration. */
+const PHASE_6_ROLES = [
+  'super_admin', 'operations', 'content_editor', 'support', 'finance', 'production', 'read_only'
+]
+
 const EXPECTED_TABLES = [
   'users', 'sessions', 'products', 'discounts', 'orders', 'order_items',
   'contacts', 'newsletter', 'pdp_page', 'pdp_gallery', 'pdp_accordions',
@@ -179,7 +204,9 @@ const EXPECTED_TABLES = [
   ...PHASE_4_TABLES,
   // V2 Phase 5 (migrations 0028-0032): customer account, mail outbox, support,
   // downloads and privacy intake
-  ...PHASE_5_TABLES
+  ...PHASE_5_TABLES,
+  // V2 Phase 6 (migration 0033): admin control plane (RBAC, re-auth, flags, exports)
+  ...PHASE_6_TABLES
 ]
 
 const EXPECTED_NEW_COLUMNS = [
@@ -202,7 +229,9 @@ const EXPECTED_NEW_COLUMNS = [
   // V2 Phase 4 (migrations 0026-0027)
   ...PHASE_4_COLUMNS,
   // V2 Phase 5 (migrations 0028-0032)
-  ...PHASE_5_COLUMNS
+  ...PHASE_5_COLUMNS,
+  // V2 Phase 6 (migration 0033)
+  ...PHASE_6_COLUMNS
 ]
 
 /** The triggers migration 0024 introduces. */
@@ -260,7 +289,9 @@ const EXPECTED_TRIGGERS = [
   // V2 Phase 4 (migrations 0026-0027): money, ledger and refund integrity
   ...PHASE_4_TRIGGERS,
   // V2 Phase 5 (migrations 0028-0032): account, outbox, support, downloads, privacy
-  ...PHASE_5_TRIGGERS
+  ...PHASE_5_TRIGGERS,
+  // V2 Phase 6 (migration 0033): re-auth and export-trail immutability
+  ...PHASE_6_TRIGGERS
 ]
 
 
@@ -584,15 +615,24 @@ const ACCEPTED_PHASE_1_0009_MIGRATIONS = [
   // This scenario stops at the accepted Phase-2 schema, so the PHASE-3 tables
   // must NOT exist yet — asserted both ways rather than skipped.
   assertTables(db, 'phase2 upgrade', {
-    tables: EXPECTED_TABLES.filter((t) => !PHASE_3_TABLES.includes(t) && !PHASE_4_TABLES.includes(t) && !PHASE_5_TABLES.includes(t)),
+    tables: EXPECTED_TABLES.filter(
+      (t) => !PHASE_3_TABLES.includes(t) && !PHASE_4_TABLES.includes(t) && !PHASE_5_TABLES.includes(t) && !PHASE_6_TABLES.includes(t)
+    ),
     columns: EXPECTED_NEW_COLUMNS.filter(
       ([table, column]) =>
         !PHASE_3_COLUMNS.some(([t, c]) => t === table && c === column) &&
         !PHASE_4_COLUMNS.some(([t, c]) => t === table && c === column) &&
-        !PHASE_5_COLUMNS.some(([t, c]) => t === table && c === column)
+        !PHASE_5_COLUMNS.some(([t, c]) => t === table && c === column) &&
+        !PHASE_6_COLUMNS.some(([t, c]) => t === table && c === column)
     )
   })
-  assertTriggers(db, 'phase2 upgrade', EXPECTED_TRIGGERS.filter((t) => !PHASE_3_TRIGGERS.includes(t) && !PHASE_4_TRIGGERS.includes(t) && !PHASE_5_TRIGGERS.includes(t)))
+  assertTriggers(
+    db,
+    'phase2 upgrade',
+    EXPECTED_TRIGGERS.filter(
+      (t) => !PHASE_3_TRIGGERS.includes(t) && !PHASE_4_TRIGGERS.includes(t) && !PHASE_5_TRIGGERS.includes(t) && !PHASE_6_TRIGGERS.includes(t)
+    )
+  )
   const phase3Leak = PHASE_3_TABLES.filter((t) => db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?").get(t))
   if (phase3Leak.length) {
     console.error(`FAIL [phase2 upgrade]: migration 0020-0023 created Phase-3 tables: ${phase3Leak.join(', ')}`)
@@ -698,12 +738,15 @@ const ACCEPTED_PHASE_1_0009_MIGRATIONS = [
   // This scenario stops at the accepted Phase-3 schema, so the PHASE-4 tables
   // must NOT exist yet — asserted both ways rather than skipped.
   assertTables(db, 'phase3 upgrade', {
-    tables: EXPECTED_TABLES.filter((t) => !PHASE_4_TABLES.includes(t) && !PHASE_5_TABLES.includes(t)),
+    tables: EXPECTED_TABLES.filter((t) => !PHASE_4_TABLES.includes(t) && !PHASE_5_TABLES.includes(t) && !PHASE_6_TABLES.includes(t)),
     columns: EXPECTED_NEW_COLUMNS.filter(
-      ([table, column]) => !PHASE_4_COLUMNS.some(([t, c]) => t === table && c === column) && !PHASE_5_COLUMNS.some(([t, c]) => t === table && c === column)
+      ([table, column]) =>
+        !PHASE_4_COLUMNS.some(([t, c]) => t === table && c === column) &&
+        !PHASE_5_COLUMNS.some(([t, c]) => t === table && c === column) &&
+        !PHASE_6_COLUMNS.some(([t, c]) => t === table && c === column)
     )
   })
-  assertTriggers(db, 'phase3 upgrade', EXPECTED_TRIGGERS.filter((t) => !PHASE_4_TRIGGERS.includes(t) && !PHASE_5_TRIGGERS.includes(t)))
+  assertTriggers(db, 'phase3 upgrade', EXPECTED_TRIGGERS.filter((t) => !PHASE_4_TRIGGERS.includes(t) && !PHASE_5_TRIGGERS.includes(t) && !PHASE_6_TRIGGERS.includes(t)))
   const phase4Leak = PHASE_4_TABLES.filter((t) => db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?").get(t))
   if (phase4Leak.length) {
     console.error(`FAIL [phase3 upgrade]: migration 0024-0025 created Phase-4 tables: ${phase4Leak.join(', ')}`)
@@ -873,10 +916,12 @@ const ACCEPTED_PHASE_1_0009_MIGRATIONS = [
   // Scoped to what the ACCEPTED Phase-4 schema contained: the Phase-5 tables,
   // columns and triggers must NOT exist yet at this point.
   assertTables(db, 'phase4 upgrade', {
-    tables: EXPECTED_TABLES.filter((t) => !PHASE_5_TABLES.includes(t)),
-    columns: EXPECTED_NEW_COLUMNS.filter(([t, c]) => !PHASE_5_COLUMNS.some(([a, b]) => a === t && b === c))
+    tables: EXPECTED_TABLES.filter((t) => !PHASE_5_TABLES.includes(t) && !PHASE_6_TABLES.includes(t)),
+    columns: EXPECTED_NEW_COLUMNS.filter(
+      ([t, c]) => !PHASE_5_COLUMNS.some(([a, b]) => a === t && b === c) && !PHASE_6_COLUMNS.some(([a, b]) => a === t && b === c)
+    )
   })
-  assertTriggers(db, 'phase4 upgrade', EXPECTED_TRIGGERS.filter((t) => !PHASE_5_TRIGGERS.includes(t)))
+  assertTriggers(db, 'phase4 upgrade', EXPECTED_TRIGGERS.filter((t) => !PHASE_5_TRIGGERS.includes(t) && !PHASE_6_TRIGGERS.includes(t)))
   for (const table of PHASE_5_TABLES) {
     const exists = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(table)
     if (exists) failPhase5Leak(`${table} already exists at the accepted Phase-4 schema`)
@@ -1112,7 +1157,10 @@ const ACCEPTED_PHASE_1_0009_MIGRATIONS = [
   const db = new DatabaseSync(':memory:')
   db.exec('PRAGMA foreign_keys = ON')
   const phase4 = allFiles.filter((f) => f < '0028_')
-  const phase5 = allFiles.filter((f) => f >= '0028_')
+  // Bounded above by 0032: the Phase-6 migration is ALTER-based too and is applied
+  // at most once, so this scenario keeps describing exactly what it was reviewed
+  // against (the accepted Phase-5 schema).
+  const phase5 = allFiles.filter((f) => f >= '0028_' && f < '0033_')
   if (!phase5.length) {
     console.error('FAIL [phase5 upgrade]: no 0028+ migrations found')
     process.exit(1)
@@ -1156,8 +1204,18 @@ const ACCEPTED_PHASE_1_0009_MIGRATIONS = [
   const beforeRevision = db.prepare('SELECT id, note, input_revision FROM revision_requests WHERE requested_by_id = ?').get(String(beforeUser.id))
 
   applyMigrationSet(db, phase5, 'phase5-upgrade (apply 0028-0032)')
-  assertTables(db, 'phase5 upgrade')
-  assertTriggers(db, 'phase5 upgrade')
+  const phase5Expect = {
+    tables: EXPECTED_TABLES.filter((t) => !PHASE_6_TABLES.includes(t)),
+    columns: EXPECTED_NEW_COLUMNS.filter(([table, column]) => !PHASE_6_COLUMNS.some(([a, b]) => a === table && b === column))
+  }
+  assertTables(db, 'phase5 upgrade', phase5Expect)
+  assertTriggers(db, 'phase5 upgrade', EXPECTED_TRIGGERS.filter((trg) => !PHASE_6_TRIGGERS.includes(trg)))
+  for (const table of PHASE_6_TABLES) {
+    if (db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name = ?").get(table)) {
+      console.error(`FAIL [phase5 upgrade]: migration 0028-0032 created the Phase-6 table ${table}`)
+      process.exit(1)
+    }
+  }
 
   const fail = (msg) => {
     console.error(`FAIL [phase5 upgrade]: ${msg}`)
@@ -1198,7 +1256,7 @@ const ACCEPTED_PHASE_1_0009_MIGRATIONS = [
   // ---- re-applying the repeatable part duplicates nothing ----
   const repeatable = phase5.filter((f) => !/ALTER TABLE/i.test(readFileSync(join(migrationsDir, f), 'utf8')))
   applyMigrationSet(db, repeatable, 'phase5-upgrade (re-apply CREATE-TABLE-only files)')
-  assertTables(db, 'phase5 upgrade')
+  assertTables(db, 'phase5 upgrade', phase5Expect)
   const templatesAfter = db.prepare('SELECT COUNT(*) AS n FROM email_templates').get().n
   if (templatesAfter !== 12) fail(`re-applying the migration duplicated the seeded templates (${templatesAfter})`)
   const sessionAfter = db.prepare("SELECT COUNT(*) AS n FROM sessions WHERE token='legacy-session-token'").get().n
@@ -1392,6 +1450,192 @@ const ACCEPTED_PHASE_1_0009_MIGRATIONS = [
   if (!eventRewritten2) fail('the account security log was editable')
 
   console.log(`OK [phase5 upgrade]: 0028-0032 applied over existing Phase-4 rows; ${templates} published email templates seeded; every pre-existing row unchanged, every existing account still UNVERIFIED and every pre-existing session given an addressable public_id; nothing invented in any new table; re-applying the CREATE-TABLE-only files duplicates nothing. The single-use-token, claim-once, outbox-dedupe/sent-terminal, support-status, attachment-allowlist, download-cap and one-open-privacy-request guarantees all hold at the schema level.`)
+}
+
+
+// 2i) V2 Phase 6 upgrade (0033) from the accepted Phase-5 schema with EXISTING
+//     rows: the RBAC/re-auth/flag/export tables must arrive, every pre-existing
+//     row must be untouched, every pre-existing admin must GAIN the super_admin
+//     grant (the one deliberate derivation, so the upgrade cannot lock the
+//     operator out) and NOTHING may be invented in the new operational tables.
+{
+  const db = new DatabaseSync(':memory:')
+  db.exec('PRAGMA foreign_keys = ON')
+  const phase5 = allFiles.filter((f) => f < '0033_')
+  const phase6 = allFiles.filter((f) => f >= '0033_')
+  if (!phase6.length) {
+    console.error('FAIL [phase6 upgrade]: no 0033+ migrations found')
+    process.exit(1)
+  }
+  applyMigrationSet(db, phase5, 'phase6-upgrade (baseline 0001-0032)')
+
+  // Pre-existing Phase-5-shaped rows: an administrator with an audit trail, a
+  // customer with a support ticket, and a paid order — the rows the new modules
+  // will read.
+  db.exec(`
+    INSERT INTO users (name, email, password_hash, role) VALUES ('Existing Admin', 'p6-admin@example.com', 'hash-admin', 'admin');
+    INSERT INTO users (name, email, password_hash, role) VALUES ('Existing Customer', 'p6@example.com', 'hash-cust', 'customer');
+    INSERT OR IGNORE INTO languages (code, name, native_name) VALUES ('en', 'English', 'English');
+    INSERT INTO support_tickets (public_id, user_id, subject, category, status, priority)
+      SELECT 'tk_legacy_p6', id, 'Legacy question', 'order', 'open', 'normal' FROM users WHERE email='p6@example.com';
+    INSERT INTO admin_audit_events (actor_user_id, actor_email, action, entity_type, entity_id)
+      SELECT id, 'p6-admin@example.com', 'order.status_change', 'order', '1' FROM users WHERE email='p6-admin@example.com';
+  `)
+
+  const beforeAdmin = db.prepare("SELECT id, name, email, password_hash, role FROM users WHERE email='p6-admin@example.com'").get()
+  const beforeCustomer = db.prepare("SELECT id, email, role FROM users WHERE email='p6@example.com'").get()
+  const beforeTicket = db.prepare("SELECT id, status, priority, subject FROM support_tickets WHERE public_id='tk_legacy_p6'").get()
+  const beforeAudit = db.prepare("SELECT id, action, entity_type FROM admin_audit_events WHERE actor_email='p6-admin@example.com'").get()
+
+  applyMigrationSet(db, phase6, 'phase6-upgrade (apply 0033)')
+  assertTables(db, 'phase6 upgrade')
+  assertTriggers(db, 'phase6 upgrade')
+
+  const fail = (msg) => {
+    console.error(`FAIL [phase6 upgrade]: ${msg}`)
+    process.exit(1)
+  }
+
+  // ---- every pre-existing row is UNTOUCHED ----
+  const admin = db.prepare('SELECT * FROM users WHERE id = ?').get(beforeAdmin.id)
+  for (const key of ['name', 'email', 'password_hash', 'role']) {
+    if (admin[key] !== beforeAdmin[key]) fail(`the upgrade changed users.${key}`)
+  }
+  const customer = db.prepare('SELECT * FROM users WHERE id = ?').get(beforeCustomer.id)
+  if (customer.role !== 'customer') fail('the upgrade promoted an ordinary customer')
+  const ticket = db.prepare('SELECT * FROM support_tickets WHERE id = ?').get(beforeTicket.id)
+  for (const key of ['status', 'priority', 'subject']) {
+    if (ticket[key] !== beforeTicket[key]) fail(`the upgrade changed support_tickets.${key}`)
+  }
+  // The two new columns exist and claim NOTHING: an existing ticket was never
+  // answered, so it must not look as if it had been.
+  if (ticket.first_response_at !== null) fail('the upgrade invented a first_response_at on an existing ticket')
+  if (ticket.resolved_by_user_id !== null) fail('the upgrade invented a resolver on an existing ticket')
+  const audit = db.prepare('SELECT * FROM admin_audit_events WHERE id = ?').get(beforeAudit.id)
+  if (audit.action !== beforeAudit.action || audit.entity_type !== beforeAudit.entity_type) fail('the upgrade changed an existing audit event')
+  if (audit.actor_role !== null || audit.request_id !== null || audit.source !== null) {
+    fail('the upgrade back-filled audit provenance that was never recorded')
+  }
+
+  // ---- the ONE intended derivation: existing admins keep full access ----
+  const grants = db.prepare("SELECT role_key FROM admin_user_roles WHERE user_id = ?").all(admin.id)
+  if (grants.length !== 1 || grants[0].role_key !== 'super_admin') {
+    fail(`an existing administrator did not receive exactly the super_admin grant (got ${JSON.stringify(grants)})`)
+  }
+  const customerGrants = db.prepare('SELECT COUNT(*) AS n FROM admin_user_roles WHERE user_id = ?').get(customer.id).n
+  if (customerGrants !== 0) fail('the upgrade granted a role to a non-admin account')
+
+  // ---- the seeded catalogue, exactly once ----
+  const roles = db.prepare('SELECT key FROM admin_roles ORDER BY rank').all().map((r) => r.key)
+  if (roles.length !== 7) fail(`expected 7 roles, found ${roles.length}`)
+  for (const role of PHASE_6_ROLES) {
+    if (!roles.includes(role)) fail(`role ${role} was not seeded`)
+  }
+  const permissionCount = db.prepare('SELECT COUNT(*) AS n FROM admin_permissions').get().n
+  if (permissionCount !== 42) fail(`expected 42 permissions, found ${permissionCount}`)
+  const superPermissions = db.prepare("SELECT COUNT(*) AS n FROM admin_role_permissions WHERE role_key='super_admin'").get().n
+  if (superPermissions !== 42) fail(`super_admin has ${superPermissions} permissions, expected all 42`)
+  const readOnlyWrite = db
+    .prepare(
+      "SELECT COUNT(*) AS n FROM admin_role_permissions WHERE role_key='read_only' AND (permission_key LIKE '%.write' OR permission_key LIKE '%.operate' OR permission_key LIKE '%.manage' OR permission_key LIKE '%.create')"
+    )
+    .get().n
+  if (readOnlyWrite !== 0) fail(`read_only was granted ${readOnlyWrite} write/operate/manage permission(s)`)
+
+  // ---- NOTHING invented in the operational tables ----
+  for (const table of ['admin_reauth_challenges', 'admin_reauth_events', 'admin_media_tokens', 'export_jobs']) {
+    const count = db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n
+    if (count !== 0) fail(`the upgrade invented ${count} row(s) in ${table}`)
+  }
+  const flags = db.prepare('SELECT key, enabled FROM feature_flags ORDER BY key').all()
+  if (flags.length !== 2) fail(`expected 2 seeded feature flags, found ${flags.length}`)
+  if (flags.find((f) => f.key === 'support.auto_assign').enabled !== 0) fail('support.auto_assign was seeded ENABLED')
+  if (flags.find((f) => f.key === 'admin.exports.enabled').enabled !== 1) fail('admin.exports.enabled was not seeded enabled')
+
+  // ---- re-applying the repeatable part duplicates nothing ----
+  const repeatable = phase6.filter((f) => !/ALTER TABLE/i.test(readFileSync(join(migrationsDir, f), 'utf8')))
+  applyMigrationSet(db, repeatable, 'phase6-upgrade (re-apply CREATE-TABLE-only files)')
+  assertTables(db, 'phase6 upgrade')
+  const rolesAfter = db.prepare('SELECT COUNT(*) AS n FROM admin_roles').get().n
+  if (rolesAfter !== 7) fail(`re-applying duplicated the roles (${rolesAfter})`)
+  const grantsAfter = db.prepare('SELECT COUNT(*) AS n FROM admin_role_permissions').get().n
+  if (grantsAfter !== 139) fail(`re-applying duplicated the role grants (${grantsAfter})`)
+  const flagsAfter = db.prepare('SELECT COUNT(*) AS n FROM feature_flags').get().n
+  if (flagsAfter !== 2) fail(`re-applying duplicated the feature flags (${flagsAfter})`)
+
+  // ---- the DB-level guarantees ----
+  db.exec("INSERT INTO admin_reauth_events (challenge_public_id, action, outcome) VALUES ('ra_x', 'POST /x', 'succeeded')")
+  let reauthRewritten = false
+  try {
+    db.exec("UPDATE admin_reauth_events SET outcome = 'failed_password'")
+  } catch (err) {
+    reauthRewritten = /immutable/.test(String(err.message))
+  }
+  if (!reauthRewritten) fail('the re-auth outcome log was editable')
+  let reauthDeleted = false
+  try {
+    db.exec('DELETE FROM admin_reauth_events')
+  } catch (err) {
+    reauthDeleted = /immutable/.test(String(err.message))
+  }
+  if (!reauthDeleted) fail('the re-auth outcome log was deletable')
+
+  db.exec("INSERT INTO export_jobs (public_id, kind) VALUES ('exp_x', 'orders')")
+  let exportDeleted = false
+  try {
+    db.exec('DELETE FROM export_jobs')
+  } catch (err) {
+    exportDeleted = /never deleted/.test(String(err.message))
+  }
+  if (!exportDeleted) fail('a completed export job was deletable')
+
+  // V2 §10: a private-media capability is redeemable ONCE. The second redemption
+  // is refused by the database, not only by the application, so a race between two
+  // requests cannot deliver the same short-lived link twice.
+  db.exec(
+    "INSERT INTO admin_media_tokens (token_hash, user_id, kind, object_key, permission, expires_at) VALUES ('mh_x', " +
+      admin.id +
+      ", 'photo', 'legacy/photo.jpg', 'books.read', 4102444800)"
+  )
+  db.exec("UPDATE admin_media_tokens SET consumed_at = CURRENT_TIMESTAMP WHERE token_hash = 'mh_x'")
+  let mediaReplayed = false
+  try {
+    db.exec("UPDATE admin_media_tokens SET consumed_at = CURRENT_TIMESTAMP WHERE token_hash = 'mh_x'")
+  } catch (err) {
+    mediaReplayed = /already redeemed/.test(String(err.message))
+  }
+  if (!mediaReplayed) fail('a redeemed admin media capability was redeemable again')
+  // ...and the kind is constrained to the two the code knows about.
+  let mediaKindRejected = false
+  try {
+    db.exec(
+      "INSERT INTO admin_media_tokens (token_hash, user_id, kind, object_key, permission, expires_at) VALUES ('mh_y', " +
+        admin.id +
+        ", 'anything', 'x', 'books.read', 4102444800)"
+    )
+  } catch {
+    mediaKindRejected = true
+  }
+  if (!mediaKindRejected) fail('admin_media_tokens accepted a kind outside the known set')
+
+  // The Phase-5 support status machine still applies after the new columns land:
+  // resolved -> waiting_customer is illegal there, and must still be refused.
+  db.exec("UPDATE support_tickets SET status = 'resolved' WHERE public_id = 'tk_legacy_p6'")
+  let illegalTicketMove = false
+  try {
+    db.exec("UPDATE support_tickets SET status = 'waiting_customer' WHERE public_id = 'tk_legacy_p6'")
+  } catch (err) {
+    illegalTicketMove = /status/.test(String(err.message))
+  }
+  if (!illegalTicketMove) fail('0033 weakened the support ticket status machine')
+  db.exec("UPDATE support_tickets SET status = 'open' WHERE public_id = 'tk_legacy_p6'")
+  if (db.prepare("SELECT status FROM support_tickets WHERE public_id='tk_legacy_p6'").get().status !== 'open') {
+    fail('a legal reopen was refused')
+  }
+
+  console.log(
+    `OK [phase6 upgrade]: 0033 applied over existing Phase-5 rows; ${roles.length} roles / ${permissionCount} permissions / ${grantsAfter} role grants seeded exactly once; the pre-existing administrator gained exactly the super_admin grant and an ordinary customer gained nothing; every pre-existing row unchanged and no audit provenance invented; re-applying the CREATE-TABLE-only part duplicates nothing. The re-auth outcome log, the export trail and the short-lived private-media capability are immutable at the database level, and the Phase-5 support status machine still holds.`
+  )
 }
 
 // 3) Repeated migration behavior — `wrangler d1 migrations apply` tracks

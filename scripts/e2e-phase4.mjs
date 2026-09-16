@@ -248,7 +248,9 @@ export async function runPhase4Journeys({ browser, base, log, fail, attachDiagno
     log('phase4.9', 'an admin refunds through the finance UI; the ledger records it and revenue falls')
     const adminContext = await browser.newContext({ viewport: { width: 1280, height: 900 } })
     const adminPage = await adminContext.newPage()
-    const adminDiag = attachDiagnostics(adminPage)
+    // The deliberate ADM-20 negative check below (a refund submitted WITHOUT the
+    // confirmation) is SUPPOSED to be a 403, and it is asserted explicitly.
+    const adminDiag = attachDiagnostics(adminPage, [/\/admin\/orders\/\d+\/refunds$/])
     try {
       await adminPage.goto(`${base}/admin/login`)
       await adminPage.fill('input[name=email]', admin.email)
@@ -276,9 +278,33 @@ export async function runPhase4Journeys({ browser, base, log, fail, attachDiagno
       if (!/timeline/i.test(refundable || '')) fail('phase4.9b', 'the order page did not render the timeline')
       if (!/address snapshot/i.test(refundable || '')) fail('phase4.9b', 'the order page did not render the address snapshot')
 
-      // A PARTIAL refund of $10.00 through the real form.
+      // V2 Phase 6 (ADM-20): a refund is a HIGH-RISK action, so the form carries a
+      // single-use confirmation and the operator's current password. First prove that
+      // submitting WITHOUT them is refused and writes nothing...
+      const refundForm = 'form[action$="/refunds"]'
+      if (!/high-risk action/i.test(refundable || '')) fail('phase4.9b', 'the refund form does not disclose that it is high-risk')
+      const challenge = await adminPage.getAttribute(`${refundForm} input[name=reauth_challenge]`, 'value')
+      if (!challenge) fail('phase4.9b', 'the refund form carried no re-auth confirmation')
+      const beforeRefusal = queryD1(`SELECT COUNT(*) AS n FROM refunds WHERE order_id = ${Number(session.orderId)};`)[0].n
+      await adminPage.fill(`${refundForm} input[name=amount]`, '10.00')
+      await adminPage.fill(`${refundForm} input[name=reason]`, 'refused without a confirmation')
+      await adminPage.$eval(`${refundForm} input[name=current_password]`, (el) => el.removeAttribute('required'))
+      await adminPage.evaluate((selector) => {
+        const form = document.querySelector(selector)
+        if (form) form.querySelector('input[name="current_password"]')?.remove()
+      }, refundForm)
+      await adminPage.click(`${refundForm} button[type=submit]`)
+      await adminPage.waitForTimeout(800)
+      const afterRefusal = queryD1(`SELECT COUNT(*) AS n FROM refunds WHERE order_id = ${Number(session.orderId)};`)[0].n
+      if (Number(afterRefusal) !== Number(beforeRefusal)) fail('phase4.9b', 'a refund without a confirmation still wrote a row')
+
+      // ...then do it properly: a FRESH confirmation (they are single-use) with the
+      // operator's real password.
+      await adminPage.goto(`${base}/admin/orders/${Number(session.orderId)}`)
+      await adminPage.waitForSelector('form[action$="/refunds"]')
       await adminPage.fill('form[action$="/refunds"] input[name=amount]', '10.00')
       await adminPage.fill('form[action$="/refunds"] input[name=reason]', 'E2E partial refund')
+      await adminPage.fill('form[action$="/refunds"] input[name=current_password]', admin.password)
       await adminPage.click('form[action$="/refunds"] button[type=submit]')
       await adminPage.waitForTimeout(1500)
 

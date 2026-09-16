@@ -30,6 +30,7 @@ import { financialSummary, reconciliationIssues } from '../../src/commerce/repor
 import { refundableRemainderMinor } from '../../src/commerce/ledger'
 import { getPaymentProvider } from '../../src/commerce/payments'
 import { financePermissionsFor, hasFinancePermission } from '../../src/admin_routes'
+import { hasReauthChallenge, reauthFields } from '../helpers/adminReauth'
 import { FINANCE_PERMISSIONS } from '../../src/commerce/types'
 
 let env: TestEnv
@@ -325,12 +326,52 @@ describe('ADM-03/ADM-04/ADM-12 the admin finance surfaces', () => {
     expect(html).toContain('capture')
   })
 
-  it('issues a refund through the validated admin form and audits it', async () => {
+  it('requires a fresh password confirmation for a refund, and refuses without it (ADM-20)', async () => {
+    const { orderId } = await paidOrder()
+    const jar = await adminJar()
+    // Without the confirmation, the action is refused BEFORE any refund logic and
+    // writes nothing at all — not a refund, not an audit event.
+    const refused = await app.request(
+      `/admin/orders/${orderId}/refunds`,
+      {
+        method: 'POST',
+        headers: { ...jar.headers(), 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ amount: '10.00', reason: 'no confirmation', idempotency_key: 'admin-rk-refused' })
+      },
+      env
+    )
+    expect(refused.status).toBe(403)
+    expect(await refused.text()).toMatch(/confirmation required/i)
+    expect(await env.DB.prepare('SELECT COUNT(*) AS n FROM refunds').first<{ n: number }>()).toMatchObject({ n: 0 })
+    expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM admin_audit_events WHERE action = 'order.refund'").first<{ n: number }>()).toMatchObject({ n: 0 })
+
+    // A wrong password is refused and the action still does not happen.
+    const page = await (await app.request(`/admin/orders/${orderId}`, { headers: { ...jar.headers() } }, env)).text()
+    expect(hasReauthChallenge(page)).toBe(true)
+    const wrong = await app.request(
+      `/admin/orders/${orderId}/refunds`,
+      {
+        method: 'POST',
+        headers: { ...jar.headers(), 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ amount: '10.00', reason: 'wrong password', ...reauthFields(page, 'not-the-password') })
+      },
+      env
+    )
+    expect(wrong.status).toBe(403)
+    expect(await env.DB.prepare('SELECT COUNT(*) AS n FROM refunds').first<{ n: number }>()).toMatchObject({ n: 0 })
+  })
+
+  it('issues a refund through the validated admin form with the confirmation, and audits it once', async () => {
     const { orderId, amountMinor } = await paidOrder()
     const jar = await adminJar()
+    const page = await (await app.request(`/admin/orders/${orderId}`, { headers: { ...jar.headers() } }, env)).text()
     const res = await app.request(
       `/admin/orders/${orderId}/refunds`,
-      { method: 'POST', headers: { ...jar.headers(), 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ amount: '10.00', reason: 'Admin goodwill', idempotency_key: 'admin-rk-1' }) },
+      {
+        method: 'POST',
+        headers: { ...jar.headers(), 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ amount: '10.00', reason: 'Admin goodwill', idempotency_key: 'admin-rk-1', ...reauthFields(page, ADMIN_PASSWORD) })
+      },
       env
     )
     expect([302, 303]).toContain(res.status)
@@ -346,17 +387,29 @@ describe('ADM-03/ADM-04/ADM-12 the admin finance surfaces', () => {
   it('refuses an admin refund with no reason, and one that exceeds the remainder', async () => {
     const { orderId } = await paidOrder()
     const jar = await adminJar()
+    // Each attempt needs its OWN confirmation: a challenge is single-use, which is
+    // exactly what stops one page load from authorising two refunds.
+    const pageOne = await (await app.request(`/admin/orders/${orderId}`, { headers: { ...jar.headers() } }, env)).text()
     const noReason = await app.request(
       `/admin/orders/${orderId}/refunds`,
-      { method: 'POST', headers: { ...jar.headers(), 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ amount: '5.00', reason: '' }) },
+      {
+        method: 'POST',
+        headers: { ...jar.headers(), 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ amount: '5.00', reason: '', ...reauthFields(pageOne, ADMIN_PASSWORD) })
+      },
       env
     )
     expect([302, 303]).toContain(noReason.status)
     expect(String(noReason.headers.get('location'))).toMatch(/error=/)
 
+    const pageTwo = await (await app.request(`/admin/orders/${orderId}`, { headers: { ...jar.headers() } }, env)).text()
     const tooMuch = await app.request(
       `/admin/orders/${orderId}/refunds`,
-      { method: 'POST', headers: { ...jar.headers(), 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ amount: '999.00', reason: 'too much' }) },
+      {
+        method: 'POST',
+        headers: { ...jar.headers(), 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ amount: '999.00', reason: 'too much', ...reauthFields(pageTwo, ADMIN_PASSWORD) })
+      },
       env
     )
     expect(String(tooMuch.headers.get('location'))).toMatch(/error=/)

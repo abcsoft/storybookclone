@@ -266,6 +266,25 @@ const ADMIN_ROUTES = [
   ['/admin/finance/disputes', 'admin-finance-disputes'],
   ['/admin/finance/events', 'admin-finance-events'],
   ['/admin/finance/reconciliation', 'admin-finance-reconciliation'],
+  // V2 Phase 6 (ADM-01..ADM-21): the whole admin control plane. The audit signs in
+  // as a bootstrapped administrator (a legacy `role = 'admin'` account, which the
+  // migration backfills as super_admin), so every one of these must stand on its
+  // own with a fresh, mostly empty database: a queue with nothing in it is exactly
+  // the state that renders a broken or blank shell.
+  ['/admin/customers', 'admin-customers'],
+  ['/admin/prospects', 'admin-prospects'],
+  ['/admin/books', 'admin-books'],
+  ['/admin/fulfilment', 'admin-fulfilment'],
+  ['/admin/support', 'admin-support-inbox'],
+  ['/admin/privacy', 'admin-privacy'],
+  ['/admin/retention', 'admin-retention'],
+  ['/admin/integrations', 'admin-integrations'],
+  ['/admin/events', 'admin-events'],
+  ['/admin/events?stream=payment_events', 'admin-events-payments'],
+  ['/admin/staff', 'admin-staff'],
+  ['/admin/staff/matrix', 'admin-staff-matrix'],
+  ['/admin/audit', 'admin-audit'],
+  ['/admin/exports', 'admin-exports'],
   ['/admin/users', 'admin-users'],
   ['/admin/messages', 'admin-messages'],
   ['/admin/ai-settings', 'admin-ai-settings']

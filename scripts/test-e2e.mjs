@@ -20,6 +20,7 @@ import { runPhase2Journeys } from './e2e-phase2.mjs'
 import { runPhase3Journeys } from './e2e-phase3.mjs'
 import { runPhase4Journeys } from './e2e-phase4.mjs'
 import { runPhase5Journeys } from './e2e-phase5.mjs'
+import { runPhase6Journeys } from './e2e-phase6.mjs'
 import jpegCodec from 'jpeg-js'
 import { spawn, execFileSync } from 'node:child_process'
 import { writeFileSync, mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs'
@@ -1503,7 +1504,7 @@ async function main() {
     await verifyAppIdentity(browser)
 
     // LOCAL DEBUGGING AID ONLY. Unset (which is what `npm run test:e2e` and the
-    // release gates use) runs EVERY journey group. `WW_E2E_ONLY=phase3` narrows
+    // release gates use) runs EVERY journey group. `WW_E2E_ONLY=phase6` narrows
     // a local iteration to the phase-2 + phase-3 groups; it can only ever
     // REMOVE local runs, never change what the gate executes, and when it is set
     // it says so loudly.
@@ -1595,7 +1596,68 @@ async function main() {
     rmSync(tmpDirForPhase5, { recursive: true, force: true })
   }
 
-    console.log('\n[e2e] ALL JOURNEYS PASSED (guest, authenticated, double-submission, multi-face, upload-attack, cart-reload, cover-agreement, csrf, admin, disabled-claims, phase2-storefront-cms, phase3-generation-preview, phase4-commerce-payments, phase5-customer-lifecycle)\n')
+  // V2 Phase 6 (ADM-01…ADM-21) — the admin control plane, on its OWN
+  // payment-enabled server instance (its refund journey needs captured money, and
+  // enabling the provider changes what the other journeys test). It runs AFTER the
+  // phase-3 and phase-5 groups, both of which assert global preview/template counts.
+  const tmpDirForPhase6 = mkdtempSync(join(tmpdir(), 'ww-e2e-p6-'))
+  let phase6Browser = null
+  const phase6PhotoPath = join(tmpDirForPhase6, 'child-photo.jpg')
+  writeFileSync(phase6PhotoPath, buildRealJpeg(900, 900))
+  let phase6Server = null
+  // The Phase-6 group gets its OWN administrator, created through the project's
+  // documented one-time bootstrap (the same path ADM-01 describes and the same one
+  // the frontend audit uses). Every group signs in as the SAME account otherwise,
+  // and the admin sign-in route is deliberately rate limited to 5 attempts per 15
+  // minutes per address — a control this journey must not weaken to pass.
+  const phase6AdminEmail = `e2e-p6-admin-${runId}@example.com`
+  const phase6AdminPassword = 'e2e-p6-admin-password-123'
+  if (!onlyGroupEarly || onlyGroupEarly === 'phase6') {
+    // Every group on this machine shares ONE client identity for the auth
+    // limiters (sign-up: 10 attempts / 15 minutes; sign-in: 5), and the earlier
+    // groups legitimately spend most of that budget — reproduced as the phase-6
+    // shopper being refused by the sign-up limiter. Clear the accumulated WINDOWS
+    // so the remaining groups start from a clean budget. The limiter itself — its
+    // limits, its durable implementation and its own unit tests — is untouched, and
+    // no assertion in any group depends on a bucket being spent across groups.
+    queryD1('DELETE FROM rate_limit_windows;')
+    log('setup', 'bootstrapping the phase-6 administrator through the documented local bootstrap')
+    execFileSync('node', ['scripts/create-admin.mjs', '--email', phase6AdminEmail, '--password', phase6AdminPassword], {
+      cwd: root,
+      stdio: 'inherit'
+    })
+  }
+  if (!onlyGroupEarly || onlyGroupEarly === 'phase6') try {
+    const phase6Port = await findFreePort(PORT + 3)
+    const phase6Base = `http://127.0.0.1:${phase6Port}`
+    const started = startServer(phase6Port, ['--binding', 'PAYMENT_PROVIDER=deterministic-fake'])
+    phase6Server = started.server
+    log('setup', `starting the admin-control-plane server for the phase-6 journey on :${phase6Port}`)
+    if (!(await waitFor(phase6Base + '/', 45000))) {
+      console.error(started.logs.value)
+      fail('setup', 'the phase-6 server did not become ready in time')
+    }
+    phase6Browser = await chromium.launch()
+    await runPhase6Journeys({
+      browser: phase6Browser,
+      base: phase6Base,
+      log,
+      fail,
+      attachDiagnostics,
+      assertClean,
+      queryD1,
+      admin: { email: phase6AdminEmail, password: phase6AdminPassword },
+      helpers: { personalizeAndAddToCart, photoPath: phase6PhotoPath }
+    })
+  } finally {
+    if (phase6Browser) await phase6Browser.close().catch(() => {})
+    if (phase6Server) killServerTree(phase6Server.pid)
+    rmSync(tmpDirForPhase6, { recursive: true, force: true })
+  }
+
+    console.log(
+    '\n[e2e] ALL JOURNEYS PASSED (guest, authenticated, double-submission, multi-face, upload-attack, cart-reload, cover-agreement, csrf, admin, disabled-claims, phase2-storefront-cms, phase3-generation-preview, phase4-commerce-payments, phase5-customer-lifecycle, phase6-admin-control-plane)\n'
+  )
   } catch (err) {
     // Surface the local server log on failure only — never written to a file.
     if (logs.value) console.error(`\n[e2e] server log:\n${logs.value}`)

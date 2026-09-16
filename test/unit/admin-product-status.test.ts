@@ -43,14 +43,19 @@ describe('toProduct() carries the active column through', () => {
   })
 })
 
+// V2 Phase 6: adminProducts() takes the caller's resolved permission set, because
+// the shared admin shell renders its navigation from it (TypeScript requires the
+// argument, so a view can never be rendered with an unjustified menu).
+const ADMIN_PERMISSIONS = ['admin.access', 'dashboard.view', 'catalog.read']
+
 describe('adminProducts() renders the real status, not always "Hidden"', () => {
   it('shows "Active" for an active product', () => {
-    const html = adminProducts([toProduct(fakeRow({ active: 1 }))])
+    const html = adminProducts([toProduct(fakeRow({ active: 1 }))], undefined, ADMIN_PERMISSIONS)
     expect(html).toContain('Active')
     expect(html).not.toContain('Hidden')
   })
   it('shows "Hidden" for an inactive product', () => {
-    const html = adminProducts([toProduct(fakeRow({ active: 0 }))])
+    const html = adminProducts([toProduct(fakeRow({ active: 0 }))], undefined, ADMIN_PERMISSIONS)
     expect(html).toContain('Hidden')
   })
 })

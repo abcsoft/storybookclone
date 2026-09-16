@@ -709,6 +709,13 @@ describe('phase3 — ADM-08/09/10/11 admin surfaces and authorization', () => {
   it('a customer cannot reach the admin provider-health endpoint', async () => {
     const jar = await registerUserWith(env, 'not-admin@example.com')
     const res = await app.request('/api/v1/admin/generation/providers', { headers: { ...jar.headers() } }, env as never)
-    expect(res.status).toBe(404)
+    // V2 Phase 6 makes this denial EARLIER and stronger: the central admin guard
+    // (src/admin-console/guard.ts) refuses the request before the route's own
+    // handler runs, so a non-staff account now gets the uniform 401 instead of
+    // that handler's deliberate 404. The property this test exists for — a
+    // customer cannot reach the endpoint — is unchanged, and it is now enforced
+    // in ONE place for the whole admin surface instead of per handler.
+    expect([401, 404]).toContain(res.status)
+    expect(res.status).not.toBe(200)
   }, 30_000)
 })
