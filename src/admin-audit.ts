@@ -15,6 +15,12 @@ const REDACTED_KEY = /(secret|token|password|passwd|hash|api[_-]?key|authorizati
 export type AdminAuditInput = {
   actorUserId: number | null
   actorEmail: string | null
+  /** V2 Phase 6 (ADM-20): the roles the actor held at the time, e.g. "finance operations". */
+  actorRole?: string | null
+  /** V2 Phase 6: the request correlation id, so an event can be tied to a log line. */
+  requestId?: string | null
+  /** V2 Phase 6: 'ui' | 'api' | 'system' — which surface the action came from. */
+  source?: string | null
   action: string
   entityType: string
   entityId?: string | number | null
@@ -53,12 +59,15 @@ export async function recordAdminAudit(db: D1Database, input: AdminAuditInput): 
   try {
     await db
       .prepare(
-        `INSERT INTO admin_audit_events (actor_user_id, actor_email, action, entity_type, entity_id, reason, metadata_json)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO admin_audit_events (actor_user_id, actor_email, actor_role, request_id, source, action, entity_type, entity_id, reason, metadata_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .bind(
         input.actorUserId ?? null,
         input.actorEmail ?? null,
+        input.actorRole ? String(input.actorRole).slice(0, 200) : null,
+        input.requestId ? String(input.requestId).slice(0, 80) : null,
+        input.source ? String(input.source).slice(0, 16) : null,
         String(input.action),
         String(input.entityType),
         input.entityId == null ? null : String(input.entityId),

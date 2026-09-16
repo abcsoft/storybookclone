@@ -41,7 +41,14 @@ const stored = `pbkdf2$${salt.toString('hex')}$${hash.toString('hex')}`
 
 // Escape single quotes for the SQL literal.
 const esc = (s) => s.replace(/'/g, "''")
-const sql = `INSERT INTO users (name, email, password_hash, role) VALUES ('Admin', '${esc(email)}', '${esc(stored)}', 'admin') ON CONFLICT(email) DO UPDATE SET password_hash = excluded.password_hash, role = 'admin';`
+// V2 Phase 6 (ADM-02): the account's AUTHORITY lives in admin_user_roles; the
+// legacy `role = 'admin'` column is only the sign-in gate. Both are written here so
+// the Staff screen shows the real grant instead of relying on the bootstrap
+// fallback.
+const sql = [
+  `INSERT INTO users (name, email, password_hash, role) VALUES ('Admin', '${esc(email)}', '${esc(stored)}', 'admin') ON CONFLICT(email) DO UPDATE SET password_hash = excluded.password_hash, role = 'admin';`,
+  `INSERT OR IGNORE INTO admin_user_roles (user_id, role_key) SELECT id, 'super_admin' FROM users WHERE email = '${esc(email)}';`
+].join(String.fromCharCode(10))
 
 console.log(`Creating/updating local admin for ${email} ...`)
 // Confirmed bug (found via live audit testing): passing the SQL as a
