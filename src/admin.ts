@@ -3,32 +3,34 @@ import { esc } from './layout'
 import { brand } from './brand'
 import { money, type Product } from './data'
 import { type DiscountRow } from './db'
+import { groupedNav } from './admin-console/nav'
+import { permits } from './admin-console/guard'
 import { ORDER_STATUSES, PREVIEW_STATUSES, ORDER_STATUS_FLOW, PREVIEW_STATUS_FLOW, orderTransitionNeedsReason, statusLabel, cancellationEligibility, type OrderStatus, type PreviewStatus } from './orders-status'
 
-export function adminPage(opts: { title: string; active: string; body: string; subtitle?: string }) {
-  // V2 Phase 2: the admin IA now mirrors §10. Navigation is data here (one
-  // static list) and every destination enforces its own permission check
-  // server-side, so hiding a link is never the control.
-  const nav = [
-    ['dashboard', '/admin', 'fa-gauge', 'Dashboard'],
-    ['orders', '/admin/orders', 'fa-box-open', 'Orders'],
-    ['finance', '/admin/finance', 'fa-file-invoice-dollar', 'Finance'],
-    ['catalog', '/admin/catalog', 'fa-book', 'Catalog'],
-    ['collections', '/admin/collections', 'fa-tag', 'Collections'],
-    ['media', '/admin/media', 'fa-image', 'Media'],
-    ['cms', '/admin/cms', 'fa-palette', 'CMS'],
-    ['pages', '/admin/cms/pages', 'fa-book-open', 'Pages & blog'],
-    ['reviews', '/admin/reviews', 'fa-check-circle', 'Reviews'],
-    ['templates', '/admin/generation/templates', 'fa-layer-group', 'Templates'],
-    ['generation', '/admin/generation/jobs', 'fa-wand-sparkles', 'Generation'],
-    ['previews', '/admin/generation/previews', 'fa-images', 'Previews'],
-    ['discounts', '/admin/discounts', 'fa-sack-dollar', 'Discounts'],
-    ['localization', '/admin/localization', 'fa-language', 'Localization'],
-    ['settings', '/admin/settings', 'fa-store', 'Brand & settings'],
-    ['ai-settings', '/admin/ai-settings', 'fa-wand-magic-sparkles', 'AI & Book API'],
-    ['users', '/admin/users', 'fa-users', 'Users'],
-    ['messages', '/admin/messages', 'fa-envelope', 'Inbox']
-  ] as const
+/**
+ * The ONE admin shell.
+ *
+ * V2 Phase 6: `permissions` is REQUIRED. It is the caller's resolved permission
+ * set (set on the request context by `adminConsoleGuard`), and the sidebar is
+ * built from it through `./admin-console/nav.ts`. Making the parameter required
+ * is deliberate: TypeScript then fails the build for any screen that would
+ * otherwise render a menu it cannot justify. The menu is a usability projection
+ * only — every destination re-checks the permission server-side in the central
+ * guard, so hiding a link is never the control.
+ */
+export function adminPage(opts: { title: string; active: string; body: string; subtitle?: string; permissions: readonly string[] }) {
+  const groups = groupedNav(opts.permissions)
+  const navHtml = groups
+    .map(
+      (group) => `<p class="admin-nav-group">${esc(group.group)}</p>
+      ${group.items
+        .map(
+          (item) =>
+            `<a href="${item.href}" data-nav-key="${esc(item.key)}" data-nav-perm="${esc(item.permission)}" class="${opts.active === item.key ? 'active' : ''}"><i class="fas ${esc(item.icon)}"></i> ${esc(item.label)}</a>`
+        )
+        .join('')}`
+    )
+    .join('')
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -43,13 +45,8 @@ export function adminPage(opts: { title: string; active: string; body: string; s
 <body>
   <aside class="admin-side">
     <a class="admin-brand" href="/admin"><img src="${esc(brand().logoPath)}" alt="" width="32" height="32"><span>${esc(brand().name)}<br><small>Admin</small></span></a>
-    <nav>
-      ${nav
-        .map(
-          ([key, href, icon, label]) =>
-            `<a href="${href}" class="${opts.active === key ? 'active' : ''}"><i class="fas ${icon}"></i> ${label}</a>`
-        )
-        .join('')}
+    <nav data-admin-nav data-permission-count="${opts.permissions.length}">
+      ${navHtml}
     </nav>
     <div class="admin-side-foot">
       <a href="/" class="store-link"><i class="fas fa-store"></i> View store</a>
@@ -63,6 +60,11 @@ export function adminPage(opts: { title: string; active: string; body: string; s
   <script src="/static/admin.js"></script>
 </body>
 </html>`
+}
+
+/** Does the caller hold `permission`? Re-exported so views do not import the guard directly. */
+export function can(permissions: readonly string[], permission: string): boolean {
+  return permits(permissions, permission)
 }
 
 export function adminLogin(msg?: string) {
@@ -101,6 +103,13 @@ export function adminDashboard(s: {
   revenue: Array<{ currency: string; capturedMinor: number; refundedMinor: number; netMinor: number; paidOrders: number }>
   /** ADM-03: orders with NO captured payment. Explicitly NOT revenue. */
   unpaidOrders: number
+  permissions: readonly string[]
+  /**
+   * ADM-03: the operational-queue and reconciliation section, rendered by
+   * src/admin-console/views.ts and passed in as HTML rather than imported, so this
+   * shell module never depends on the console modules that depend on it.
+   */
+  extraHtml?: string
 }) {
   const fmt = (minor: number, currency: string) => {
     try {
@@ -126,6 +135,7 @@ export function adminDashboard(s: {
     ['fa-envelope', String(s.messages), 'Unread messages']
   ]
   return adminPage({
+    permissions: s.permissions,
     title: 'Dashboard',
     active: 'dashboard',
     body: `
@@ -133,6 +143,7 @@ export function adminDashboard(s: {
     <div class="stat-grid">
       ${cards.map(([icon, val, label]) => `<div class="stat"><i class="fas ${icon}"></i><strong>${val}</strong><span>${label}</span></div>`).join('')}
     </div>
+    ${s.extraHtml ?? ''}
     <h2>Latest orders</h2>
     ${ordersTable(s.recentOrders, false)}
     <p><a class="a-link" href="/admin/orders">All orders →</a> · <a class="a-link" href="/admin/finance">Finance & reconciliation →</a></p>`
@@ -169,9 +180,10 @@ export function ordersTable(orders: any[], link = true) {
   </table></div>`
 }
 
-export function adminOrders(orders: any[], currentStatus: string) {
+export function adminOrders(orders: any[], currentStatus: string, permissions: readonly string[]) {
   const tabs = ['', ...ORDER_STATUSES]
   return adminPage({
+    permissions,
     title: 'Orders',
     active: 'orders',
     body: `
@@ -194,8 +206,30 @@ export function adminOrders(orders: any[], currentStatus: string) {
  * order screen is one place an operator can answer "what happened to this
  * order, and what money moved?" without hopping between views.
  */
-export function adminOrderDetail(o: any, items: any[], flash?: string, error?: string, financeHtml = '') {
+/**
+ * The order detail screen.
+ *
+ * `privatePhotoUrls` maps an item id to a SHORT-LIVED, single-use capability URL
+ * (`src/admin-console/media.ts`), minted by the caller for the operator who is
+ * looking at the page. The screen never renders an R2 object key: a key in the
+ * HTML is a permanent, permission-unchecked URL for a child's photograph (V2 §10).
+ * An item with no entry renders a placeholder that says WHY — no photo was
+ * uploaded, the caller's roles lack `books.read`, or the stored reference is not a
+ * registered upload — because a silent blank frame is how a real privacy boundary
+ * gets mistaken for a bug.
+ */
+export function adminOrderDetail(
+  o: any,
+  items: any[],
+  flash: string | undefined,
+  error: string | undefined,
+  financeHtml: string,
+  permissions: readonly string[],
+  privatePhotoUrls: ReadonlyMap<number, string> = new Map(),
+  mayReadPrivatePhotos = false
+) {
   return adminPage({
+    permissions,
     title: `Order #${o.id}`,
     active: 'orders',
     body: `
@@ -262,10 +296,21 @@ export function adminOrderDetail(o: any, items: any[], flash?: string, error?: s
         <h2>Personalised items (${items.length})</h2>
         ${items
           .map(
-            (it) => `
+            (it) => {
+              // A short-lived capability, or a placeholder that states the reason.
+              const photoUrl = privatePhotoUrls.get(Number(it.id))
+              const reason = !it.photo_key
+                ? 'No photo was uploaded for this item'
+                : !mayReadPrivatePhotos
+                  ? 'A photo exists for this item, but your roles do not include books.read'
+                  : 'The stored photo reference is not a registered upload, so it cannot be displayed'
+              const photo = photoUrl
+                ? `<img class="a-photo" src="${esc(photoUrl)}" alt="Child photo (private, expires shortly)" loading="lazy" onerror="this.style.display='none'">`
+                : `<span class="a-photo none" title="${esc(reason)}"><i class="fas fa-image"></i></span>`
+              return `
           <div class="a-item">
             <div class="a-item-head">
-              ${it.photo_key ? `<img class="a-photo" src="/photos/${encodeURIComponent(it.photo_key)}" alt="Child photo" onerror="this.style.display='none'">` : '<span class="a-photo none"><i class="fas fa-image"></i></span>'}
+              ${photo}
               <div>
                 <strong>${esc(it.title)}</strong> <span class="muted">× ${it.qty} · $${Number(it.unit_price).toFixed(2)}</span><br>
                 <span class="muted">For <strong>${esc(it.child_name || '—')}</strong>${it.child_age ? `, age ${it.child_age}` : ''} · ${esc(it.language || '')}</span>
@@ -288,6 +333,7 @@ export function adminOrderDetail(o: any, items: any[], flash?: string, error?: s
               <button class="a-btn ghost" type="submit">Save</button>
             </form>
           </div>`
+            }
           )
           .join('')}
       </section>
@@ -296,8 +342,9 @@ export function adminOrderDetail(o: any, items: any[], flash?: string, error?: s
   })
 }
 
-export function adminProducts(products: Product[], flash?: string) {
+export function adminProducts(products: Product[], flash: string | undefined, permissions: readonly string[]) {
   return adminPage({
+    permissions,
     title: 'Products',
     active: 'products',
     body: `
@@ -328,10 +375,11 @@ export function adminProducts(products: Product[], flash?: string) {
   })
 }
 
-export function adminProductForm(p: Product | null, flash?: string) {
+export function adminProductForm(p: Product | null, flash: string | undefined, permissions: readonly string[]) {
   const isNew = !p
   const v = (k: keyof Product) => (p ? (p[k] as any) ?? '' : '')
   return adminPage({
+    permissions,
     title: isNew ? 'New product' : `Edit ${p!.title}`,
     active: 'products',
     body: `
@@ -381,8 +429,9 @@ export function adminProductForm(p: Product | null, flash?: string) {
 export function adminDiscounts(
   rows: Array<Record<string, any>>,
   usage: Map<number, { count: number; totalMinor: number }> = new Map(),
-  flash?: string,
-  error?: string
+  flash: string | undefined,
+  error: string | undefined,
+  permissions: readonly string[]
 ) {
   const money = (minor: number) => `$${(minor / 100).toFixed(2)}`
   const rule = (r: Record<string, any>) => {
@@ -397,6 +446,7 @@ export function adminDiscounts(
     return parts.length ? parts.join(' · ') : 'no extra limits'
   }
   return adminPage({
+    permissions,
     title: 'Discounts',
     active: 'discounts',
     body: `
@@ -479,8 +529,9 @@ export function adminDiscounts(
   })
 }
 
-export function adminUsers(users: any[]) {
+export function adminUsers(users: any[], permissions: readonly string[]) {
   return adminPage({
+    permissions,
     title: 'Users',
     active: 'users',
     body: `
@@ -505,8 +556,9 @@ export function adminUsers(users: any[]) {
   })
 }
 
-export function adminMessages(rows: any[], flash?: string) {
+export function adminMessages(rows: any[], flash: string | undefined, permissions: readonly string[]) {
   return adminPage({
+    permissions,
     title: 'Inbox',
     active: 'messages',
     body: `
@@ -546,8 +598,9 @@ export type AiSettingsRow = {
 // binding (env), never a value from the database and never the secret
 // itself. `envKeyConfigured` is computed by the route handler from
 // `c.env.AI_PROVIDER_API_KEY` (or equivalent), not from `settings`.
-export function adminAiSettings(settings: AiSettingsRow, envKeyConfigured: boolean, flash?: string) {
+export function adminAiSettings(settings: AiSettingsRow, envKeyConfigured: boolean, flash: string | undefined, permissions: readonly string[]) {
   return adminPage({
+    permissions,
     title: 'AI & Book API Settings',
     active: 'ai-settings',
     body: `

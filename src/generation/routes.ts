@@ -199,7 +199,11 @@ async function ownerMayReadPreview(db: D1Database, key: string, c: Ctx): Promise
   const parsed = parsePreviewKey(key)
   if (!parsed) return false
   const user = c.get('user')
-  if (user?.role === 'admin') return true
+  // V2 Phase 6 (V2 §10): the blanket `user.role === 'admin'` bypass was removed.
+  // It made every generated preview a permanent, permission-unchecked URL for any
+  // account holding the legacy admin flag. Staff read a preview through
+  // `/admin/media/preview/<token>`, which is permission-checked (`previews.read`)
+  // by the central guard and single-use.
   const owner: Owner | null = await resolveOwner(c)
   if (owner) {
     const book = await loadOwnedUserBook(db, parsed.bookPublicId, owner).catch(() => null)

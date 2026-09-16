@@ -25,6 +25,11 @@ import { getCustomerOrder, listCustomerOrders, paymentStatusLabel } from './acco
 import { orderFinancePanel } from './admin_finance'
 import { financialSummary } from './commerce/reporting'
 import { hasFinancePermission } from './admin_routes'
+import { adminConsoleGuard, permits, issueReauthTicket } from './admin-console/guard'
+import { adminMediaUrl } from './admin-console/media'
+import { adminOpsDashboardSection } from './admin-console/views'
+import { dashboardModel } from './admin-console/ops'
+import { registerAdminConsoleRoutes } from './admin-console/routes'
 import { FINANCE_PERMISSIONS } from './commerce/types'
 import {
   queryProducts,
@@ -234,7 +239,23 @@ export type Bindings = {
   REVISION_MAX_PER_REVISION?: string
   REVISION_MAX_PER_BOOK?: string
 }
-export type Vars = { user: AuthUser | null; requestId: string | null; csrfToken?: string } & Partial<PageContextVars>
+export type Vars = {
+  user: AuthUser | null
+  requestId: string | null
+  csrfToken?: string
+  /** V2 Phase 6 (ADM-02): the caller's resolved admin permission set, set by the central guard. */
+  adminPermissions?: string[]
+  adminRoles?: string[]
+} & Partial<PageContextVars>
+
+/**
+ * The caller's resolved admin permissions. Read-only: they are computed ONCE per
+ * request by the central admin guard (src/admin-console/guard.ts) and never
+ * recomputed in a view, so a screen cannot disagree with the gate that let it run.
+ */
+function adminPerms(c: { get: (key: string) => unknown }): readonly string[] {
+  return (c.get('adminPermissions') as string[] | undefined) ?? []
+}
 
 const app = new Hono<{ Bindings: Bindings; Variables: Vars }>()
 
@@ -329,6 +350,14 @@ export async function bootstrapLocalDefaults(db: D1Database, bootstrap?: { email
     await db
       .prepare("INSERT OR IGNORE INTO users (name, email, password_hash, role) VALUES (?, ?, ?, 'admin')")
       .bind('Admin', bootstrap.email, await hashPassword(bootstrap.password))
+      .run()
+    // V2 Phase 6 (ADM-02): record the account's AUTHORITY explicitly. The legacy
+    // `role = 'admin'` flag is only the sign-in gate now, so the bootstrap writes
+    // the super_admin grant too — otherwise the panel would depend on the
+    // legacy-flag fallback instead of on the grants table the Staff screen reads.
+    await db
+      .prepare("INSERT OR IGNORE INTO admin_user_roles (user_id, role_key) SELECT id, 'super_admin' FROM users WHERE email = ?")
+      .bind(bootstrap.email)
       .run()
   }
   await db
@@ -568,6 +597,16 @@ app.use('*', async (c, next) => {
   c.header('X-Request-Id', requestId)
   await next()
 })
+
+// V2 Phase 6 (ADM-02/ADM-20): the ONE central admin authorization gate. It is
+// registered BEFORE every admin route so it covers the whole surface, and it
+// refuses by default any /admin or /api/**/admin request whose route has no
+// policy entry — a new admin route is unreachable until it declares the
+// permission it needs (src/admin-console/policy.ts).
+app.use('/admin/*', adminConsoleGuard)
+app.use('/admin', adminConsoleGuard)
+app.use('/api/v1/admin/*', adminConsoleGuard)
+app.use('/api/admin/*', adminConsoleGuard)
 
 // Phase 2 personalization domain (user-books, uploads lifecycle, face
 // analysis, personalization revisions) — see src/personalization/*.
@@ -1119,17 +1158,24 @@ app.get('/order-success', async (c) => {
 // post or editing a policy is an admin action rather than a code change.
 
 // ---------- photos (R2) ----------
-// NEVER a permanently public URL: only the uploading browser (owner_token),
-// the admin, or a customer who owns an order_item referencing this exact
-// key may view it. Everyone else gets 404 (not 403, so a photo's existence
-// can't be probed either).
+// NEVER a permanently public URL: only the uploading browser (owner_token) or a
+// customer who owns an order_item referencing this exact key may view it.
+// Everyone else gets 404 (not 403, so a photo's existence can't be probed
+// either).
+//
+// V2 Phase 6 (V2 §10): the STAFF bypass was removed from this route. It used to
+// wave any `users.role = 'admin'` account through on the object key alone, with a
+// one-hour cache — a permanent, permission-unchecked URL for a child's
+// photograph that outlived a role revocation. Staff now view a photo through
+// `/admin/media/photo/<token>` (src/admin-console/media.ts), which the central
+// guard checks against `books.read` and which expires in two minutes.
 app.get('/photos/:key{.+}', async (c) => {
   if (!c.env.PHOTOS) return c.notFound()
   const key = c.req.param('key')
   const user = c.get('user')
   const ownerToken = getCookie(c, UPLOAD_OWNER_COOKIE)
 
-  let authorized = user?.role === 'admin'
+  let authorized = false
   if (!authorized && ownerToken) {
     const uploadOwner = await getUploadOwner(c.env.DB, key)
     authorized = uploadOwner !== null && uploadOwner === ownerToken
@@ -1542,48 +1588,36 @@ async function auditAdmin(
 
 app.get('/admin', async (c) => {
   const db = c.env.DB
+  const nowSec = Math.floor(Date.now() / 1000)
+  // ADM-03: ONE model. Every money figure comes from the payment ledger and every
+  // operational figure is a real row count of the state a phase actually writes —
+  // no tile is derived from a status string, and none is invented.
+  const model = await dashboardModel(db, nowSec)
   const one = async (sql: string) => (await db.prepare(sql).first<{ n: number }>())?.n ?? 0
-  const [orders, users, productsN, pending, messages] = await Promise.all([
-    one('SELECT COUNT(*) n FROM orders'),
-    one("SELECT COUNT(*) n FROM users WHERE role = 'customer'"),
-    one('SELECT COUNT(*) n FROM products WHERE active = 1'),
-    one("SELECT COUNT(*) n FROM orders WHERE status IN ('pending_preview','preview_sent')"),
-    one('SELECT COUNT(*) n FROM contacts WHERE resolved = 0')
-  ])
   // INTEGER minor units are the authoritative total (D-09). This is order
   // VALUE, not revenue (S-10/ADM-03) — the revenue tiles come from the ledger.
   const orderValueMinor =
     (await db.prepare("SELECT COALESCE(SUM(total_minor),0) n FROM orders WHERE status <> 'cancelled'").first<{ n: number }>())?.n ?? 0
-  // ADM-03: captured/refunded/net come from `order_financial_entries` ONLY, so an
-  // unpaid or manually-recorded order can never be counted as revenue.
-  const summary = await financialSummary(db, {})
-  const unpaidOrders = summary.unpaid.orders
-  const recent =
-    (
-      await db
-        .prepare(
-          `SELECT o.*, (SELECT COUNT(*) FROM order_items i WHERE i.order_id = o.id) AS item_count
-           FROM orders o ORDER BY o.id DESC LIMIT 8`
-        )
-        .all()
-    ).results || []
+  const pending = await one("SELECT COUNT(*) n FROM orders WHERE status IN ('awaiting_preview','preview_ready','approved')")
   return c.html(
     adminDashboard({
-      orders,
+      permissions: adminPerms(c),
+      orders: model.counts.orders,
       orderValue: minorToMajor(orderValueMinor),
-      users,
-      products: productsN,
+      users: model.counts.users,
+      products: model.counts.products,
       pending,
-      messages,
-      recentOrders: recent,
-      revenue: summary.revenueByCurrency.map((r) => ({
+      messages: model.counts.contactMessages,
+      recentOrders: model.recentOrders,
+      revenue: model.summary.revenueByCurrency.map((r) => ({
         currency: r.currency,
         capturedMinor: r.capturedMinor,
         refundedMinor: r.refundedMinor,
         netMinor: r.netMinor,
         paidOrders: r.paidOrders
       })),
-      unpaidOrders
+      unpaidOrders: model.summary.unpaid.orders,
+      extraHtml: adminOpsDashboardSection(model.counts, model.issues)
     })
   )
 })
@@ -1596,7 +1630,7 @@ app.get('/admin/orders', async (c) => {
      FROM orders o ${where} ORDER BY o.id DESC LIMIT 200`
   )
   const rows = (await (status ? stmt.bind(status) : stmt).all()).results || []
-  return c.html(adminOrders(rows, status))
+  return c.html(adminOrders(rows, status, adminPerms(c)))
 })
 
 app.get('/admin/orders/:id', async (c) => {
@@ -1614,7 +1648,13 @@ app.get('/admin/orders/:id', async (c) => {
     db.prepare('SELECT * FROM order_state_events WHERE order_id = ? ORDER BY id').bind(id).all<Record<string, unknown>>(),
     db.prepare('SELECT * FROM order_addresses WHERE order_id = ? ORDER BY kind').bind(id).all<Record<string, unknown>>()
   ])
-  const financeRead = hasFinancePermission(c.get('user'), FINANCE_PERMISSIONS.read)
+  const financeRead = permits(adminPerms(c), FINANCE_PERMISSIONS.read)
+  // ADM-20: the refund form on this page is a high-risk action, so the page
+  // issues the single-use confirmation it must carry. The guard refuses the POST
+  // without it.
+  const refundReauth = permits(adminPerms(c), FINANCE_PERMISSIONS.refund)
+    ? await issueReauthTicket(c, 'POST /admin/orders/:id/refunds', `/admin/orders/${id}/refunds`)
+    : null
   const financeHtml = orderFinancePanel({
     order,
     attempts: attempts.results || [],
@@ -1622,10 +1662,36 @@ app.get('/admin/orders/:id', async (c) => {
     ledger: ledger.results || [],
     timeline: timeline.results || [],
     addresses: addresses.results || [],
-    canRefund: hasFinancePermission(c.get('user'), FINANCE_PERMISSIONS.refund),
-    canRead: financeRead
+    canRefund: permits(adminPerms(c), FINANCE_PERMISSIONS.refund),
+    canRead: financeRead,
+    refundReauth
   })
-  return c.html(adminOrderDetail(order, items, c.req.query('saved') ? 'Saved.' : undefined, c.req.query('error') || undefined, financeHtml))
+  // V2 §10: the child's photograph is NOT linked by its object key. For an
+  // operator whose roles include `books.read` the page mints ONE short-lived,
+  // single-use capability per item photo; every other role (finance, for example)
+  // gets a placeholder, because seeing an order is not the same authority as
+  // seeing a customer's child.
+  const photoUrls = new Map<number, string>()
+  const mayReadPrivatePhotos = permits(adminPerms(c), 'books.read')
+  if (mayReadPrivatePhotos) {
+    const actor = c.get('user')
+    for (const item of items as Array<{ id: number; photo_key?: string | null }>) {
+      const url = await adminMediaUrl(db, { userId: Number(actor?.id ?? 0), kind: 'photo', objectKey: item.photo_key })
+      if (url) photoUrls.set(Number(item.id), url)
+    }
+  }
+  return c.html(
+    adminOrderDetail(
+      order,
+      items,
+      c.req.query('saved') ? 'Saved.' : undefined,
+      c.req.query('error') || undefined,
+      financeHtml,
+      adminPerms(c),
+      photoUrls,
+      mayReadPrivatePhotos
+    )
+  )
 })
 
 app.post('/admin/orders/:id/status', async (c) => {
@@ -1673,10 +1739,10 @@ app.post('/admin/items/:id/preview', async (c) => {
 // ---- products CRUD ----
 app.get('/admin/products', async (c) => {
   const rows = await queryProducts(c.env.DB, { includeInactive: true })
-  return c.html(adminProducts(rows, c.req.query('saved') ? 'Saved.' : undefined))
+  return c.html(adminProducts(rows, c.req.query('saved') ? 'Saved.' : undefined, adminPerms(c)))
 })
 
-app.get('/admin/products/new', (c) => c.html(adminProductForm(null)))
+app.get('/admin/products/new', (c) => c.html(adminProductForm(null, undefined, adminPerms(c))))
 
 app.post('/admin/products/new', async (c) => {
   const b = await c.req.parseBody()
@@ -1708,7 +1774,7 @@ app.post('/admin/products/new', async (c) => {
     traits: String(b.traits || '').split('\n').map((s) => s.trim()).filter(Boolean),
     active: !!b.active
   })
-  if (!result.ok) return c.html(adminProductForm(null, `Could not create: ${result.error}`))
+  if (!result.ok) return c.html(adminProductForm(null, `Could not create: ${result.error}`, adminPerms(c)))
   return c.redirect('/admin/products?saved=1')
 })
 
@@ -1718,7 +1784,7 @@ app.get('/admin/products/:id', async (c) => {
   if (!row) return c.html(adminPage404())
   const { toProduct } = await import('./db')
   const p = { ...toProduct(row), active: row.active } as any
-  return c.html(adminProductForm(p, c.req.query('saved') ? 'Saved.' : undefined))
+  return c.html(adminProductForm(p, c.req.query('saved') ? 'Saved.' : undefined, adminPerms(c)))
 })
 
 app.post('/admin/products/:id', async (c) => {
@@ -1754,7 +1820,7 @@ app.post('/admin/products/:id', async (c) => {
     const row = await c.env.DB.prepare('SELECT * FROM products WHERE id = ?').bind(id).first<any>()
     const { toProduct } = await import('./db')
     const p = row ? ({ ...toProduct(row), active: row.active } as any) : null
-    return c.html(adminProductForm(p, `Could not save: ${result.error}`))
+    return c.html(adminProductForm(p, `Could not save: ${result.error}`, adminPerms(c)))
   }
   return c.redirect(`/admin/products/${id}?saved=1`)
 })
@@ -1945,7 +2011,7 @@ app.get('/admin/discounts', async (c) => {
         .all<{ discount_id: number; n: number; total: number }>()
     ).results || []
   const usageMap = new Map(usage.map((u) => [Number(u.discount_id), { count: Number(u.n), totalMinor: Number(u.total) }]))
-  return c.html(adminDiscounts(rows, usageMap, c.req.query('saved') ? 'Saved.' : undefined, c.req.query('error') || undefined))
+  return c.html(adminDiscounts(rows, usageMap, c.req.query('saved') ? 'Saved.' : undefined, c.req.query('error') || undefined, adminPerms(c)))
 })
 
 app.post('/admin/discounts', async (c) => {
@@ -2115,6 +2181,12 @@ app.post('/admin/discounts/:id/toggle', async (c) => {
 // below is admin-only by construction.
 registerAdminStoreRoutes(app)
 
+// V2 Phase 6 (ADM-01..ADM-21): the admin control plane — customers, user books,
+// support inbox, privacy/retention, integrations/health, events, staff/roles,
+// audit, exports, fulfilment, and the /api/v1/admin JSON surface. Registered
+// after the central guard, so every route here is already permission-checked.
+registerAdminConsoleRoutes(app)
+
 app.get('/admin/users', async (c) => {
   const rows =
     (
@@ -2124,7 +2196,7 @@ app.get('/admin/users', async (c) => {
          FROM users u ORDER BY u.id DESC LIMIT 300`
       ).all()
     ).results || []
-  return c.html(adminUsers(rows))
+  return c.html(adminUsers(rows, adminPerms(c)))
 })
 
 // ---- AI Settings & Book Generation API Settings ----
@@ -2150,7 +2222,7 @@ app.get('/admin/ai-settings', async (c) => {
     }
   }
   const envKeyConfigured = !!c.env.AI_PROVIDER_API_KEY
-  return c.html(adminAiSettings(settings, envKeyConfigured, c.req.query('saved') ? 'AI API Settings saved successfully.' : undefined))
+  return c.html(adminAiSettings(settings, envKeyConfigured, c.req.query('saved') ? 'AI API Settings saved successfully.' : undefined, adminPerms(c)))
 })
 
 app.post('/admin/ai-settings', async (c) => {
@@ -2441,7 +2513,7 @@ app.post('/api/generate-book', async (c) => {
 // ---- inbox ----
 app.get('/admin/messages', async (c) => {
   const rows = (await c.env.DB.prepare('SELECT * FROM contacts ORDER BY resolved, id DESC LIMIT 200').all()).results || []
-  return c.html(adminMessages(rows, c.req.query('saved') ? 'Saved.' : undefined))
+  return c.html(adminMessages(rows, c.req.query('saved') ? 'Saved.' : undefined, adminPerms(c)))
 })
 
 app.post('/admin/messages/:id/toggle', async (c) => {
