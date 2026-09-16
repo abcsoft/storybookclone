@@ -37,7 +37,7 @@ function pageHead(title: string, description: string): string {
 // homepage blocks
 // ---------------------------------------------------------------------------
 
-export async function adminCmsHome(db: D1Database, opts: { flash?: string; error?: string; pagePath?: string } = {}): Promise<string> {
+export async function adminCmsHome(db: D1Database, opts: { permissions: readonly string[]; flash?: string; error?: string; pagePath?: string }): Promise<string> {
   const pagePath = opts.pagePath || '/'
   const blocks = (
     await db
@@ -101,16 +101,16 @@ export async function adminCmsHome(db: D1Database, opts: { flash?: string; error
     <button type="submit">Add block</button>
   </form>
   `
-  return adminPage({ title: 'CMS — homepage', active: 'cms', body })
+  return adminPage({ permissions: opts.permissions, title: 'CMS — homepage', active: 'cms', body })
 }
 
 export async function getBlockForEdit(db: D1Database, id: number) {
   return db.prepare('SELECT * FROM cms_blocks WHERE id = ?').bind(id).first<Row>()
 }
 
-export async function adminCmsBlockEditor(db: D1Database, id: number, opts: { flash?: string; error?: string } = {}): Promise<string> {
+export async function adminCmsBlockEditor(db: D1Database, id: number, opts: { permissions: readonly string[]; flash?: string; error?: string }): Promise<string> {
   const b = await getBlockForEdit(db, id)
-  if (!b) return adminPage({ title: 'Block not found', active: 'cms', body: '<p class="a-notice error">That block no longer exists.</p>' })
+  if (!b) return adminPage({ permissions: opts.permissions, title: 'Block not found', active: 'cms', body: '<p class="a-notice error">That block no longer exists.</p>' })
   const collections = (await db.prepare('SELECT slug, title, kind FROM collections ORDER BY sort_order, id').all<Row>()).results || []
   const body = `
   ${notice(opts.flash, opts.error)}
@@ -138,14 +138,14 @@ export async function adminCmsBlockEditor(db: D1Database, id: number, opts: { fl
   </form>
   <p class="a-inline-note">A block that references a collection renders that collection's current members, so adding a product to the collection updates the homepage with no edit here.</p>
   `
-  return adminPage({ title: `CMS block — ${b.key}`, active: 'cms', body })
+  return adminPage({ permissions: opts.permissions, title: `CMS block — ${b.key}`, active: 'cms', body })
 }
 
 // ---------------------------------------------------------------------------
 // navigation + footer + announcement
 // ---------------------------------------------------------------------------
 
-export async function adminCmsNavigation(db: D1Database, opts: { flash?: string; error?: string } = {}): Promise<string> {
+export async function adminCmsNavigation(db: D1Database, opts: { permissions: readonly string[]; flash?: string; error?: string }): Promise<string> {
   const items = (
     await db
       .prepare('SELECT id, menu, column_key, column_title, label, href, sort_order, active FROM cms_nav_items ORDER BY menu, column_key, sort_order, id')
@@ -240,7 +240,7 @@ export async function adminCmsNavigation(db: D1Database, opts: { flash?: string;
   </form>
   <p class="a-inline-note">Only advertise a code that exists in Discounts — the server applies the discount it actually has.</p>
   `
-  return adminPage({ title: 'CMS — navigation, footer & banner', active: 'cms', body })
+  return adminPage({ permissions: opts.permissions, title: 'CMS — navigation, footer & banner', active: 'cms', body })
 }
 
 // ---------------------------------------------------------------------------
@@ -251,7 +251,7 @@ export const PAGE_KINDS = ['blog', 'faq', 'legal', 'shipping', 'refund', 'conten
 
 export async function adminCmsPages(
   db: D1Database,
-  opts: { q?: string; kind?: string; status?: string; page?: number; perPage?: number; flash?: string; error?: string } = {}
+  opts: { permissions: readonly string[]; q?: string; kind?: string; status?: string; page?: number; perPage?: number; flash?: string; error?: string }
 ): Promise<string> {
   const perPage = opts.perPage || 25
   const page = Math.max(1, opts.page || 1)
@@ -323,12 +323,12 @@ export async function adminCmsPages(
     <button type="submit">Create page</button>
   </form>
   `
-  return adminPage({ title: 'CMS — pages & blog', active: 'pages', body })
+  return adminPage({ permissions: opts.permissions, title: 'CMS — pages & blog', active: 'pages', body })
 }
 
-export async function adminCmsPageEditor(db: D1Database, id: number, opts: { flash?: string; error?: string } = {}): Promise<string> {
+export async function adminCmsPageEditor(db: D1Database, id: number, opts: { permissions: readonly string[]; flash?: string; error?: string }): Promise<string> {
   const p = await db.prepare('SELECT * FROM cms_pages WHERE id = ?').bind(id).first<Row>()
-  if (!p) return adminPage({ title: 'Page not found', active: 'pages', body: '<p class="a-notice error">That page no longer exists.</p>' })
+  if (!p) return adminPage({ permissions: opts.permissions, title: 'Page not found', active: 'pages', body: '<p class="a-notice error">That page no longer exists.</p>' })
   const body = `
   ${notice(opts.flash, opts.error)}
   <p><a class="link" href="/admin/cms/pages">← Back to pages</a></p>
@@ -353,14 +353,14 @@ export async function adminCmsPageEditor(db: D1Database, id: number, opts: { fla
       : ''
   }
   `
-  return adminPage({ title: `Page — ${p.title}`, active: 'pages', body })
+  return adminPage({ permissions: opts.permissions, title: `Page — ${p.title}`, active: 'pages', body })
 }
 
 // ---------------------------------------------------------------------------
 // FAQ + brand settings
 // ---------------------------------------------------------------------------
 
-export async function adminCmsFaqs(db: D1Database, opts: { flash?: string; error?: string } = {}): Promise<string> {
+export async function adminCmsFaqs(db: D1Database, opts: { permissions: readonly string[]; flash?: string; error?: string }): Promise<string> {
   const faqs = (await db.prepare('SELECT * FROM cms_faqs ORDER BY group_key, sort_order, id').all<Row>()).results || []
   const body = `
   ${notice(opts.flash, opts.error)}
@@ -400,10 +400,10 @@ export async function adminCmsFaqs(db: D1Database, opts: { flash?: string; error
     <button type="submit">Add answer</button>
   </form>
   `
-  return adminPage({ title: 'CMS — FAQ', active: 'cms', body })
+  return adminPage({ permissions: opts.permissions, title: 'CMS — FAQ', active: 'cms', body })
 }
 
-export async function adminCmsSettings(db: D1Database, opts: { flash?: string; error?: string } = {}): Promise<string> {
+export async function adminCmsSettings(db: D1Database, opts: { permissions: readonly string[]; flash?: string; error?: string }): Promise<string> {
   const settings = (await db.prepare('SELECT key, value, kind FROM site_settings ORDER BY key').all<Row>()).results || []
   const body = `
   ${notice(opts.flash, opts.error)}
@@ -439,14 +439,14 @@ export async function adminCmsSettings(db: D1Database, opts: { flash?: string; e
   </form>
   <p class="a-inline-note">An EMPTY value falls back to the deployment's environment configuration, so clearing a field never blanks the site name.</p>
   `
-  return adminPage({ title: 'Brand & site settings', active: 'settings', body })
+  return adminPage({ permissions: opts.permissions, title: 'Brand & site settings', active: 'settings', body })
 }
 
 // ---------------------------------------------------------------------------
 // collections
 // ---------------------------------------------------------------------------
 
-export async function adminCollections(db: D1Database, opts: { flash?: string; error?: string; page?: number } = {}): Promise<string> {
+export async function adminCollections(db: D1Database, opts: { permissions: readonly string[]; flash?: string; error?: string; page?: number }): Promise<string> {
   const perPage = 25
   const page = Math.max(1, opts.page || 1)
   const total = Number((await db.prepare('SELECT COUNT(*) AS n FROM collections').first<Row>())?.n || 0)
@@ -499,12 +499,12 @@ export async function adminCollections(db: D1Database, opts: { flash?: string; e
     <button type="submit">Create collection</button>
   </form>
   `
-  return adminPage({ title: 'Collections', active: 'collections', body })
+  return adminPage({ permissions: opts.permissions, title: 'Collections', active: 'collections', body })
 }
 
-export async function adminCollectionDetail(db: D1Database, id: number, opts: { flash?: string; error?: string } = {}): Promise<string> {
+export async function adminCollectionDetail(db: D1Database, id: number, opts: { permissions: readonly string[]; flash?: string; error?: string }): Promise<string> {
   const c = await db.prepare('SELECT * FROM collections WHERE id = ?').bind(id).first<Row>()
-  if (!c) return adminPage({ title: 'Collection not found', active: 'collections', body: '<p class="a-notice error">That collection no longer exists.</p>' })
+  if (!c) return adminPage({ permissions: opts.permissions, title: 'Collection not found', active: 'collections', body: '<p class="a-notice error">That collection no longer exists.</p>' })
   const members = (
     await db
       .prepare(
@@ -574,14 +574,14 @@ export async function adminCollectionDetail(db: D1Database, id: number, opts: { 
     <button type="submit">Add to collection</button>
   </form>
   `
-  return adminPage({ title: `Collection — ${c.title}`, active: 'collections', body })
+  return adminPage({ permissions: opts.permissions, title: `Collection — ${c.title}`, active: 'collections', body })
 }
 
 // ---------------------------------------------------------------------------
 // media library
 // ---------------------------------------------------------------------------
 
-export async function adminMedia(db: D1Database, opts: { q?: string; page?: number; flash?: string; error?: string } = {}): Promise<string> {
+export async function adminMedia(db: D1Database, opts: { permissions: readonly string[]; q?: string; page?: number; flash?: string; error?: string }): Promise<string> {
   const perPage = 25
   const page = Math.max(1, opts.page || 1)
   const where: string[] = []
@@ -645,14 +645,14 @@ export async function adminMedia(db: D1Database, opts: { q?: string; page?: numb
     <button type="submit">Register</button>
   </form>
   `
-  return adminPage({ title: 'Media', active: 'media', body })
+  return adminPage({ permissions: opts.permissions, title: 'Media', active: 'media', body })
 }
 
 // ---------------------------------------------------------------------------
 // localization readiness
 // ---------------------------------------------------------------------------
 
-export async function adminLocalization(db: D1Database): Promise<string> {
+export async function adminLocalization(db: D1Database, permissions: readonly string[]): Promise<string> {
   const langs = (await db.prepare('SELECT code, name, native_name, direction, fallback_code, active FROM languages ORDER BY code').all<Row>()).results || []
   const productLocs = (
     await db
@@ -672,7 +672,7 @@ export async function adminLocalization(db: D1Database): Promise<string> {
 
   const body = `
   ${pageHead('Localization', 'Languages the personalisation form offers, and the translations that actually exist. A language with no published row is reported as having no translated content — the storefront never presents an empty translation as complete, and hreflang alternates are only emitted for languages with published content.')}
-  <table class="a-table"><thead><tr><th scope="col">Code</th><th scope="col">Name</th><th scope="col">Native</th><th scope="col">Direction</th><th scope="col">Fallback</th><th scope="col">Active</th><th scope="col">Published content rows</th></tr></thead><tbody>
+  <table class="a-table"><thead><tr><th scope="col">Code</th><th scope="col">Name</th><th scope="col">Native</th><th scope="col">Direction</th><th scope="col">Fallback</th><th scope="col">Active</th><th scope="col">Published content rows</th><th scope="col">Availability</th></tr></thead><tbody>
   ${langs
     .map(
       (l) => `<tr>
@@ -683,6 +683,14 @@ export async function adminLocalization(db: D1Database): Promise<string> {
       <td>${esc(l.fallback_code || '—')}</td>
       <td>${Number(l.active) === 1 ? 'Yes' : 'No'}</td>
       <td>${publishedByLang.get(String(l.code)) || 0}</td>
+      <td data-language-availability="${esc(String(l.code))}">${
+        permissions.includes("localization.write")
+          ? `<form method="post" action="/admin/localization/languages/${esc(String(l.code))}" class="a-inline-form row">` +
+            `<input type="hidden" name="active" value="${Number(l.active) === 1 ? "0" : "1"}">` +
+            `<button class="a-btn ghost" type="submit">${Number(l.active) === 1 ? "Deactivate" : "Activate"}</button>` +
+            `</form>`
+          : `<span class="a-muted">read-only</span>`
+      }</td>
     </tr>`
     )
     .join('')}
@@ -706,7 +714,7 @@ export async function adminLocalization(db: D1Database): Promise<string> {
   <p class="a-inline-note">Currency availability is a price-row question: a title appears in a currency only when it has a price for it, which you set on the product's Variants &amp; prices screen.</p>
   `
   const generationCoverage = await generationLanguageCompleteness(db)
-  return adminPage({ title: 'Localization', active: 'localization', body: body + generationCoverage })
+  return adminPage({ permissions, title: 'Localization', active: 'localization', body: body + generationCoverage })
 }
 
 export { pageHead, notice }

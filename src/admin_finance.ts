@@ -41,7 +41,7 @@ function when(value: unknown): string {
 // ADM-03: the paid/net revenue dashboard
 // ---------------------------------------------------------------------------
 
-export function adminFinanceDashboard(s: FinancialSummary, issues: ReconciliationIssue[]) {
+export function adminFinanceDashboard(s: FinancialSummary, issues: ReconciliationIssue[], permissions: readonly string[]) {
   const highIssues = issues.filter((i) => i.severity === 'high')
   const revenueRows = s.revenueByCurrency.length
     ? s.revenueByCurrency
@@ -59,6 +59,7 @@ export function adminFinanceDashboard(s: FinancialSummary, issues: Reconciliatio
     : `<tr><td colspan="6" class="a-muted">No captured payments yet. Nothing has been charged, so there is no revenue to show.</td></tr>`
 
   return adminPage({
+    permissions,
     title: 'Finance',
     active: 'finance',
     body: `
@@ -113,8 +114,9 @@ export function adminFinanceDashboard(s: FinancialSummary, issues: Reconciliatio
 // ADM-12: payments
 // ---------------------------------------------------------------------------
 
-export function adminFinancePayments(rows: Array<Record<string, any>>, providerHealth: { provider: string; configured: boolean; detail: string }) {
+export function adminFinancePayments(rows: Array<Record<string, any>>, providerHealth: { provider: string; configured: boolean; detail: string }, permissions: readonly string[]) {
   return adminPage({
+    permissions,
     title: 'Payments',
     active: 'finance',
     body: `
@@ -151,8 +153,9 @@ export function adminFinancePayments(rows: Array<Record<string, any>>, providerH
 // ADM-12: refunds
 // ---------------------------------------------------------------------------
 
-export function adminFinanceRefunds(rows: Array<Record<string, any>>) {
+export function adminFinanceRefunds(rows: Array<Record<string, any>>, permissions: readonly string[]) {
   return adminPage({
+    permissions,
     title: 'Refunds',
     active: 'finance',
     body: `
@@ -187,8 +190,9 @@ export function adminFinanceRefunds(rows: Array<Record<string, any>>) {
 // ADM-12: disputes
 // ---------------------------------------------------------------------------
 
-export function adminFinanceDisputes(rows: Array<Record<string, any>>) {
+export function adminFinanceDisputes(rows: Array<Record<string, any>>, permissions: readonly string[]) {
   return adminPage({
+    permissions,
     title: 'Disputes',
     active: 'finance',
     body: `
@@ -222,8 +226,9 @@ export function adminFinanceDisputes(rows: Array<Record<string, any>>) {
 // ADM-19 groundwork / ADM-12: the provider event ledger, redacted
 // ---------------------------------------------------------------------------
 
-export function adminFinanceEvents(rows: Array<Record<string, any>>) {
+export function adminFinanceEvents(rows: Array<Record<string, any>>, permissions: readonly string[]) {
   return adminPage({
+    permissions,
     title: 'Provider events',
     active: 'finance',
     body: `
@@ -259,9 +264,10 @@ export function adminFinanceEvents(rows: Array<Record<string, any>>) {
 // ADM-12: reconciliation
 // ---------------------------------------------------------------------------
 
-export function adminFinanceReconciliation(issues: ReconciliationIssue[], orderCount: number) {
+export function adminFinanceReconciliation(issues: ReconciliationIssue[], orderCount: number, permissions: readonly string[]) {
   const high = issues.filter((i) => i.severity === 'high').length
   return adminPage({
+    permissions,
     title: 'Reconciliation',
     active: 'finance',
     body: `
@@ -303,6 +309,12 @@ export function orderFinancePanel(opts: {
   addresses: Array<Record<string, any>>
   canRefund: boolean
   canRead: boolean
+  /**
+   * ADM-20: the single-use confirmation issued by the page that rendered this
+   * form. A refund is a high-risk action, so without it the central guard refuses
+   * the POST before any refund logic runs.
+   */
+  refundReauth?: { challenge: string; fieldName: string; passwordFieldName: string } | null
 }) {
   const { order, attempts, refunds, ledger, timeline, addresses, canRefund, canRead } = opts
   const currency = String(order.currency || 'USD')
@@ -341,6 +353,13 @@ export function orderFinancePanel(opts: {
         </label>
         <label>Reason *<input name="reason" required maxlength="200" placeholder="Why is this being refunded?"></label>
         <label>Idempotency key (blank generates one)<input name="idempotency_key" maxlength="120" placeholder="optional"></label>
+        ${
+          opts.refundReauth
+            ? `<input type="hidden" name="${esc(opts.refundReauth.fieldName)}" value="${esc(opts.refundReauth.challenge)}">
+        <label>Your current password *<input type="password" name="${esc(opts.refundReauth.passwordFieldName)}" required autocomplete="current-password"></label>
+        <p class="tiny a-muted" data-reauth-required="true">A refund is a high-risk action: your password is checked here, used once and never stored.</p>`
+            : ''
+        }
         <button class="a-btn" type="submit">Refund</button>
       </form>`
           : ''

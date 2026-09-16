@@ -32,7 +32,35 @@ function badge(value: string): string {
 // ADM-08: templates / scenes / placeholders / prompt versions + publish
 // ---------------------------------------------------------------------------
 
-export async function adminGenerationTemplates(db: D1Database, opts: { flash?: string; error?: string; productId?: number } = {}): Promise<string> {
+
+/**
+ * V2 Phase 6 (ADM-20): publishing and retiring a template, and publishing a
+ * prompt version, are HIGH-RISK actions, so their forms must carry a single-use
+ * confirmation. One is issued per row, because one confirmation authorises
+ * exactly one action — a shared one would silently let only the first button work.
+ */
+/**
+ * V2 Phase 6 (ADM-20): publishing or retiring a template, and publishing a prompt
+ * version, are HIGH-RISK actions, so each of their forms must carry a single-use
+ * confirmation. A ticket is issued per ACTION — one confirmation authorises exactly
+ * one publish, so a page with several drafts issues several.
+ */
+function reauthFields(challenge: string | undefined): string {
+  if (!challenge) return ''
+  return (
+    `<input type="hidden" name="reauth_challenge" value="${esc(challenge)}">` +
+    `<input type="password" name="current_password" required autocomplete="current-password" aria-label="Your current password" placeholder="Your password">`
+  )
+}
+
+export async function adminGenerationTemplates(db: D1Database, opts: {
+  permissions: readonly string[]
+  flash?: string
+  error?: string
+  productId?: number
+  /** Issues a single-use confirmation for one concrete high-risk path. */
+  reauthTicketForPath?: (path: string) => Promise<string | null>
+}): Promise<string> {
   const rows = await db
     .prepare(
       `SELECT bt.*, p.slug AS product_slug, p.title AS product_title,
@@ -53,10 +81,28 @@ export async function adminGenerationTemplates(db: D1Database, opts: { flash?: s
     published[prompt.kind] = [...(published[prompt.kind] || []), prompt]
   }
 
-  const body = `
+  // One confirmation per actionable high-risk form, issued up front so the
+  // template below stays a pure render.
+  const tickets = new Map<string, string>()
+  if (opts.reauthTicketForPath) {
+    const wanted: string[] = []
+    for (const template of rows.results || []) {
+      if (template.status === 'draft') wanted.push(`/admin/generation/templates/${template.id}/publish`)
+      if (template.status === 'published') wanted.push(`/admin/generation/templates/${template.id}/retire`)
+    }
+    for (const prompt of promptVersions.results || []) {
+      if (prompt.status === 'draft') wanted.push(`/admin/generation/prompts/${prompt.id}/publish`)
+    }
+    for (const path of wanted) {
+      const ticket = await opts.reauthTicketForPath(path)
+      if (ticket) tickets.set(path, ticket)
+    }
+  }
+
+  const bodyHtml = `
   ${pageHead(
     'Generation templates',
-    'A published template version is immutable: its scenes, placeholders, layout config and pinned prompt versions can never change. To change anything, clone it into a new draft version — edit the draft — then publish. Publishing retires the previous published version for the same product and language in one atomic step, so a product is never left without a template.'
+    'A published template version is immutable: its scenes, placeholders, layout config and pinned prompt versions can never change. To change anything, clone it into a new draft version — edit the draft — then publish. Publishing retires the previous published version for the same product and language in one atomic step, so a product is never left without a template. Publishing and retiring are high-risk, so each asks for your current password.'
   )}
   ${notice('ok', opts.flash)}
   ${notice('error', opts.error)}
@@ -81,12 +127,12 @@ export async function adminGenerationTemplates(db: D1Database, opts: { flash?: s
         </form>
         ${
           t.status === 'draft'
-            ? `<form method="post" action="/admin/generation/templates/${t.id}/publish" style="display:inline"><button type="submit">Publish</button></form>`
+            ? `<form method="post" action="/admin/generation/templates/${t.id}/publish" style="display:inline">${reauthFields(tickets.get(`/admin/generation/templates/${t.id}/publish`))}<button type="submit">Publish</button></form>`
             : ''
         }
         ${
           t.status === 'published'
-            ? `<form method="post" action="/admin/generation/templates/${t.id}/retire" style="display:inline"><input type="text" name="reason" placeholder="Reason" maxlength="200" aria-label="Retirement reason"><button type="submit">Retire</button></form>`
+            ? `<form method="post" action="/admin/generation/templates/${t.id}/retire" style="display:inline"><input type="text" name="reason" placeholder="Reason" maxlength="200" aria-label="Retirement reason">${reauthFields(tickets.get(`/admin/generation/templates/${t.id}/retire`))}<button type="submit">Retire</button></form>`
             : ''
         }
       </td>
@@ -118,7 +164,7 @@ export async function adminGenerationTemplates(db: D1Database, opts: { flash?: s
         <form method="post" action="/admin/generation/prompts/${p.id}/clone" style="display:inline"><button type="submit">Clone to draft</button></form>
         ${
           p.status === 'draft'
-            ? `<form method="post" action="/admin/generation/prompts/${p.id}/publish" style="display:inline"><button type="submit">Publish</button></form>`
+            ? `<form method="post" action="/admin/generation/prompts/${p.id}/publish" style="display:inline">${reauthFields(tickets.get(`/admin/generation/prompts/${p.id}/publish`))}<button type="submit">Publish</button></form>`
             : ''
         }
       </td>
@@ -131,15 +177,15 @@ export async function adminGenerationTemplates(db: D1Database, opts: { flash?: s
     .map(([kind, list]) => `${esc(kind)}: v${esc(String(list[0].version))} (${esc(list[0].provider)})`)
     .join(' · ') || 'nothing'}</p>
   `
-  return adminPage({ title: 'Generation templates', active: 'templates', body })
+  return adminPage({ permissions: opts.permissions, title: 'Generation templates', active: 'templates', body: bodyHtml })
 }
 
-export async function adminGenerationTemplateDetail(db: D1Database, templateId: number, opts: { flash?: string; error?: string } = {}): Promise<string> {
+export async function adminGenerationTemplateDetail(db: D1Database, templateId: number, opts: { permissions: readonly string[]; flash?: string; error?: string }): Promise<string> {
   const template = await db
     .prepare('SELECT bt.*, p.title AS product_title, p.slug AS product_slug FROM book_templates bt JOIN products p ON p.id = bt.product_id WHERE bt.id = ?')
     .bind(templateId)
     .first<Row>()
-  if (!template) return adminPage({ title: 'Template not found', active: 'templates', body: '<p class="a-notice error">That template does not exist.</p>' })
+  if (!template) return adminPage({ permissions: opts.permissions, title: 'Template not found', active: 'templates', body: '<p class="a-notice error">That template does not exist.</p>' })
 
   const scenes = await db.prepare('SELECT * FROM book_scenes WHERE template_id = ? ORDER BY sort_order, id').bind(templateId).all<Row>()
   const placeholders = await db
@@ -232,7 +278,7 @@ export async function adminGenerationTemplateDetail(db: D1Database, templateId: 
   </tbody></table>
   <p class="a-inline-note"><a class="link" href="/admin/generation/templates">← All templates</a> · <a class="link" href="/admin/generation/jobs">Generation jobs</a></p>
   `
-  return adminPage({ title: `Template v${template.version}`, active: 'templates', body })
+  return adminPage({ permissions: opts.permissions, title: `Template v${template.version}`, active: 'templates', body })
 }
 
 // ---------------------------------------------------------------------------
@@ -241,7 +287,7 @@ export async function adminGenerationTemplateDetail(db: D1Database, templateId: 
 
 const JOB_FILTERS = ['all', 'active', 'queued', 'running', 'retry_wait', 'succeeded', 'failed_permanent', 'dead_letter', 'cancelled', 'superseded'] as const
 
-export async function adminGenerationJobs(db: D1Database, opts: { status?: string; flash?: string; error?: string } = {}): Promise<string> {
+export async function adminGenerationJobs(db: D1Database, opts: { permissions: readonly string[]; status?: string; flash?: string; error?: string }): Promise<string> {
   const status = (JOB_FILTERS as readonly string[]).includes(opts.status || '') ? (opts.status as string) : 'all'
   const where =
     status === 'all'
@@ -339,15 +385,15 @@ export async function adminGenerationJobs(db: D1Database, opts: { status?: strin
   </table>
   <p class="a-inline-note"><a class="link" href="/admin/generation/previews">Preview, revision and approval queues →</a></p>
   `
-  return adminPage({ title: 'Generation jobs', active: 'generation', body })
+  return adminPage({ permissions: opts.permissions, title: 'Generation jobs', active: 'generation', body })
 }
 
-export async function adminGenerationJobDetail(db: D1Database, jobId: number, opts: { flash?: string; error?: string } = {}): Promise<string> {
+export async function adminGenerationJobDetail(db: D1Database, jobId: number, opts: { permissions: readonly string[]; flash?: string; error?: string }): Promise<string> {
   const job = await db
     .prepare('SELECT j.*, ub.public_id AS book_public_id, ub.state AS book_state FROM generation_jobs j JOIN user_books ub ON ub.id = j.user_book_id WHERE j.id = ?')
     .bind(jobId)
     .first<Row>()
-  if (!job) return adminPage({ title: 'Job not found', active: 'generation', body: '<p class="a-notice error">That job does not exist.</p>' })
+  if (!job) return adminPage({ permissions: opts.permissions, title: 'Job not found', active: 'generation', body: '<p class="a-notice error">That job does not exist.</p>' })
 
   const tasks = await db.prepare('SELECT * FROM generation_tasks WHERE job_id = ? ORDER BY sort_order, id').bind(jobId).all<Row>()
   const attempts = await db.prepare('SELECT * FROM generation_attempts WHERE job_id = ? ORDER BY id DESC LIMIT 60').bind(jobId).all<Row>()
@@ -450,14 +496,14 @@ export async function adminGenerationJobDetail(db: D1Database, jobId: number, op
 
   <p class="a-inline-note"><a class="link" href="/admin/generation/jobs">← All jobs</a></p>
   `
-  return adminPage({ title: `Job ${job.public_id}`, active: 'generation', body })
+  return adminPage({ permissions: opts.permissions, title: `Job ${job.public_id}`, active: 'generation', body })
 }
 
 // ---------------------------------------------------------------------------
 // ADM-11: preview / revision / approval queues
 // ---------------------------------------------------------------------------
 
-export async function adminGenerationPreviews(db: D1Database, opts: { status?: string; flash?: string; error?: string } = {}): Promise<string> {
+export async function adminGenerationPreviews(db: D1Database, opts: { permissions: readonly string[]; status?: string; flash?: string; error?: string }): Promise<string> {
   const filter = ['all', 'awaiting_approval', 'approved', 'changes_requested'].includes(opts.status || '') ? (opts.status as string) : 'all'
 
   const previews = await db
@@ -538,7 +584,7 @@ export async function adminGenerationPreviews(db: D1Database, opts: { status?: s
   </tbody></table>
   <p class="a-inline-note"><a class="link" href="/admin/generation/jobs">← Generation jobs</a> · <a class="link" href="/admin/localization">Language completeness →</a></p>
   `
-  return adminPage({ title: 'Previews &amp; approvals', active: 'previews', body })
+  return adminPage({ permissions: opts.permissions, title: 'Previews &amp; approvals', active: 'previews', body })
 }
 
 /**

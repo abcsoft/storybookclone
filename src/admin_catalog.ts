@@ -101,6 +101,7 @@ export function adminCatalogProducts(opts: {
   rows: Row[]
   state: AdminListState
   filters: CatalogListFilters
+  permissions: readonly string[]
   flash?: string
   error?: string
 }): string {
@@ -147,7 +148,7 @@ export function adminCatalogProducts(opts: {
   ${pager('/admin/catalog', state, { q: filters.q, category: filters.category, status: filters.status })}
   <p class="a-inline-note">Prices are edited per currency as integer minor units (e.g. 3499 = 34.99). A currency with no price row means the title is not offered in it — the storefront says so rather than converting a price.</p>
   `
-  return adminPage({ title: 'Catalog', active: 'catalog', body, subtitle: 'Products, prices, variants and visibility.' })
+  return adminPage({ permissions: opts.permissions, title: 'Catalog', active: 'catalog', body, subtitle: 'Products, prices, variants and visibility.' })
 }
 
 // ---------------------------------------------------------------------------
@@ -156,10 +157,10 @@ export function adminCatalogProducts(opts: {
 
 export async function adminProductVariants(
   db: D1Database,
-  opts: { productId: number; flash?: string; error?: string }
+  opts: { productId: number; permissions: readonly string[]; flash?: string; error?: string }
 ): Promise<string> {
   const product = await db.prepare('SELECT id, slug, title, category FROM products WHERE id = ?').bind(opts.productId).first<Row>()
-  if (!product) return adminPage({ title: 'Product not found', active: 'catalog', body: '<p class="a-notice error">That product no longer exists.</p>' })
+  if (!product) return adminPage({ permissions: opts.permissions, title: 'Product not found', active: 'catalog', body: '<p class="a-notice error">That product no longer exists.</p>' })
 
   const variants = (
     await db
@@ -231,5 +232,5 @@ export async function adminProductVariants(
   )}
   <p class="a-inline-note">Removing a currency price makes the title unavailable in that currency storefront-wide. Existing orders keep the snapshotted price they were placed at.</p>
   `
-  return adminPage({ title: `Variants & prices — ${product.title}`, active: 'catalog', body })
+  return adminPage({ permissions: opts.permissions, title: `Variants & prices — ${product.title}`, active: 'catalog', body })
 }

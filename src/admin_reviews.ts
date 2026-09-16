@@ -16,7 +16,7 @@ type Row = Record<string, any>
 
 export async function adminReviews(
   db: D1Database,
-  opts: { filters: ReviewListFilters; flash?: string; error?: string }
+  opts: { filters: ReviewListFilters; permissions: readonly string[]; flash?: string; error?: string }
 ): Promise<string> {
   const [page, counts, products] = await Promise.all([
     listReviews(db, opts.filters),
@@ -80,7 +80,7 @@ export async function adminReviews(
     <span class="a-inline-note">Page ${page.page} of ${page.pageCount} · ${page.total} row(s)</span>
   </nav>
   `
-  return adminPage({ title: 'Reviews', active: 'reviews', body })
+  return adminPage({ permissions: opts.permissions, title: 'Reviews', active: 'reviews', body })
 }
 
 export type { ReviewStatus }

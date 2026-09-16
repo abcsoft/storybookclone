@@ -141,3 +141,61 @@ body.admin-login { display: grid; place-items: center; }
   .admin-side-foot { margin-top: 0; flex-direction: row; }
   .admin-main { padding: 20px; }
 }
+
+/* ---------------------------------------------------------------------------
+   V2 Phase 6 additions (ADM-01…ADM-21). Only additive: no existing selector is
+   changed, so the Phase-2…5 screens render exactly as their audits recorded.
+   --------------------------------------------------------------------------- */
+.a-muted { color: var(--muted); font-size: 13px; }
+.a-inline-note { color: var(--muted); font-size: 13px; margin: 0 0 10px; }
+.a-notice.error { background: #fef2f2; border-color: #fecaca; color: #991b1b; }
+.a-empty { color: var(--muted); font-size: 14px; margin: 8px 0; }
+.tiny { font-size: 12px; }
+
+/* The sidebar groups by area. A group heading is not a link, so it must not
+   look focusable. */
+.admin-nav-group {
+  color: #8d84ad;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  margin: 12px 0 2px 12px;
+}
+.admin-nav-group:first-child { margin-top: 0; }
+.admin-side nav a[data-nav-perm] { font-size: 14px; }
+
+/* Filter bars: one row, wraps on small screens, never overflows. */
+.a-filterbar {
+  display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: flex-end;
+  background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+  padding: 14px 16px; margin-bottom: 16px;
+}
+.a-filterbar label { display: flex; flex-direction: column; gap: 4px; font-weight: 600; font-size: 13px; }
+.a-filterbar input, .a-filterbar select {
+  font: inherit; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: #fff; max-width: 220px;
+}
+
+.a-pager { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-top: 14px; }
+.a-page-current { font-weight: 800; color: var(--purple); }
+
+.badge-state {
+  display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 700;
+  background: #efeafd; color: #5537b8; margin-right: 4px;
+}
+.badge-state.ok { background: #e6f9ec; color: #15803d; }
+.badge-state.warn { background: #fff3cd; color: #8a6d00; }
+.badge-state.bad { background: #fee2e2; color: #b91c1c; }
+
+.a-list { margin: 8px 0 0; padding-left: 18px; }
+.a-list li { margin-bottom: 6px; }
+.a-msg { border-top: 1px solid var(--line); padding: 10px 0; }
+.a-msg:first-of-type { border-top: 0; }
+.a-msg.internal { background: #fdf6e3; border-left: 3px solid #eab308; padding-left: 10px; }
+.a-msg.internal::after { content: 'internal'; float: right; font-size: 11px; color: #8a6d00; font-weight: 700; }
+.a-pre {
+  margin: 0; white-space: pre-wrap; word-break: break-word; font-size: 12px;
+  max-width: 340px; background: #f8f7fc; border-radius: 8px; padding: 8px; color: var(--ink);
+}
+.a-group-row { background: #efeafd; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); text-align: left; }
+td[data-sla='overdue'] { background: #fef2f2; }
+

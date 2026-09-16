@@ -63,6 +63,7 @@ import { requestRefund } from './commerce/refunds'
 import { FINANCE_PERMISSIONS, type FinancePermission } from './commerce/types'
 import { adminActor } from './auth'
 import { recordAdminAudit } from './admin-audit'
+import { issueTicketForPath } from './admin-console/guard'
 import { BLOCK_KINDS } from './cms'
 
 type AdminEnv = {
@@ -76,9 +77,18 @@ type AdminEnv = {
     STRIPE_WEBHOOK_SECRET?: string
     STRIPE_API_BASE?: string
   }
-  Variables: { user: { id?: number; email?: string; role?: string } | null }
+  Variables: { user: { id?: number; email?: string; role?: string } | null; adminPermissions?: string[] }
 }
 type AdminCtx = Context<AdminEnv>
+
+/**
+ * The caller's resolved permission set, put on the request context by the central
+ * admin guard (src/admin-console/guard.ts). Admin routes never re-derive it:
+ * there is exactly one place that decides what a role may do.
+ */
+function adminPerms(c: AdminCtx): readonly string[] {
+  return (c.get('adminPermissions') as string[] | undefined) ?? []
+}
 
 function actorOf(c: AdminCtx): { id: number | null; email: string | null } {
   const actor = c.get('user') || null
@@ -129,13 +139,24 @@ function optionalInt(value: unknown, min: number, max: number): number | null {
 function registerGenerationAdminRoutes(app: Hono<any>) {
   // ---------------------------------------------------------------- ADM-08
   app.get('/admin/generation/templates', async (c: AdminCtx) =>
-    c.html(await adminGenerationTemplates(c.env.DB, { flash: c.req.query('saved'), error: c.req.query('error'), productId: optionalInt(c.req.query('product'), 1, Number.MAX_SAFE_INTEGER) ?? undefined }))
+    c.html(
+      await adminGenerationTemplates(c.env.DB, {
+        permissions: adminPerms(c),
+        flash: c.req.query('saved'),
+        error: c.req.query('error'),
+        productId: optionalInt(c.req.query('product'), 1, Number.MAX_SAFE_INTEGER) ?? undefined,
+        // ADM-20: publishing and retiring are high-risk, so the page issues one
+        // single-use confirmation per actionable form. The action string comes from
+        // the policy table itself, so it can never disagree with the guard.
+        reauthTicketForPath: async (path: string) => (await issueTicketForPath(c, path))?.challenge ?? null
+      })
+    )
   )
 
   app.get('/admin/generation/templates/:id', async (c: AdminCtx) => {
     const id = intParam(c.req.param('id'), 1, Number.MAX_SAFE_INTEGER)
-    if (id == null) return c.html(adminPage({ title: 'Not found', active: 'templates', body: '<p class="a-notice error">Invalid template id.</p>' }), 404)
-    return c.html(await adminGenerationTemplateDetail(c.env.DB, id, { flash: c.req.query('saved'), error: c.req.query('error') }))
+    if (id == null) return c.html(adminPage({ permissions: adminPerms(c), title: 'Not found', active: 'templates', body: '<p class="a-notice error">Invalid template id.</p>' }), 404)
+    return c.html(await adminGenerationTemplateDetail(c.env.DB, id, { permissions: adminPerms(c), flash: c.req.query('saved'), error: c.req.query('error') }))
   })
 
   app.post('/admin/generation/templates/:id/clone', async (c: AdminCtx) => {
@@ -247,13 +268,13 @@ function registerGenerationAdminRoutes(app: Hono<any>) {
 
   // ---------------------------------------------------------------- ADM-10
   app.get('/admin/generation/jobs', async (c: AdminCtx) =>
-    c.html(await adminGenerationJobs(c.env.DB, { status: str(c.req.query('status'), 20), flash: c.req.query('saved'), error: c.req.query('error') }))
+    c.html(await adminGenerationJobs(c.env.DB, { permissions: adminPerms(c), status: str(c.req.query('status'), 20), flash: c.req.query('saved'), error: c.req.query('error') }))
   )
 
   app.get('/admin/generation/jobs/:id', async (c: AdminCtx) => {
     const id = intParam(c.req.param('id'), 1, Number.MAX_SAFE_INTEGER)
-    if (id == null) return c.html(adminPage({ title: 'Not found', active: 'generation', body: '<p class="a-notice error">Invalid job id.</p>' }), 404)
-    return c.html(await adminGenerationJobDetail(c.env.DB, id, { flash: c.req.query('saved'), error: c.req.query('error') }))
+    if (id == null) return c.html(adminPage({ permissions: adminPerms(c), title: 'Not found', active: 'generation', body: '<p class="a-notice error">Invalid job id.</p>' }), 404)
+    return c.html(await adminGenerationJobDetail(c.env.DB, id, { permissions: adminPerms(c), flash: c.req.query('saved'), error: c.req.query('error') }))
   })
 
   app.post('/admin/generation/jobs/:id/retry', async (c: AdminCtx) => {
@@ -294,7 +315,7 @@ function registerGenerationAdminRoutes(app: Hono<any>) {
 
   // ---------------------------------------------------------------- ADM-11
   app.get('/admin/generation/previews', async (c: AdminCtx) =>
-    c.html(await adminGenerationPreviews(c.env.DB, { status: str(c.req.query('status'), 30), flash: c.req.query('saved'), error: c.req.query('error') }))
+    c.html(await adminGenerationPreviews(c.env.DB, { permissions: adminPerms(c), status: str(c.req.query('status'), 30), flash: c.req.query('saved'), error: c.req.query('error') }))
   )
 }
 
@@ -319,7 +340,7 @@ export function hasFinancePermission(actor: { role?: string } | null | undefined
 function denyUnlessFinance(c: AdminCtx, permission: FinancePermission): Response | null {
   const actor = c.get('user') || null
   if (!actor) return c.json({ error: { code: 'auth_required', message: 'Sign in as an administrator.' } }, 401)
-  if (!hasFinancePermission(actor, permission)) {
+  if (!adminPerms(c).includes(permission)) {
     return c.json({ error: { code: 'forbidden', message: 'Your account does not have the finance permission for this action.' } }, 403)
   }
   return null
@@ -327,10 +348,10 @@ function denyUnlessFinance(c: AdminCtx, permission: FinancePermission): Response
 
 /** A page-level denial: the finance area renders an explicit refusal, never a blank screen. */
 function financePageDenied(c: AdminCtx, permission: FinancePermission): Response | null {
-  const actor = c.get('user') || null
-  if (hasFinancePermission(actor, permission)) return null
+  if (adminPerms(c).includes(permission)) return null
   return c.html(
     adminPage({
+      permissions: adminPerms(c),
       title: 'Finance',
       active: 'finance',
       body: '<h1>Finance</h1><p class="a-notice error">Your account does not have permission to view financial data.</p>'
@@ -350,6 +371,7 @@ export function registerAdminStoreRoutes(app: Hono<any>) {
     const { rows, state } = await listAdminProducts(c.env.DB, filters)
     return c.html(
       adminCatalogProducts({
+        permissions: adminPerms(c),
         rows,
         state,
         filters,
@@ -361,9 +383,9 @@ export function registerAdminStoreRoutes(app: Hono<any>) {
 
   app.get('/admin/products/:id/variants', async (c: AdminCtx) => {
     const id = intParam(c.req.param('id'), 1, Number.MAX_SAFE_INTEGER)
-    if (id == null) return c.html(adminPage({ title: 'Not found', active: 'catalog', body: '<p class="a-notice error">Invalid product id.</p>' }), 404)
+    if (id == null) return c.html(adminPage({ permissions: adminPerms(c), title: 'Not found', active: 'catalog', body: '<p class="a-notice error">Invalid product id.</p>' }), 404)
     return c.html(
-      await adminProductVariants(c.env.DB, { productId: id, flash: c.req.query('saved'), error: c.req.query('error') })
+      await adminProductVariants(c.env.DB, { permissions: adminPerms(c), productId: id, flash: c.req.query('saved'), error: c.req.query('error') })
     )
   })
 
@@ -436,7 +458,7 @@ export function registerAdminStoreRoutes(app: Hono<any>) {
   // ------------------------------------------------- collections + media
   app.get('/admin/collections', async (c: AdminCtx) => {
     const page = Number(c.req.query('page') || 1) || 1
-    return c.html(await adminCollections(c.env.DB, { flash: c.req.query('saved'), error: c.req.query('error'), page }))
+    return c.html(await adminCollections(c.env.DB, { permissions: adminPerms(c), flash: c.req.query('saved'), error: c.req.query('error'), page }))
   })
 
   app.post('/admin/collections', async (c: AdminCtx) => {
@@ -465,7 +487,7 @@ export function registerAdminStoreRoutes(app: Hono<any>) {
   app.get('/admin/collections/:id', async (c: AdminCtx) => {
     const id = intParam(c.req.param('id'), 1, Number.MAX_SAFE_INTEGER)
     if (id == null) return c.redirect('/admin/collections')
-    return c.html(await adminCollectionDetail(c.env.DB, id, { flash: c.req.query('saved'), error: c.req.query('error') }))
+    return c.html(await adminCollectionDetail(c.env.DB, id, { permissions: adminPerms(c), flash: c.req.query('saved'), error: c.req.query('error') }))
   })
 
   app.post('/admin/collections/:id', async (c: AdminCtx) => {
@@ -547,7 +569,7 @@ export function registerAdminStoreRoutes(app: Hono<any>) {
 
   app.get('/admin/media', async (c: AdminCtx) => {
     const page = Number(c.req.query('page') || 1) || 1
-    return c.html(await adminMedia(c.env.DB, { q: str(c.req.query('q'), 80), page, flash: c.req.query('saved'), error: c.req.query('error') }))
+    return c.html(await adminMedia(c.env.DB, { permissions: adminPerms(c), q: str(c.req.query('q'), 80), page, flash: c.req.query('saved'), error: c.req.query('error') }))
   })
 
   app.post('/admin/media', async (c: AdminCtx) => {
@@ -593,7 +615,7 @@ export function registerAdminStoreRoutes(app: Hono<any>) {
   })
 
   // ---------------------------------------------------------------- ADM-07
-  app.get('/admin/cms', async (c: AdminCtx) => c.html(await adminCmsHome(c.env.DB, { flash: c.req.query('saved'), error: c.req.query('error'), pagePath: str(c.req.query('page'), 120) || '/' })))
+  app.get('/admin/cms', async (c: AdminCtx) => c.html(await adminCmsHome(c.env.DB, { permissions: adminPerms(c), flash: c.req.query('saved'), error: c.req.query('error'), pagePath: str(c.req.query('page'), 120) || '/' })))
 
   app.post('/admin/cms/blocks', async (c: AdminCtx) => {
     const form = await c.req.parseBody()
@@ -634,7 +656,7 @@ export function registerAdminStoreRoutes(app: Hono<any>) {
   app.get('/admin/cms/blocks/:id', async (c: AdminCtx) => {
     const id = intParam(c.req.param('id'), 1, Number.MAX_SAFE_INTEGER)
     if (id == null) return c.redirect('/admin/cms')
-    return c.html(await adminCmsBlockEditor(c.env.DB, id, { flash: c.req.query('saved'), error: c.req.query('error') }))
+    return c.html(await adminCmsBlockEditor(c.env.DB, id, { permissions: adminPerms(c), flash: c.req.query('saved'), error: c.req.query('error') }))
   })
 
   app.post('/admin/cms/blocks/:id', async (c: AdminCtx) => {
@@ -712,7 +734,7 @@ export function registerAdminStoreRoutes(app: Hono<any>) {
     return c.redirect(flashRedirect('/admin/cms', 'Block deleted.'))
   })
 
-  app.get('/admin/cms/navigation', async (c: AdminCtx) => c.html(await adminCmsNavigation(c.env.DB, { flash: c.req.query('saved'), error: c.req.query('error') })))
+  app.get('/admin/cms/navigation', async (c: AdminCtx) => c.html(await adminCmsNavigation(c.env.DB, { permissions: adminPerms(c), flash: c.req.query('saved'), error: c.req.query('error') })))
 
   app.post('/admin/cms/nav', async (c: AdminCtx) => {
     const form = await c.req.parseBody()
@@ -792,6 +814,7 @@ export function registerAdminStoreRoutes(app: Hono<any>) {
     const { page, perPage } = parseListState(url.searchParams)
     return c.html(
       await adminCmsPages(c.env.DB, {
+        permissions: adminPerms(c),
         q: str(url.searchParams.get('q'), 80),
         kind: str(url.searchParams.get('kind'), 20),
         status: str(url.searchParams.get('status'), 20),
@@ -839,7 +862,7 @@ export function registerAdminStoreRoutes(app: Hono<any>) {
   app.get('/admin/cms/pages/:id', async (c: AdminCtx) => {
     const id = intParam(c.req.param('id'), 1, Number.MAX_SAFE_INTEGER)
     if (id == null) return c.redirect('/admin/cms/pages')
-    return c.html(await adminCmsPageEditor(c.env.DB, id, { flash: c.req.query('saved'), error: c.req.query('error') }))
+    return c.html(await adminCmsPageEditor(c.env.DB, id, { permissions: adminPerms(c), flash: c.req.query('saved'), error: c.req.query('error') }))
   })
 
   app.post('/admin/cms/pages/:id', async (c: AdminCtx) => {
@@ -888,7 +911,7 @@ export function registerAdminStoreRoutes(app: Hono<any>) {
     return c.redirect(flashRedirect('/admin/cms/pages', 'Page deleted. Its slug is now a real 404.'))
   })
 
-  app.get('/admin/cms/faqs', async (c: AdminCtx) => c.html(await adminCmsFaqs(c.env.DB, { flash: c.req.query('saved'), error: c.req.query('error') })))
+  app.get('/admin/cms/faqs', async (c: AdminCtx) => c.html(await adminCmsFaqs(c.env.DB, { permissions: adminPerms(c), flash: c.req.query('saved'), error: c.req.query('error') })))
 
   app.post('/admin/cms/faqs', async (c: AdminCtx) => {
     const form = await c.req.parseBody()
@@ -932,7 +955,7 @@ export function registerAdminStoreRoutes(app: Hono<any>) {
     return c.redirect(flashRedirect('/admin/cms/faqs', 'FAQ answer deleted.'))
   })
 
-  app.get('/admin/settings', async (c: AdminCtx) => c.html(await adminCmsSettings(c.env.DB, { flash: c.req.query('saved'), error: c.req.query('error') })))
+  app.get('/admin/settings', async (c: AdminCtx) => c.html(await adminCmsSettings(c.env.DB, { permissions: adminPerms(c), flash: c.req.query('saved'), error: c.req.query('error') })))
 
   app.post('/admin/settings', async (c: AdminCtx) => {
     const form = await c.req.parseBody()
@@ -963,12 +986,12 @@ export function registerAdminStoreRoutes(app: Hono<any>) {
     return c.redirect(flashRedirect('/admin/settings', `${key} saved.`))
   })
 
-  app.get('/admin/localization', async (c: AdminCtx) => c.html(await adminLocalization(c.env.DB)))
+  app.get('/admin/localization', async (c: AdminCtx) => c.html(await adminLocalization(c.env.DB, adminPerms(c))))
 
   // ---------------------------------------------------------------- ADM-15
   app.get('/admin/reviews', async (c: AdminCtx) => {
     const filters = parseReviewFilters(new URL(c.req.url).searchParams)
-    return c.html(await adminReviews(c.env.DB, { filters, flash: c.req.query('saved'), error: c.req.query('error') }))
+    return c.html(await adminReviews(c.env.DB, { permissions: adminPerms(c), filters, flash: c.req.query('saved'), error: c.req.query('error') }))
   })
 
   app.post('/admin/reviews/:id/moderate', async (c: AdminCtx) => {
@@ -1001,7 +1024,7 @@ function registerFinanceAdminRoutes(app: Hono<any>) {
     const denied = financePageDenied(c, FINANCE_PERMISSIONS.read)
     if (denied) return denied
     const [summary, issues] = await Promise.all([financialSummary(c.env.DB, {}), reconciliationIssues(c.env.DB, 200)])
-    return c.html(adminFinanceDashboard(summary, issues))
+    return c.html(adminFinanceDashboard(summary, issues, adminPerms(c)))
   })
 
   // ---------------------------------------------------------------- ADM-12
@@ -1018,28 +1041,28 @@ function registerFinanceAdminRoutes(app: Hono<any>) {
           )
           .all<Record<string, unknown>>()
       ).results || []
-    return c.html(adminFinancePayments(rows, paymentProviderHealth(c.env as any)))
+    return c.html(adminFinancePayments(rows, paymentProviderHealth(c.env as any), adminPerms(c)))
   })
 
   app.get('/admin/finance/refunds', async (c: AdminCtx) => {
     const denied = financePageDenied(c, FINANCE_PERMISSIONS.read)
     if (denied) return denied
     const rows = (await c.env.DB.prepare('SELECT * FROM refunds ORDER BY id DESC LIMIT 200').all<Record<string, unknown>>()).results || []
-    return c.html(adminFinanceRefunds(rows))
+    return c.html(adminFinanceRefunds(rows, adminPerms(c)))
   })
 
   app.get('/admin/finance/disputes', async (c: AdminCtx) => {
     const denied = financePageDenied(c, FINANCE_PERMISSIONS.read)
     if (denied) return denied
     const rows = (await c.env.DB.prepare('SELECT * FROM disputes ORDER BY id DESC LIMIT 200').all<Record<string, unknown>>()).results || []
-    return c.html(adminFinanceDisputes(rows))
+    return c.html(adminFinanceDisputes(rows, adminPerms(c)))
   })
 
   app.get('/admin/finance/events', async (c: AdminCtx) => {
     const denied = financePageDenied(c, FINANCE_PERMISSIONS.read)
     if (denied) return denied
     const rows = (await c.env.DB.prepare('SELECT * FROM payment_events ORDER BY id DESC LIMIT 200').all<Record<string, unknown>>()).results || []
-    return c.html(adminFinanceEvents(rows))
+    return c.html(adminFinanceEvents(rows, adminPerms(c)))
   })
 
   app.get('/admin/finance/reconciliation', async (c: AdminCtx) => {
@@ -1049,7 +1072,7 @@ function registerFinanceAdminRoutes(app: Hono<any>) {
       reconciliationIssues(c.env.DB, 200),
       c.env.DB.prepare('SELECT COUNT(*) AS n FROM orders').first<{ n: number }>()
     ])
-    return c.html(adminFinanceReconciliation(issues, Number(count?.n ?? 0)))
+    return c.html(adminFinanceReconciliation(issues, Number(count?.n ?? 0), adminPerms(c)))
   })
 
   /**
@@ -1065,7 +1088,7 @@ function registerFinanceAdminRoutes(app: Hono<any>) {
     if (denied && !String(c.req.header('Accept') || '').includes('text/html')) return denied
     const orderId = intParam(c.req.param('id'), 1, Number.MAX_SAFE_INTEGER)
     if (orderId == null) return c.redirect(flashRedirect('/admin/orders', 'Invalid order id.', true))
-    if (!hasFinancePermission(c.get('user'), FINANCE_PERMISSIONS.refund)) {
+    if (!adminPerms(c).includes(FINANCE_PERMISSIONS.refund)) {
       return c.redirect(flashRedirect(`/admin/orders/${orderId}`, 'Your account does not have the refund permission.', true))
     }
     const form = await c.req.parseBody()
