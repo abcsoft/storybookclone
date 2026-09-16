@@ -3,7 +3,8 @@
 Verdict: **COMPLETE**
 Branch: `feat/admin-control-plane-v2`
 Baseline HEAD: `b6113561801a90deb714cf8b499f2fe5eaab22f1` (accepted Phase-5 tip)
-Final HEAD: see the commit list below (nothing pushed — AutoCoder reviews and pushes)
+Final HEAD: the tip of this branch — see the commit list at the end of this report
+(nothing pushed — AutoCoder reviews and pushes)
 
 ## Confirmed starting state
 
@@ -307,8 +308,25 @@ shells that Phase 7 fills in:
 
 ## Commit list
 
-See the "Commit list" section added below at the end of this report (the SHAs are
-recorded there once the phase is committed). Nothing is pushed.
+Six commits on `feat/admin-control-plane-v2`, in dependency order (explicit paths
+only; never `git add -A`). The phase is one coherent feature split by layer:
+
+| # | Commit | SHA |
+|---|---|---|
+| 1 | `feat(phase6): the admin RBAC schema, catalogue, central route policy, guard and high-risk re-authentication` | `a0a3b0d` |
+| 2 | `feat(phase6): register the control plane, thread the caller's permissions through the admin surface, and serve private photos through short-lived capabilities` | `6a3221d` |
+| 3 | `feat(phase6): the operational admin console, its screens and the /api/v1/admin surface (ADM-03..ADM-21)` | `697d921` |
+| 4 | `test(phase6): the complete RBAC matrix, re-auth, operational and private-media suites, the browser journey, the admin audit screens and the migration upgrade scenario` | `872e658` |
+| 5 | `docs(phase6): traceability, completion report, progress record, API and architecture for the admin control plane` | `b75afcb` |
+| 6 | `docs(phase6): record the final HEAD, the commit list and the exact gate results` | the branch tip — the commit that contains this line |
+
+**Final HEAD** = the tip of `feat/admin-control-plane-v2`, i.e. commit 6 above
+(`git rev-parse HEAD`). Every earlier commit is an ancestor of it, and
+`b611356` (the accepted Phase-5 tip) is its parent chain root.
+
+Nothing was pushed, merged, rebased, amended or force-pushed; `main` was never
+checked out. Because the SHAs of commits 1–5 are written down inside commit 6, no
+commit rewrites another.
 
 ## Confirmation
 

@@ -11,6 +11,8 @@ action would be. Every claim here was executed; nothing is aspirational.
 | Branch | `feat/admin-control-plane-v2` |
 | Baseline HEAD (accepted Phase-5 tip) | `b6113561801a90deb714cf8b499f2fe5eaab22f1` |
 | Phase | **V2 Phase 6 — Full Operational Admin Panel (ADM-01…ADM-21, S-08/S-09)** |
+| Commits | **6**, all on top of `b611356` (5 feature/test/docs + 1 record commit) |
+| Final HEAD | the tip of this branch (`git rev-parse HEAD`) — the record commit; `b611356` is the root of its parent chain |
 | `main` | `4d76779` — **untouched** (never merged, never checked out, never pushed) |
 | Pushed? | **No.** AutoCoder reviews and pushes. |
 | History rewritten? | **No.** Every change is a new commit on top of `b611356`. |
@@ -19,6 +21,17 @@ action would be. Every claim here was executed; nothing is aspirational.
 The full commit list and the final SHAs are in the completion report; the per-ID
 traceability is in `docs/V2_PHASE6_TRACEABILITY.md` and the phase report in
 `docs/V2_PHASE6_COMPLETION_REPORT.md`.
+
+The six commits, in order (explicit paths only, never `git add -A`):
+
+| # | Commit | SHA |
+|---|---|---|
+| 1 | admin RBAC schema, catalogue, central route policy, guard and high-risk re-auth | `a0a3b0d` |
+| 2 | register the control plane, thread permissions, short-lived private-photo capabilities | `6a3221d` |
+| 3 | the operational admin console, its screens and the `/api/v1/admin` surface | `697d921` |
+| 4 | the RBAC/re-auth/ops/media suites, the browser journey, the audit screens, the migration scenario | `872e658` |
+| 5 | traceability, completion report, progress record, API and architecture docs | `b75afcb` |
+| 6 | record the final HEAD, the commit list and the exact gate results | this commit — the branch tip |
 
 ## 2. Migration ledger
 
@@ -99,7 +112,7 @@ separately (see the last row of the cross-cutting table in
 | `npm run secrets:scan` | `0` | no matches (389 files) |
 | `npm run secrets:scan -- --mode=archive` | `0` | no matches (430 files) |
 | `npm run build` | `0` | `dist/_worker.js` 1,068.72 kB (gzip 275.90 kB) |
-| `npm run test:e2e` | `0` | **15 journey groups**, including the new `phase6-admin-control-plane` (now 9 phases) |
+| `npm run test:e2e` | `0` | **15 journey groups, all passed** (`… , phase5-customer-lifecycle, phase6-admin-control-plane`). One earlier attempt inside a combined gate run exited `1` in the **multiface** group on a local `workerd` crash (`ERR_CONNECTION_RESET`/`ERR_CONNECTION_REFUSED` on `/static/*`, with wrangler's "this is a bug, please file an issue" banner) — the worker process died, not an assertion. The immediately preceding full run and the clean re-run on the identical tree both passed every group, so it is recorded as an environment flake rather than papered over |
 | `npm run audit:frontend -- phase6-admin` | `0` | **0 findings** (see §6) |
 | `npm audit --omit=dev` | `0` | 0 vulnerabilities |
 | `npm audit` | `1` | 3 high, dev-only `sharp` ← `miniflare` ← `wrangler`; **pre-existing, unchanged** |
@@ -223,6 +236,12 @@ merged, rebased, amended or force-pushed; `main` was never checked out.
 
 ## 10. Deviations and disclosures
 
+* **One e2e attempt flaked and was re-run, not skipped.** See §4. The
+  `multiface` group failed once because the local `workerd` process crashed
+  mid-journey (a wrangler bug banner, connection resets on static assets). No
+  assertion failed, the group passed on the immediately preceding run and again on
+  the clean re-run, and the flake is recorded rather than hidden. Nothing was
+  weakened: no timeout was raised and no assertion removed.
 * **Four pre-existing test files were UPDATED, none weakened or skipped.**
   `phase4-refunds-admin.test.ts` (two refund POSTs now assert the confirmation is
   required and then drive the real confirmed flow — the cap, idempotency and
