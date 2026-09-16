@@ -691,3 +691,213 @@ middleware, so each flow works from an email link and with JavaScript disabled.
 `entitlement_expired`, `entitlement_revoked`, `limit_reached`, `token_used`,
 `token_expired`, `artifact_unavailable`, `capability_required`,
 `capability_invalid`, `storage_unavailable`, `not_found`, `rate_limited`.
+
+---
+
+# V2 Phase 6 — the admin control plane (ADM-01…ADM-21)
+
+Every endpoint below is registered under `/api/v1/admin/...` (plus the one legacy
+`/api/admin/test-ai-connection`), and **every one of them is listed in
+`src/admin-console/policy.ts`**, which the central guard consults before the
+handler runs. `test/unit/phase6-rbac.test.ts` walks Hono's own route table and
+fails if any registered admin route has no policy entry, so this list cannot
+silently fall behind the code.
+
+## Authentication, authorization and re-authentication
+
+* **Sign-in.** `POST /admin/login` (form) is the only admin route with no
+  permission: it must be reachable before anyone holds one. A successful sign-in
+  rotates the session. The account's legacy `users.role = 'admin'` flag is the
+  SIGN-IN gate; its AUTHORITY comes from `admin_user_roles`.
+* **Permission.** Every other admin request resolves the caller's roles, then the
+  union of their permissions, then compares that set with the permission the route
+  policy declares. A missing session → `401` (JSON) / redirect to `/admin/login`
+  (HTML). A non-staff account → the same. A staff account without the permission →
+  `403` with a rendered refusal page (HTML) or
+  `{ error: { code: "forbidden", … } }` (JSON).
+* **No route, no policy → refused.** An `/admin` or `/api/**/admin` path with no
+  policy entry fails closed with `policy_missing`.
+* **High-risk actions** additionally require a single-use confirmation:
+
+```http
+POST /api/v1/admin/reauth
+Content-Type: application/json
+{ "path": "/api/v1/admin/orders/12/refunds" }
+
+200 { "data": { "challenge": "ra_…", "field": "reauth_challenge",
+                "passwordField": "current_password",
+                "action": "POST /api/v1/admin/orders/:id/refunds",
+                "entityRef": "/api/v1/admin/orders/12/refunds",
+                "expiresInSeconds": 600 }, "requestId": "…" }
+```
+
+  The endpoint resolves the TARGET path to its policy entry itself, so the
+  challenge is bound to the real route pattern, the caller must already hold that
+  route's permission to be given one, and an unknown path is a `404`. The
+  confirmation is then presented on the action:
+
+```http
+POST /api/v1/admin/orders/12/refunds
+{ "amountMinor": 500, "reason": "damaged cover",
+  "idempotencyKey": "refund-12-1",
+  "reauth_challenge": "ra_…", "current_password": "…" }
+```
+
+  Re-auth failures are their own codes:
+  `reauth_missing`, `reauth_failed_password`, `reauth_expired`, `reauth_replayed`,
+  `reauth_wrong_binding`, `reauth_too_many_attempts`. A wrong password performs
+  NOTHING and does not consume the confirmation (so a typo costs nothing); five
+  wrong passwords exhaust it. Outcomes are appended to `admin_reauth_events`,
+  which is immutable at the database level.
+
+The re-auth set is exactly: `POST /admin/orders/:id/refunds`,
+`POST /admin/generation/templates/:id/{publish,retire}`,
+`POST /admin/generation/prompts/:id/publish`, `POST /admin/staff/:id/roles`,
+`POST /admin/staff/:id/roles/revoke`, `POST /admin/privacy/:id/status`,
+`POST /admin/integrations/flags/:key`, `POST /admin/exports`, and the
+`/api/v1/admin/...` equivalents. Refunds, role changes, privacy decisions,
+template publishing, flag changes and exports are the V2 §10 high-risk set.
+
+## Response envelope
+
+* Success: `{ "data": …, "requestId": "…" }`.
+* List success: `{ "data": { "<resource>": [...], "page": { "limit": 25, "offset": 0, "total": 41, "hasMore": true } }, "requestId": "…" }`.
+  `limit` is capped at 100; `offset` is clamped; `sort` is a per-resource
+  whitelist and every list ends with a stable tiebreaker.
+* Failure: `{ "error": { "code": "…", "message": "…", "fields": null, "requestId": "…" } }`.
+
+## Endpoints
+
+| Method & path | Permission | Notes |
+|---|---|---|
+| `POST /api/v1/admin/reauth` | `admin.access` | Mint a confirmation for a named path |
+| `GET /api/v1/admin/permissions` | `admin.access` | The role list, the permission catalogue with `highRisk`, and what the caller holds |
+| `GET /api/v1/admin/dashboard` | `dashboard.view` | Ledger revenue per currency, unpaid (explicitly NOT revenue), operational counts, reconciliation |
+| `GET /api/v1/admin/orders`, `/:id` | `orders.read` | Filters `status`, `payment_status`, `q`; sort `newest`/`total`. The detail returns items, timeline, ledger, refunds and payment attempts; `idempotency_payload_hash` is never returned |
+| `POST /api/v1/admin/orders/:id/status` | `orders.write` | Enum-checked transition through the central state machine |
+| `POST /api/v1/admin/orders/:id/notes` | `orders.notes` | |
+| `POST /api/v1/admin/orders/:id/refunds` | `finance.refund` **+ re-auth** | `amountMinor` (omitted = full remaining), `reason`, `idempotencyKey` |
+| `GET /api/v1/admin/customers`, `/:id` | `customers.read` | Counts and money are aggregated in one query |
+| `GET /api/v1/admin/prospects` | `customers.consent` | Incl. the consent versions |
+| `GET /api/v1/admin/books`, `/:id` | `books.read` | The detail reports `photo_upload_present` instead of the private key |
+| `POST /api/v1/admin/media/photos/token` | `books.read` | Mint a SHORT-LIVED, single-use URL for one private input photo. `{ "key": "uploads/…" }` → `{ url, expiresInSeconds: 120, permission }`. An unregistered or malformed key is a `404`/`422` |
+| `POST /api/v1/admin/media/previews/token` | `previews.read` | The same for one generated preview image |
+| `GET /api/v1/admin/catalog/products`, `/catalog/collections` | `catalog.read` | |
+| `GET /api/v1/admin/cms/pages` | `cms.read` | |
+| `GET /api/v1/admin/templates` | `studio.read` | |
+| `POST /api/v1/admin/templates/:id/clone` | `studio.write` | Returns the new DRAFT |
+| `POST /api/v1/admin/templates/:id/publish` | `studio.publish` **+ re-auth** | The previous published version is retired atomically |
+| `GET /api/v1/admin/generation/jobs` | `generation.read` | |
+| `POST /api/v1/admin/generation/jobs/:id/retry`, `/cancel` | `generation.operate` | `cancel` requires a reason |
+| `GET /api/v1/admin/generation/providers` | `integrations.read` | Phase-3 provider health (never a credential) |
+| `GET /api/v1/admin/previews` | `previews.read` | Each row carries its derived `queue` |
+| `GET /api/v1/admin/payments`, `/refunds` | `finance.read` | |
+| `GET /api/v1/admin/reconciliation` | `finance.reconcile` | Read-only comparison + the revenue statement |
+| `GET /api/v1/admin/discounts` | `finance.discounts` | |
+| `GET /api/v1/admin/fulfilment/pdf-requests` | `fulfilment.read` | Incl. the honest scope statement |
+| `GET /api/v1/admin/pdf-requests/:id` | `fulfilment.read` | Legacy Phase-1 status endpoint |
+| `GET /api/v1/admin/reviews` | `reviews.read` | |
+| `POST /api/v1/admin/reviews/:id/moderate` | `reviews.moderate` | |
+| `GET /api/v1/admin/localization` | `localization.read` | Languages + published-translation counts |
+| `POST /api/v1/admin/localization/languages/:code` | `localization.write` | Activating a language with no published translation is refused |
+| `GET /api/v1/admin/support/tickets`, `/:id` | `support.read` | Includes `sla` and the legal `transitions` |
+| `POST /api/v1/admin/support/tickets/:id/assign` | `support.operate` | Compare-and-set on the observed owner |
+| `POST /api/v1/admin/support/tickets/:id/priority` | `support.operate` | Reason required |
+| `POST /api/v1/admin/support/tickets/:id/status` | `support.operate` | Reason required; the DB trigger is the final authority |
+| `POST /api/v1/admin/support/tickets/:id/messages` | `support.operate` | `internal: true` writes a note the customer never sees |
+| `GET /api/v1/admin/privacy/requests` | `privacy.read` | |
+| `POST /api/v1/admin/privacy/requests/:id/status` | `privacy.manage` **+ re-auth** | `legalHold: true|false` releases/places a hold |
+| `GET /api/v1/admin/retention/failures` | `privacy.read` | Private keys are truncated |
+| `POST /api/v1/admin/retention/failures/:id/retry` | `privacy.manage` | Re-runs the sweep and reports THIS row's outcome |
+| `GET /api/v1/admin/integrations` | `integrations.read` | Configuration state only; no credential is read into the response |
+| `POST /api/v1/admin/integrations/flags/:key` | `integrations.flags` **+ re-auth** | Reason required |
+| `GET /api/v1/admin/events` | `events.read` | `?stream=` selects one of 12 streams; each stream ALSO checks the permission of the data it carries |
+| `GET /api/v1/admin/staff`, `/staff/matrix` | `staff.read` | The matrix reports drift against the shipped catalogue instead of hiding it |
+| `POST /api/v1/admin/staff/:id/roles`, `/roles/revoke` | `staff.manage` **+ re-auth** | Reason required; the last super_admin cannot be revoked |
+| `GET /api/v1/admin/audit` | `audit.read` | Filters `q`, `action`, `entity_type`, `actor` |
+| `GET /api/v1/admin/exports` | `exports.read` | |
+| `POST /api/v1/admin/exports` | `exports.create` **+ re-auth** | Needs the KIND's permission too; returns the CSV inline (5 000-row cap stated in the header) |
+
+## Private photos and previews are capabilities, not URLs (V2 §10)
+
+A child's photograph and a generated preview are **never** addressed by their R2
+object key in the panel. Both routes that used to wave an administrator through on
+the legacy `users.role = 'admin'` flag — `GET /photos/:key` and
+`GET /previews/:key` — no longer do; those routes now serve only the uploading
+browser (owner capability cookie) and the customer who owns the item.
+
+An operator with the object's own read permission gets a capability instead:
+
+```http
+POST /api/v1/admin/media/photos/token
+{ "key": "uploads/<owner>/<file>.jpg" }
+
+200 { "data": { "kind": "photo",
+                "url": "/admin/media/photo/<64-hex>",
+                "permission": "books.read",
+                "expiresInSeconds": 120,
+                "note": "The url is single-use and expires quickly. …" },
+      "requestId": "…" }
+
+GET /admin/media/photo/<64-hex>      →  200 image/jpeg
+                                         Cache-Control: private, no-store
+                                         X-Robots-Tag: noindex, noimageindex
+GET /admin/media/photo/<64-hex>      →  404   (already redeemed)
+```
+
+* The capability is bound to the **actor**, the **object key** and the **kind**,
+  expires after 120 seconds and can be redeemed **once**; minting a new one for
+  the same operator and object retires the previous one. Only its SHA-256 is
+  stored, so a leaked database row is not a usable link.
+* The redeeming route carries `books.read` (photo) or `previews.read` (preview) in
+  the policy table, so the **central guard** checks the permission again before the
+  capability is even examined. A `finance` operator may read the order and still
+  not the child.
+* Every failure mode — unknown token, malformed token, wrong actor, wrong kind,
+  expired, already redeemed — answers the **same 404** a nonexistent object gives,
+  so the route is not an existence oracle.
+* The object must already be registered (`photo_uploads.upload_key` /
+  `preview_assets.object_key`); a key that was never uploaded never gets a
+  capability, even for a super administrator.
+* The listing endpoints that could carry a key (`GET /api/v1/admin/books/:id`,
+  the retention failure queue) report its **presence** or a truncated form, never
+  the value.
+
+## The seven roles
+
+| Role | Intent |
+|---|---|
+| `super_admin` | All 42 permissions |
+| `operations` | Orders, generation, previews, fulfilment, support, operational tracing, exports |
+| `content_editor` | Catalog, CMS, Story Studio including publishing, localization |
+| `support` | The inbox plus read-only context about orders, books and previews |
+| `finance` | Payments, refunds, reconciliation, discounts, exports, audit, privacy read |
+| `production` | Orders, generation, previews, fulfilment |
+| `read_only` | Every `.read` permission and nothing else — no write, operate, manage or create |
+
+`GET /api/v1/admin/staff/matrix` returns the matrix the SERVER enforces (read from
+`admin_role_permissions`), and the Staff screen reports drift against the shipped
+catalogue in `src/admin-console/rbac.ts` instead of hiding it.
+
+## HTML surfaces added in Phase 6
+
+`/admin/customers`, `/admin/customers/:id` (where an account is promoted),
+`/admin/prospects`, `/admin/books`, `/admin/fulfilment`, `/admin/support`,
+`/admin/support/:id`, `/admin/privacy`, `/admin/retention`, `/admin/integrations`,
+`/admin/events`, `/admin/staff`, `/admin/staff/matrix`, `/admin/audit`,
+`/admin/exports`, plus the two private-media capability routes
+`/admin/media/photo/:token` (`books.read`) and `/admin/media/preview/:token`
+(`previews.read`). Every mutation is an ordinary form POST with the CSRF token the
+middleware injects, so each screen works with JavaScript disabled; the high-risk
+forms additionally carry a hidden `reauth_challenge` and a `current_password`
+field, both issued/consumed through the same mechanism the JSON API uses.
+
+## New error codes
+
+`auth_required`, `forbidden`, `policy_missing`, `validation_failed`, `not_found`,
+`no_change`, `invalid_transition`, `assignment_refused`, `priority_refused`,
+`reply_refused`, `privacy_decision_refused`, `role_change_refused`,
+`flag_refused`, `export_refused`, `no_published_translations`, `clone_failed`,
+`publish_refused`, `retry_refused`, `cancel_refused`, `moderation_refused`, and the
+`reauth_*` family (`reauth_missing`, `reauth_failed_password`, `reauth_expired`,
+`reauth_replayed`, `reauth_wrong_binding`, `reauth_too_many_attempts`).

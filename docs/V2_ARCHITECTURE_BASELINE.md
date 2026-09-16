@@ -540,3 +540,128 @@ offline localStorage cart  --(mirror, deduped)-->  DURABLE SERVER CART (carts/ca
 * The browser journey group runs against a SECOND local server started with the
   offline provider, so the shipped default (payments disabled) stays under test
   for every other journey.
+
+---
+
+# Phase 6 additions (the admin control plane)
+
+Phase 6 does not change the request path for a customer. It adds a control plane
+around the admin surface, and the shape of that control plane is the whole point
+of the phase.
+
+## The one gate
+
+```text
+request to /admin/** , /api/v1/admin/** or /api/admin/**
+        |
+        v
+adminConsoleGuard            (src/admin-console/guard.ts, registered BEFORE every admin route)
+        |
+        +-- resolveAdminPolicy(method, pathname)     (src/admin-console/policy.ts)
+        |        no entry            -> 403 policy_missing   (fail closed)
+        |        permission === null -> public (the sign-in screen only)
+        |
+        +-- c.get('user')             no session / not staff -> 401 or a redirect to /admin/login
+        |
+        +-- permissionsForActor(db, user)            (src/admin-console/roles.ts)
+        |        roles from admin_user_roles -> permissions from admin_role_permissions
+        |        (the legacy `users.role = 'admin'` flag is honoured ONLY for an
+        |         account with no role rows at all: the bootstrap safety net)
+        |        => stored on the REQUEST (c.set('adminPermissions')) — no module state
+        |
+        +-- permits(permissions, entry.permission)   no -> 403 (rendered page or JSON)
+        |
+        +-- entry.reauth -> consumeReauthChallenge()  (src/admin-console/reauth.ts)
+        |        single-use, 10-minute, bound to actor + session + ACTION
+        |        wrong password performs nothing and does not consume it
+        |
+        v
+     the route handler  ->  a domain service  ->  auditMutation()  ->  redirect / JSON
+```
+
+Three properties follow from that shape, and each is asserted:
+
+1. **A new admin route is unreachable until it declares a permission.** The
+   coverage test walks Hono's own route table (`app.routes`) and fails if any
+   registered `/admin` or `/api/**/admin` route has no policy entry, so the policy
+   cannot drift behind the code.
+2. **Hiding a link is never the control.** The sidebar is rendered from the
+   caller's permission set (`adminPage` REQUIRES it, so TypeScript enforces the
+   argument), and the same destination is refused on a direct request.
+3. **A denial writes nothing.** The handler never runs, so no row and no audit
+   event is produced; the matrix test asserts the audit count is unchanged for
+   every refused POST across all seven roles.
+
+## Where each Phase-6 responsibility lives
+
+| Responsibility | Module |
+|---|---|
+| Roles, permissions, the shipped default matrix | `src/admin-console/rbac.ts` (pure) |
+| Which route needs which permission (and whether it is high-risk) | `src/admin-console/policy.ts` |
+| Resolving a caller's roles and permissions; audited grant/revoke | `src/admin-console/roles.ts` |
+| The gate, the refusal pages, re-auth enforcement | `src/admin-console/guard.ts` |
+| Single-use high-risk confirmations + their immutable outcome log | `src/admin-console/reauth.ts` |
+| One audit write per accepted mutation; read-side redaction | `src/admin-console/audit.ts` |
+| The sidebar IA as data | `src/admin-console/nav.ts` |
+| Bounded pagination, whitelisted sort, CSV | `src/admin-console/list.ts` |
+| Support inbox, assignment, SLA, auto-assign | `src/admin-console/support.ts` |
+| Privacy decisions, legal hold, retention recovery | `src/admin-console/privacy.ts` |
+| Credential-free provider health, consulted feature flags | `src/admin-console/integrations.ts` |
+| 12 event streams, each gated by the permission of its data | `src/admin-console/events.ts` |
+| Permission-checked exports with a stated row cap | `src/admin-console/exports.ts` |
+| Short-lived, permission-checked capabilities for a private photo/preview | `src/admin-console/media.ts` |
+| The ledger-reconciled dashboard and the operational read models | `src/admin-console/ops.ts` |
+| Every Phase-6 screen | `src/admin-console/views.ts` |
+| The `/api/v1/admin/...` JSON surface | `src/admin-console/api.ts` |
+| Route registration | `src/admin-console/routes.ts` |
+
+## Boundary rules Phase 6 makes explicit
+
+* **The admin UI calls the SAME domain services as the API.** A refund from the
+  order page and a refund from `POST /api/v1/admin/orders/:id/refunds` both go
+  through `requestRefund`, so the cap, the idempotency and the ledger entry are
+  identical however the action is reached.
+* **A status is never a form field.** Order, item, ticket, privacy and template
+  transitions all go through the central services, and the database triggers from
+  earlier migrations remain the final authority.
+* **The database is the runtime authority for authority itself.**
+  `admin_user_roles` + `admin_role_permissions` decide what a caller may do;
+  `src/admin-console/rbac.ts` supplies the labels and the seeded default, and a
+  test asserts the two are identical so the matrix screen can never describe a
+  permission set the enforcement does not use.
+* **Money on the dashboard comes from the ledger.** `financialSummary()` is the
+  only source of revenue; an order's `status` is never consulted for it, and an
+  unpaid order contributes nothing.
+* **Configuration state, never configuration values.** Provider health is built
+  from the credential-free shapes the earlier phases expose, and there is no
+  control anywhere in the panel that could set a credential.
+* **One confirmation, one action.** A challenge is bound to the actor, their
+  session and the route pattern, and is consumed exactly once; the entity it acted
+  on is recorded on the challenge and on every outcome event.
+* **A private object is a capability, not a URL.** The panel never embeds an R2
+  object key. `src/admin-console/media.ts` mints a two-minute, single-use
+  capability bound to the operator and the exact object; the redeeming route
+  (`/admin/media/photo/:token`, `/admin/media/preview/:token`) requires the
+  OBJECT's own read permission from the central guard and then consumes the
+  capability. The two legacy `users.role = 'admin'` bypasses on `GET /photos/:key`
+  and `GET /previews/:key` are REMOVED, so there is no permanent,
+  permission-unchecked URL to a child's photograph. Only the token's SHA-256 is
+  stored, and every failure answers the same 404 the object route already gives.
+
+## Deployment / configuration notes
+
+* **No new binding is required.** Migration `0033` seeds the roles, permissions and
+  grants, so a deployment that never touches the Staff screen still has a working
+  super administrator.
+* **The first administrator** is still created only from an explicitly configured
+  `ADMIN_BOOTSTRAP_EMAIL`/`ADMIN_BOOTSTRAP_PASSWORD` (or `npm run admin:bootstrap`),
+  and now also receives the explicit `super_admin` grant.
+* **Two feature flags exist and both are read by code**:
+  `support.auto_assign` (OFF by default) and `admin.exports.enabled` (ON by
+  default). A flag nothing reads would be a false capability claim, so the set is
+  deliberately small.
+* **The high-risk set** is declared in `src/admin-console/policy.ts` with
+  `reauth: true`. Adding a route to it is a one-line change with no migration.
+* **The browser journey** runs on its own local server with the offline payment
+  provider (it needs captured money to refund), started after the phase-3 and
+  phase-5 groups, both of which assert global preview/template counts.

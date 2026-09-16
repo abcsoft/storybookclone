@@ -8,70 +8,85 @@ action would be. Every claim here was executed; nothing is aspirational.
 
 | Item | Value |
 |---|---|
-| Branch | `feat/customer-lifecycle-v2` |
-| Baseline HEAD (accepted Phase-4 tip) | `3ee3bcd69d0dbbbf655ca4b6b6561c9990c43807` |
-| Phase | **V2 Phase 5 — Customer Account, My Books, Approval and Support** |
+| Branch | `feat/admin-control-plane-v2` |
+| Baseline HEAD (accepted Phase-5 tip) | `b6113561801a90deb714cf8b499f2fe5eaab22f1` |
+| Phase | **V2 Phase 6 — Full Operational Admin Panel (ADM-01…ADM-21, S-08/S-09)** |
 | `main` | `4d76779` — **untouched** (never merged, never checked out, never pushed) |
 | Pushed? | **No.** AutoCoder reviews and pushes. |
-| History rewritten? | **No.** Every change is a new commit on top of `3ee3bcd`. |
-| Migrations added | `0028`–`0032` (forward-only; `0001`–`0027` byte-identical) |
+| History rewritten? | **No.** Every change is a new commit on top of `b611356`. |
+| Migrations added | `0033` (forward-only; `0001`–`0032` byte-identical) |
 
-The full commit list and the final SHAs are in the completion report; the per-ID traceability is in
-`docs/V2_PHASE5_TRACEABILITY.md` and the phase report in
-`docs/V2_PHASE5_COMPLETION_REPORT.md`.
+The full commit list and the final SHAs are in the completion report; the per-ID
+traceability is in `docs/V2_PHASE6_TRACEABILITY.md` and the phase report in
+`docs/V2_PHASE6_COMPLETION_REPORT.md`.
 
 ## 2. Migration ledger
 
 | Migration | Contents |
 |---|---|
-| `0028_customer_account_security.sql` | `users.email_verified`/`email_verified_at`/`status`/`updated_at`; `sessions.public_id`/`user_agent`/`last_seen_at`/`ip_hash`/`created_ip_hash` + a BACKFILL that gives every pre-existing session an addressable opaque id; `email_tokens` (three purposes, SHA-256 at rest, single-use enforced by a trigger); append-only `account_security_events`; `notification_preferences` with `CHECK (security_alerts = 1)`. |
-| `0029_customer_claims_revisions.sql` | `guest_claims` (`verified_via` CHECK-constrained to exactly `('email_token','guest_capability')`, `UNIQUE(resource_type, resource_ref)`, immutable by trigger); the structured `revision_requests` columns (`reason_code`, `replacement_upload_key`, `policy_json`, `structured_reason`); append-only `revision_request_resolutions`. |
-| `0030_email_outbox_templates.sql` | Versioned `email_templates` (immutable identity, one published row per key/locale, **12 templates seeded**); `email_outbox` (UNIQUE `dedupe_key`, content immutable by trigger, `sent` terminal by trigger); `email_attempts` (`UNIQUE(outbox_id, attempt_no)`, append-only). |
-| `0031_support_tickets.sql` | `support_tickets` with the V2 §7 status machine enforced by a trigger and assignment-ready columns/indexes; append-only `support_ticket_events` and `support_messages`; `support_attachments` with a content-type allowlist CHECK and a byte-size CHECK. |
-| `0032_customer_downloads_privacy.sql` | `download_entitlements` (one per (order item, kind), immutable identity, monotonic counter with a cap); `download_tokens` (hashed at rest, single-use by trigger); append-only `download_events`; `privacy_requests` with ONE open request per (user, kind) via a partial unique index; append-only `privacy_request_events`. |
+| `0033_admin_rbac_audit.sql` | `admin_roles` / `admin_permissions` / `admin_role_permissions` / `admin_user_roles`, seeded with the seven Phase-6 roles, the 42-permission catalogue and the 139 role grants, plus a BACKFILL that gives a pre-existing `users.role = 'admin'` account the `super_admin` grant (the one deliberate derivation, so the upgrade cannot lock the operator out); `admin_reauth_challenges` (single-use, action- and session-bound, expiring) and the append-only `admin_reauth_events`; `admin_media_tokens` (the short-lived, single-use, hashed-at-rest capability that lets the panel show a private photo or preview without embedding an object key — V2 §10) with a no-reuse trigger; `feature_flags` (two flags, each READ by product code); `export_jobs` (immutable history, no-delete trigger); `admin_audit_events.actor_role`/`request_id`/`source` with indexes; `support_tickets.first_response_at`/`resolved_by_user_id` + a priority index. |
 
-All five are ALTER-safe at most once (the established rule), their CREATE/seed
-portions are `IF NOT EXISTS`/`INSERT OR IGNORE`, every new FK/filter/lookup has
+It is ALTER-safe at most once (the established rule), its CREATE/seed portions
+are `IF NOT EXISTS`/`INSERT OR IGNORE` (compressed into multi-row INSERTs so the
+seed costs ~10 statements instead of 190 — the suite builds a migrated database
+per test file, and the difference was measurable), every new FK/filter/lookup has
 an index, and unique constraints are the idempotency authority. The
-`[phase5 upgrade]` scenario applies them over an existing Phase-4-shaped database
-and asserts that every pre-existing row is untouched, that no account is marked
-verified and that no data is invented; re-applying the repeatable part is asserted
-to be a no-op. The Phase-2/3/4 upgrade scenarios were scoped to their own accepted
-schema so each still describes exactly what it was reviewed against.
+`[phase6 upgrade]` scenario applies it over an existing Phase-5-shaped database and
+asserts that every pre-existing row is untouched, that an ordinary customer gains
+nothing, that no audit provenance or first-response time is invented, that the
+short-lived media capability is redeemable once at the DATABASE level (the second
+`UPDATE` aborts), and that re-applying the repeatable part is a no-op. The
+Phase-2/3/4/5 upgrade scenarios were re-scoped to their own accepted schema so each
+still describes exactly what it was reviewed against.
+
+Table count after this phase: **125** (58 added columns unchanged).
 
 ## 3. Requirement IDs
 
 ### 3.1 Closed by this phase
 
-**CUS-01 … CUS-14, GEN-09, GEN-11, PER-08, PER-09 and PLT-05 are complete**
-(19 IDs). Every row in `docs/V2_PHASE5_TRACEABILITY.md` carries a code path, a
-test (or browser) proof and an explicit limitation.
+**ADM-01 … ADM-21 (21 IDs), S-08, S-09 and S-11.** Every row in
+`docs/V2_PHASE6_TRACEABILITY.md` carries a code path, a test (or browser) proof and
+an explicit limitation. Closed/verified: **21 of 21 ADM IDs**, and of the
+cross-cutting set **S-08, S-09, S-11** plus the Phase-5 operator halves (support,
+privacy, outbox visibility), the "no global mutable request state" rule, the "no
+arbitrary status forms" rule and the "short-lived permission-checked private
+photo/preview access" rule.
 
-Five honest limits repeat there:
+Four honest limits repeat there:
 
-* **PLT-05** — the email pipeline is complete and production-shaped, but NO
-  provider is configured and **no real email has ever been sent**; delivery is
-  DISABLED and every queued message is recorded `suppressed` with the reason. A
-  real send is `EXTERNAL CREDENTIAL REQUIRED`.
-* **CUS-11** — the delivered artifact is an archive of the WATERMARKED PREVIEW
-  PAGES, the only thing this phase can honestly produce. A print-ready PDF has no
-  producer until Phase 7, so a `print_pdf` entitlement is refused with that reason
-  rather than faked.
-* **CUS-14** — intake only, as the phase description allows: no automatic export
-  bundle and no automatic deletion (PLT-10/S-11, Phase 8).
-* **CUS-12** — the customer side is complete; assignment, SLAs and the operator
-  inbox are Phase 6 (the columns/indexes exist and no Phase-5 path can set them).
-* **PER-09** — the retention deadline is displayed AND enforced on every customer
-  action, but no scheduled sweep exists yet (S-11, Phase 8); the consent wording
-  is still the Phase-3 draft pending owner/counsel review (S-14).
+* **ADM-13** is an operational shell that works with what exists: no print
+  profile, renderer, preflight or print adapter until Phase 7 (FUL-01…FUL-10). The
+  screen states its own scope and shows no shipment/tracking column, because no
+  such row can exist yet.
+* **ADM-18** covers intake, the staff decision, the legal hold and the retention
+  failure queue; the automatic export bundle and account erasure are Phase 8
+  (PLT-10).
+* **ADM-20** re-authentication is the account password re-entered at the moment of
+  the action. There is no WebAuthn/TOTP second factor and no enrolment flow.
+* **ADM-02**'s permission MATRIX is seeded and displayed but not editable in the
+  UI: changing it is a migration, deliberately, because a panel that can rewrite
+  its own policy is a much larger attack surface.
+
+Two cross-cutting V2 §10 rules were closed by their own code path and are traced
+separately (see the last row of the cross-cutting table in
+`docs/V2_PHASE6_TRACEABILITY.md`):
+
+* **Private photo/preview access is short-lived, permission checked and never a
+  permanent URL.** `src/admin-console/media.ts` + `/admin/media/{photo,preview}/:token`
+  + `admin_media_tokens`; the legacy `users.role = 'admin'` bypasses on
+  `/photos/:key` and `/previews/:key` were **removed**. A finance operator can see
+  an order but not the child, which is the intended boundary.
+* **No arbitrary status forms.** Every order/item/ticket/privacy/template
+  transition still goes through the central service and the database trigger.
 
 ### 3.2 Still open, each with an owning phase
 
 | ID | Status | Owner |
 |---|---|---|
-| S-08 (RBAC matrix), S-09 (re-auth), ADM-01…ADM-21 | open — the Phase-5 support/outbox/privacy surfaces are permission-shaped and left their operator half unbuilt on purpose | Phase 6 |
-| FUL-01…FUL-10 (PDF/print/fulfilment) | open — Phase 5 refuses a print-ready download honestly and names the phase that will produce it | Phase 7 |
-| PLT-10 (retention cron), PLT-12 (metrics/alerts), S-11 (retention not scheduled) | open — `drainEmailOutbox` is the retry sweep a cron will call, and it already works | Phase 8 |
+| FUL-01…FUL-10 (PDF/print/fulfilment) | open — Phase 6 gives them the operational shell and the honest scope statement | Phase 7 |
+| PLT-10 (retention cron), PLT-12 (metrics/alerts), the outbox retry schedule | open — the admin panel offers the sweep and the outbox state on demand | Phase 8 |
+| PLT-06/07/08 (locale routing, currency availability, SEO) | open — translation completeness is reported, activation fails closed | Phase 8 |
 | S-14 (legal text is a draft) | open — kept explicitly marked | owner + counsel |
 
 ## 4. Exact verification (frozen tree)
@@ -79,70 +94,75 @@ Five honest limits repeat there:
 | Command | Exit | Result |
 |---|---|---|
 | `npm run typecheck` | `0` | 0 errors |
-| `npm run test` | `0` | **735 passed / 735** across **42 files** (baseline 638/35; **+97 tests in 7 new files**) |
-| `npm run test:integration` | `0` | **12 scenarios, 18 OK assertion blocks**, including the new `[phase5 upgrade]` (116 expected tables / 53 new columns; `0028`–`0032` over existing Phase-4 rows; every pre-existing row unchanged; every existing account still UNVERIFIED; every pre-existing session given an addressable `public_id`; 12 published email templates seeded once; the single-use-token, claim-once, outbox-dedupe/sent-terminal, support-status, attachment-allowlist/size, download-cap and one-open-privacy-request guarantees asserted at the schema level) |
-| `npm run secrets:scan` | `0` | no matches across 358 files |
-| `npm run secrets:scan -- --mode=archive` | `0` | no matches across 392 files |
-| `npm run build` | `0` | `dist/_worker.js` 873.22 kB (gzip 229.39 kB) — up from 715.40 kB in Phase 4 |
-| `npm run test:e2e` | `0` | **14 journey groups** including the new `phase5-customer-lifecycle` group |
-| `npm run audit:frontend -- phase5-customer` | `0` | **0 findings**: 32 public routes at 360/390/768/1024/1440/1920, the 11 new customer account routes at desktop + mobile with a full accessibility pass at each (281 evidence files) |
+| `npm run test` | `0` | **792 passed / 792** across **46 files** (baseline 735/42; **+57 tests**: 16 rbac + 12 reauth + 16 ops + 12 media + 1 split refund test) |
+| `npm run test:integration` | `0` | **13 scenarios, 21 OK assertion blocks**, including the new `[phase6 upgrade]` (125 tables / 58 columns; `0033` over existing Phase-5 rows; 7 roles / 42 permissions / 139 grants seeded once; the pre-existing administrator gained exactly the super_admin grant; an ordinary customer gained nothing; no audit provenance or first-response time invented; re-apply duplicates nothing; the re-auth log, the export trail and the media capability immutable at the DB level; the Phase-5 support status machine still enforced) |
+| `npm run secrets:scan` | `0` | no matches (389 files) |
+| `npm run secrets:scan -- --mode=archive` | `0` | no matches (430 files) |
+| `npm run build` | `0` | `dist/_worker.js` 1,068.72 kB (gzip 275.90 kB) |
+| `npm run test:e2e` | `0` | **15 journey groups**, including the new `phase6-admin-control-plane` (now 9 phases) |
+| `npm run audit:frontend -- phase6-admin` | `0` | **0 findings** (see §6) |
 | `npm audit --omit=dev` | `0` | 0 vulnerabilities |
-| `npm audit` | `1` | 3 high, dev-only `sharp <0.35.4` ← `miniflare` ← `wrangler`; **pre-existing, not in the worker bundle, unchanged** |
+| `npm audit` | `1` | 3 high, dev-only `sharp` ← `miniflare` ← `wrangler`; **pre-existing, unchanged** |
 
-New test files: `phase5-account-auth.test.ts` (16), `phase5-guest-claim.test.ts`
-(10), `phase5-revision-approval.test.ts` (15), `phase5-downloads.test.ts` (13),
-`phase5-support.test.ts` (12), `phase5-order-account-views.test.ts` (14),
-`phase5-email-outbox.test.ts` (17), plus the shared
-`test/helpers/accountFixtures.ts`.
+New test files: `phase6-rbac.test.ts`, `phase6-reauth.test.ts`,
+`phase6-admin-ops.test.ts`, `phase6-media.test.ts`, plus the shared
+`test/helpers/adminFixtures.ts` and `test/helpers/adminReauth.ts`.
 
-## 5. The customer lifecycle journey (real rows, real payment, real download)
+## 5. The admin control plane journey (real browser, real rows, zero external calls)
 
-`phase5-customer-lifecycle` — real Chromium against a real local
+`phase6-admin-control-plane` — real Chromium against a real local
 `wrangler pages dev` with real local D1/R2, using the deterministic offline
-payment provider and therefore making **zero external calls**. It runs against its
-OWN server instance started with `PAYMENT_PROVIDER=deterministic-fake`, **after
-the phase-3 group** (whose journey asserts global preview-asset counts, so a group
-that generates previews must not run before it).
+payment provider and therefore making **zero external calls**. It runs on its OWN
+server instance, after the phase-3 and phase-5 groups (both assert global
+preview/template counts).
 
-1. the deployment reports its own email capability truthfully (no real mail, no
-   credential-shaped value) and the offline payment provider as active;
-2. a GUEST personalizes a book through the real PDP, checks out, and pays through
-   the provider's signed webhook — with no account at any point. The confirmation
-   page states what this deployment actually does about email and says plainly
-   that knowing an email address alone never moves an order;
-3. registering leaves the address UNVERIFIED (asserted in the database), and it is
-   confirmed only by opening the link the development console adapter wrote to the
-   server log — the same place a developer reads it, with no dev-only HTTP surface;
-4. typing the guest's email into the claim form moves NOTHING (asserted in the
-   database and by an empty My Books list); opening the link delivered to that
-   mailbox moves the order AND the personalised book, recorded as
-   `verified_via = 'email_token'`;
-5. the claimed order renders with its real timeline, payments, addresses and
-   receipt, and the book appears in My Books with its child name;
-6. the account surfaces work end to end: profile rename, address book, notification
-   preferences (with security alerts locked on), the session list, a support ticket
-   with a REAL photo attachment (reply → close → reopen, with the status machine
-   asserted in the database), and a data-export request that says honestly that it
-   is not automatic yet;
-7. generation runs, version 1 is approved EXACTLY, then a change request with a
-   replacement photo creates a NEW immutable revision and invalidates that
-   approval — the database shows `approved,invalidated`, the revision advanced by
-   one, and the previously approved version still holds its pages;
-8. an entitled download delivers a REAL ZIP archive (`PK` signature, named
-   `order-<n>-preview-r<n>.zip`) through a short-lived single-use link; the link
-   cannot be replayed, minting again retires the previous one, and the page never
-   carries a token;
-9. a SECOND customer sees no orders, no downloads and no tickets, and gets a 404
-   on the first customer's receipt, ticket and download entitlement.
+1. the bootstrapped administrator signs in, is a **super administrator** (asserted
+   in the grant table), and the sidebar shows the complete Phase-6 IA;
+2. three customers register and each opens a support ticket; the administrator then
+   **grants a role through the real form WITH a password confirmation**, three
+   times (support, content_editor, finance) — and a role change attempted without a
+   confirmation is refused with 403 and changes nothing;
+3. the support operator signs in and gets a **role-restricted menu** (no finance,
+   staff, audit, export, Story Studio or integrations links), an **explicit refusal
+   page** on the direct URLs (403, no stack trace) and a **403 on the direct API
+   call** — while a permitted API call returns 200;
+4. that operator assigns their own ticket from the inbox: the ticket's own history
+   and the audit log both record it, and the ticket moves `open → assigned`;
+5. a customer buys a book end to end (cart → server quote → checkout → the offline
+   provider page → its signed webhook → paid), then generates a preview, which
+   provisions the product template;
+6. a **content editor clones the template into a draft and publishes it with a
+   password confirmation**: the draft becomes `published`, the previous version
+   becomes `retired`, exactly one publish audit event is written, and a publish
+   without a confirmation returns 403;
+7. a **finance operator issues a refund with a password confirmation**: refused
+   without it (nothing written, no audit event), refused with a wrong password
+   (nothing written), then succeeded with the correct one — the ledger gains a
+   500-minor-unit debit, the order becomes `partially_refunded`, and exactly one
+   refund audit event exists. The re-auth outcome log contains both the
+   `failed_password` and the `succeeded` outcome;
+8. the dashboard renders the real ledger net and the operational queues, the audit
+   log lists every action above with its actor and authorising roles, provider
+   health renders configuration state with **no** credential-shaped value, and the
+   event stream shows the confirmed re-authentication;
+9. **the private child photograph is served through a short-lived capability.** As
+   the super administrator the order screen carries `/admin/media/photo/<64-hex>`
+   and neither the R2 object key nor `/photos/`; the browser actually RENDERS the
+   image (`naturalWidth > 0`); that spent URL then returns 404; the old permanent
+   `/photos/<key>` URL returns 404 even for the super administrator; a reload mints
+   a fresh capability. As the **finance** operator (no `books.read`) the same page
+   shows a placeholder and no capability at all, and the route itself returns 403.
 
 ## 6. Audit verdict
 
-`npm run audit:frontend -- phase5-customer` reports **0 findings**: 32 public
-routes at all six required widths, the 11 new customer account routes at desktop
-and mobile, and the accessibility pass at each. No horizontal overflow, no console
-error, no failed or 4xx/5xx request, no overclaim copy (the overclaim guard list
-was **not** relaxed), and a clean a11y pass. The new `/verify-email?token=…`
-invalid state and the logged-out account redirects are audited too.
+`npm run audit:frontend -- phase6-admin` reports **0 findings**: 32 public routes
+at all six required widths, the 11 customer account routes, and **14 new admin
+screens at desktop and mobile** (`/admin/customers`, `/prospects`, `/books`,
+`/fulfilment`, `/support`, `/privacy`, `/retention`, `/integrations`, `/events`,
+`/events?stream=payment_events`, `/staff`, `/staff/matrix`, `/audit`, `/exports`)
+plus the pre-existing admin routes. No horizontal overflow, no console error, no
+failed or 4xx/5xx request, no overclaim copy (the overclaim guard list was **not**
+relaxed), and a clean accessibility pass.
 
 The one remaining red gate is `npm audit` (3 high in the dev-only
 `wrangler`/`miniflare`/`sharp` chain) — pre-existing and unchanged from Phase 1.
@@ -151,117 +171,121 @@ The one remaining red gate is `npm audit` (3 high in the dev-only
 
 Nothing below blocks the work completed here.
 
-1. **A real email provider (PLT-05).** Set `EMAIL_PROVIDER=http`,
-   `EMAIL_API_URL`, `EMAIL_API_KEY`, `EMAIL_FROM`. Until then email delivery is
-   DISABLED and truthful: verification, email change, claim links and order
-   confirmations are recorded but not delivered, and the UI says so on every
-   surface that mentions email. A real send is **`EXTERNAL CREDENTIAL
-   REQUIRED`** — none was made, and no credential-shaped value is in this
-   repository or CI. `EMAIL_API_KEY` is never logged, returned or stored in D1.
-2. **A real payment provider (COM-07, unchanged).** `PAYMENT_PROVIDER` is unset by
-   default, so checkout records an unpaid order and never charges.
-3. **Owner decision: the outbox retry schedule (PLT-12).** `drainEmailOutbox`
-   exists with bounded exponential backoff (60s → 1h, 5 attempts) and a lease that
-   reclaims a crashed worker's row, but nothing calls it on a schedule yet. A
-   `suppressed` row is deliberately NOT retried when a provider is later
-   configured — changing that is a one-line change plus a decision.
-4. **Owner decision: the support SLA target.** `sla_due_at` records 24 hours as a
-   first-response target; Phase 6 owns the real policy.
-5. **Owner decision: the tax model and the legal/consent wording** — unchanged
-   from Phases 3 and 4 (S-14).
-6. **Real D1 `database_id`.** `wrangler.jsonc` still carries
-   `local-dev-placeholder` (pre-existing Phase-0 item; a release blocker for any
-   real deploy).
+1. **Owner decision: the support SLA.** 24 hours for the first staff response, set
+   in one place (`SLA_FIRST_RESPONSE_SECONDS`) and stated on the inbox. Nothing
+   pages anyone.
+2. **Owner decision: `support.auto_assign`.** Ships OFF. Turning it on makes new
+   tickets self-assign to the least-loaded support operator.
+3. **Owner decision: the re-auth requirement set.** Currently refunds, template
+   and prompt publishing, role changes, privacy decisions, feature flags and
+   exports. Adding or removing a route is one line in `src/admin-console/policy.ts`.
+4. **Owner decision: a second factor.** Re-authentication is the account password;
+   WebAuthn/TOTP needs an enrolment and recovery policy.
+5. **Owner decision: an editable permission matrix.** Today it is a migration.
+6. **A real email/provider/payment/AI credential set, a real D1 `database_id`, the
+   tax model and the legal/consent wording** — unchanged from Phases 3–5. Each is
+   `EXTERNAL CREDENTIAL REQUIRED` or an owner decision, none was faked, and nothing
+   in this phase performs a real send, charge, generation or probe.
 7. **`npm audit` dev chain.** Fixing the 3 high advisories needs a deliberate
    `wrangler`/`miniflare`/`sharp` bump.
 
 ## 8. Next automatic action
 
-**V2 Phase 6 — Full Operational Admin Panel (ADM-01…ADM-21, S-08/S-09)** on a new
-branch from this tip. Phase 5 built only the CUSTOMER half of every surface it
-introduced, and deliberately left the operator half in place:
+**Owner-requested next: the Phase-2 storefront FRONTEND VISUAL REDESIGN.** The
+owner asked for the public storefront to be brought up to the reference site's
+design language using **ORIGINAL** assets and brand — a visual/UX pass over the
+Phase-2 surface (homepage, catalog, PDP, cart, checkout, CMS-driven pages), not a
+copy of the reference artwork, imagery, copy or brand. Everything it needs already
+exists: the Phase-2 design contract, the CMS block/nav/FAQ/media tables, the
+brand boundary (`src/brand.ts`) and the frontend audit harness
+(`npm run audit:frontend`, which checks overflow, console errors, failed requests,
+overclaim copy and accessibility at six widths). It must not regress the Phase
+6 admin panel, and it must keep using only original assets.
 
-* `support_tickets.assignee_id`/`priority`/`sla_due_at` exist and are indexed, but
-  no Phase-5 path can assign or resolve — the Phase-6 inbox, assignment and SLA
-  triage are their consumers;
-* `email_outbox`/`email_attempts` have no admin view (ADM-17 provider health);
-* `privacy_requests` intake exists with no operator workflow (ADM-18);
-* `revision_request_resolutions` is an append-only operator-side log with no queue
-  UI (ADM-11);
-* the RBAC matrix (S-08) is still the single `admin` role, and every Phase-5
-  admin-shaped action is permission-shaped but not yet narrowly gated.
+**Then: V2 Phase 7 — PDF, Print Preflight, Fulfilment and Tracking
+(FUL-01…FUL-10)** on `feat/pdf-print-fulfilment-v2`. Phase 6 deliberately left it
+the smallest possible step:
+
+* `/admin/fulfilment` already renders the production queue, the PDF request intake
+  and a four-sentence statement of what is missing — Phase 7 replaces that
+  statement with the profiles, renderer, preflight, print adapter and
+  shipment/tracking events, and the re-auth set gains the "submit to print" action;
+* `download_entitlements` already refuses a `print_pdf` artifact with an honest
+  reason, so the customer download becomes real as soon as a preflight-passing
+  package exists;
+* `export_jobs`, the audit provenance columns, the re-auth mechanism and the
+  short-lived media capability are reusable as-is.
 
 ## 9. Commit list
 
-See the commit list in `docs/V2_PHASE5_COMPLETION_REPORT.md`. Nothing was pushed, merged,
-rebased, amended or force-pushed; `main` was never checked out.
+See the commit list in `docs/V2_PHASE6_COMPLETION_REPORT.md`. Nothing was pushed,
+merged, rebased, amended or force-pushed; `main` was never checked out.
 
 ## 10. Deviations and disclosures
 
-* **One pre-existing product behaviour was FIXED after the browser journey found
-  it.** A GUEST returning from payment could not see their own order:
-  `/order-success?cs=…` resolved the caller's own checkout session (an
-  authorization, by capability) but then failed the ownership check. The page now
-  treats an authorized session resolution as authorization. No rule was weakened —
-  the resolution is still gated on the caller's own cart/prospect/session
-  capability, never on the id alone.
-* **ONE ineffective pre-existing security-header hint was REMOVED, with the
-  reasoning recorded.** Since Phase 1/2 the reader and order-success pages had
-  asked for `Referrer-Policy: no-referrer`, but the central header middleware
-  always overwrote it, so the intent had never taken effect. An attempt to honour
-  it (making the middleware respect a route-set policy) was found by the full e2e
-  run to BREAK those pages' own forms: Chrome then sends `Origin: null` on a page
-  whose referrer policy is `no-referrer`, and the central CSRF guard correctly
-  refuses an opaque origin — the reader page's logout button returned
-  `csrf_origin`. The per-route hints are therefore removed, there is exactly ONE
-  application-wide policy, and the property the token-bearing pages need
-  (`strict-origin-when-cross-origin` sends only the ORIGIN cross-origin, never the
-  URL) already holds. This is a reduction in misleading code, not a relaxation: no
-  protection that was in force before was removed, and the reasoning sits in
-  `src/security.ts` next to the header.
-* **One pre-existing test file was UPDATED and neither weakened nor skipped.**
-  `phase1-truthful-claims.test.ts`'s T-01 assertion (the page says "does not send
-  emails") was a copy-string proxy that held only while no email pipeline existed.
-  It is replaced by an assertion tied to the deployment's OWN resolved capability
-  report — which still fails if the page ever claims a send that did not happen —
-  and T-02's `cannot be linked to an account` sentence (now FALSE, because claiming
-  genuinely exists) is replaced by the exact security property as text: the page
-  must say the claim needs proof and that an email address alone never moves an
-  order. Both are stronger, and the property they stood for is asserted directly.
-* **`AUTH_COOKIES` was NOT changed.** Phase 5 adds no new cookie: the account
-  surfaces use the existing session cookie, and the download capability travels in
-  a short-lived token rather than a cookie — which is why the delivery route needs
-  no session and cannot be CSRF'd.
-* **`securityHeaders` now lets a route set its own CSP** (not Referrer-Policy). The
-  private attachment route uses that to sandbox its response. A CSP does not affect
-  the request headers a browser sends, so this cannot break the CSRF guard — which
-  is exactly why it is safe here and the referrer policy was not.
-* **The customer generation action was fixed to call the REAL generation service.**
-  Its first version moved the book's state without creating or dispatching a job —
-  a button that silently did nothing. The browser journey found it; the unit suite
-  now asserts that a repeat request creates no second job and no second preview.
-* **A claim token is no longer burned by a wrong account.** `confirmGuestClaim`
-  consumed the single-use token before checking ownership, so merely *trying* a
-  leaked link destroyed the rightful owner's capability. Ownership is now checked
-  inside the consumption, and refusing does not consume. The email-based claim path
-  additionally requires a CONFIRMED address on the claimant's own account, which
-  keeps the API in step with the UI and stops a throwaway account from harvesting
-  orders by guessing addresses.
-* **Registering now queues the confirmation link** (best-effort; the account exists
-  either way) and records a `registered` security event. The Phase-5 browser
-  journey reads that link from the development console adapter's own stdout — the
-  same place a developer reads it locally. No dev-only HTTP surface was added and
-  no production rule was relaxed: the console adapter is refused outside an
-  explicit development environment.
-* **The phase-5 e2e group runs after the phase-3 group** (and after the phase-4
-  group). The phase-3 journey asserts GLOBAL preview-asset counts, so a group that
-  generates previews must not run before it; the ordering is documented in
-  `scripts/test-e2e.mjs`.
-* **`WW_E2E_ONLY` gained `legacy`, `phase4` and `phase5` values** so a local
-  iteration can narrow to one group. Unset — which is what the gate uses — runs
-  everything, and when it is set the run says so loudly.
-* **`logoutViaUi` gained a diagnostic** that reports which half of the
-  double-submit pair was wrong. It is what turned an opaque "did not log out" into
-  the `csrf_origin` finding above.
-* **`.openclaw_test_out.txt`** (untracked diagnostic) was never staged. `logs/`
-  and `audit-evidence/` are gitignored and were not staged.
+* **Four pre-existing test files were UPDATED, none weakened or skipped.**
+  `phase4-refunds-admin.test.ts` (two refund POSTs now assert the confirmation is
+  required and then drive the real confirmed flow — the cap, idempotency and
+  ledger assertions are unchanged); `phase3-templates-preview-admin.test.ts` (one
+  expectation moved from `404` to `[401, 404]` because the CENTRAL guard now
+  refuses before that handler's deliberate information-hiding 404; the property —
+  a customer cannot reach the endpoint — is unchanged and now enforced once for
+  the whole surface); `admin-product-status.test.ts` (the view takes the caller's
+  permission set, because `adminPage` now REQUIRES it); and `scripts/e2e-phase4.mjs`
+  (its refund step fills the confirmation, and additionally proves the refusal
+  without it).
+* **The bootstrap now writes the explicit `super_admin` grant.** The journey found
+  that a freshly bootstrapped administrator had no `admin_user_roles` row (the
+  migration backfill only covers accounts that existed before `0033`), so the
+  panel depended on the legacy-flag fallback and the Staff screen could not show
+  the real grant. `bootstrapLocalDefaults` and `scripts/create-admin.mjs` now write
+  it; the fallback remains as a legacy safety net ONLY for an `admin` account with
+  no rows at all, and the moment a row exists it is the whole truth (so revocation
+  is real).
+* **A brand-new account can now be promoted.** The Staff screen lists STAFF, so a
+  customer had no grant form anywhere; the journey reproduced it as a timeout. The
+  grant/revoke control now lives on the account's own page
+  (`/admin/customers/:id`), still requiring a reason, a confirmation and
+  `staff.manage`.
+* **`adminPage()` now REQUIRES the caller's permission set.** This is a
+  compile-time gate, not a convention: TypeScript fails the build for any screen
+  that would render a menu it cannot justify. It is why all 65 pre-existing call
+  sites changed.
+* **`POST /admin/ai-settings` is permission-gated but NOT re-auth-gated**, and the
+  change is deliberate: the form stores no credential (migration 0008 already made
+  the key column unwritable and the page only reports whether an environment secret
+  exists), so it is not in the V2 §10 high-risk set. `integrations.flags` is
+  stricter than the Phase-1 behaviour it replaces.
+* **Finance permission checks were unified onto the central permission set.** The
+  legacy `hasFinancePermission(actor)` helper granted everything to
+  `role = 'admin'`, which would have rendered the order page's finance panel for a
+  support operator. The exported pure functions are kept (a Phase-4 test asserts
+  their legacy semantics) but are no longer consulted for authorization; the
+  request's resolved permission set is.
+* **Generation publish/retire forms now issue one confirmation per actionable row.**
+  A single shared challenge would silently let only the first button on the page
+  work; a ticket is issued per action, and the action string is resolved from the
+  policy table so it can never disagree with the guard.
+* **`src/admin-console/` is a new directory** rather than additions to
+  `src/admin*.ts`, so the Phase-2…5 admin modules keep their exact shape and the
+  new control plane is reviewable in one place.
+* **The legacy `role = 'admin'` bypasses on `GET /photos/:key` and
+  `GET /previews/:key` were REMOVED.** They granted every administrator a
+  permanent, permission-unchecked URL (with a one-hour cache) to a customer's
+  child photograph, which outlived a role revocation and contradicted V2 §10. The
+  order screen now mints a two-minute, single-use capability through
+  `src/admin-console/media.ts`, and the redeeming routes carry the object's own
+  read permission. The only behaviour that changes for a legitimate owner is none:
+  the uploading browser's owner cookie and a customer who owns the order item are
+  handled exactly as before, and a Phase-1/2 test asserts both.
+* **The duplicated `/api/v1/admin/permissions` policy entry was removed.** The
+  interrupted run had declared the same `GET` path three times; a policy table is
+  a lookup, so the extra rows changed nothing at runtime, but the traceability
+  claim ("the policy has one entry per route") would have been false. The single
+  remaining entry is the one the coverage test resolves.
+* **One doc in the resume brief was already clean.**
+  `docs/V2_BASELINE_TRACEABILITY.md` was listed as modified; `git status` shows it
+  untouched, so it was left alone rather than being rewritten to match the brief.
+* **The public admin API docs were appended** to `docs/API_V1.md` (endpoints,
+  envelope, the re-auth flow, the seven roles and the new error codes). No other
+  documentation file's claims were changed.
