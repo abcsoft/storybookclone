@@ -182,6 +182,34 @@ function bookProp(x, y, s, palette) {
 </g>`
 }
 
+/**
+ * A closed book cover with the child's name printed on it.
+ *
+ * This is the ONE personalisation this build really performs, made visible: the
+ * reader prints the child's name onto the product's cover (src/pages_reader.ts,
+ * `.cover-title-name`). Nothing else is depicted — no illustrated page is drawn,
+ * because this build does not generate one, and no real child appears, because
+ * the artwork is geometry and type only.
+ *
+ * The name is the same example name the personalisation form uses as its
+ * placeholder ("e.g. Maya"), so it reads as an illustration of the idea rather
+ * than as a photograph of somebody's finished book.
+ */
+function namedCoverProp(x, y, s, palette, name = 'Maya') {
+  const w = s * 1.5
+  const h = s * 1.9
+  const plateTop = h / 2 - s * 0.78
+  return `<g transform="translate(${r2(x)} ${r2(y)})">
+<rect x="${r2(-w / 2 + s * 0.06)}" y="${r2(-h / 2 + s * 0.07)}" width="${r2(w)}" height="${r2(h)}" rx="${r2(s * 0.1)}" fill="${palette.ink}" opacity="0.18"/>
+<rect x="${r2(-w / 2)}" y="${r2(-h / 2)}" width="${r2(w)}" height="${r2(h)}" rx="${r2(s * 0.1)}" fill="${palette.accent}"/>
+<rect x="${r2(-w / 2)}" y="${r2(-h / 2)}" width="${r2(s * 0.1)}" height="${r2(h)}" rx="${r2(s * 0.04)}" fill="${palette.ink}" opacity="0.32"/>
+<rect x="${r2(-w / 2 + s * 0.3)}" y="${r2(-h / 2 + s * 0.34)}" width="${r2(w - s * 0.6)}" height="${r2(s * 0.11)}" rx="${r2(s * 0.05)}" fill="#ffffff" opacity="0.78"/>
+<rect x="${r2(-w / 2 + s * 0.52)}" y="${r2(-h / 2 + s * 0.55)}" width="${r2(w - s * 1.04)}" height="${r2(s * 0.08)}" rx="${r2(s * 0.04)}" fill="#ffffff" opacity="0.55"/>
+<rect x="${r2(-w / 2 + s * 0.14)}" y="${r2(plateTop)}" width="${r2(w - s * 0.28)}" height="${r2(s * 0.44)}" rx="${r2(s * 0.06)}" fill="#ffffff" opacity="0.95"/>
+<text x="0" y="${r2(plateTop + s * 0.31)}" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-size="${r2(s * 0.29)}" font-weight="700" fill="${palette.ink}">${name}</text>
+</g>`
+}
+
 function rocket(x, y, s, palette) {
   return `<g transform="translate(${r2(x)} ${r2(y)})">
 <path d="M0 ${r2(-s)} Q ${r2(s * 0.42)} ${r2(-s * 0.2)} ${r2(s * 0.3)} ${r2(s * 0.45)} L ${r2(-s * 0.3)} ${r2(s * 0.45)} Q ${r2(-s * 0.42)} ${r2(-s * 0.2)} 0 ${r2(-s)} Z" fill="#f4f7ff"/>
@@ -489,6 +517,12 @@ export const SHELL_ART = {
   'thumb-hardcover': { size: 'thumb', palette: 'paper', motif: 'hills', celestial: 'sun', props: [at(0.5, 0.62, 0.42, bookProp)] },
   'thumb-softcover': { size: 'thumb', palette: 'snow', motif: 'waves', celestial: 'sun', props: [at(0.5, 0.62, 0.42, bookProp)] },
   'magic-before': { size: 'tile', palette: 'paper', motif: 'none', celestial: 'none', props: [at(0.5, 0.5, 0.34, (x, y, s, p) => `<g transform="translate(${r2(x)} ${r2(y)})"><rect x="${r2(-s)}" y="${r2(-s * 0.7)}" width="${r2(s * 2)}" height="${r2(s * 1.4)}" rx="${r2(s * 0.12)}" fill="#ffffff" stroke="${p.mid}" stroke-width="${r2(s * 0.06)}"/><circle cx="${r2(-s * 0.45)}" cy="${r2(-s * 0.2)}" r="${r2(s * 0.22)}" fill="${p.far}" opacity="0.5"/><path d="M${r2(-s * 0.8)} ${r2(s * 0.5)} Q 0 ${r2(-s * 0.1)} ${r2(s * 0.8)} ${r2(s * 0.5)}" stroke="${p.mid}" stroke-width="${r2(s * 0.06)}" fill="none"/></g>`)] },
+  // The storefront's ONE visual demonstration of personalisation: the child's
+  // name on the cover. Used by the product page's gallery for a storybook whose
+  // operator gallery holds a single image, so the shelf shows what the
+  // personalisation actually does instead of a lonely one-thumb rail.
+  // (Wrapped in an arrow so `at()`'s seed argument cannot land on `name`.)
+  'personalised-cover': { size: 'tile', palette: 'dawn', motif: 'hills', celestial: 'sun', props: [at(0.5, 0.5, 0.26, (x, y, s, p) => namedCoverProp(x, y, s, p))] },
   'magic-after': { size: 'tile', palette: 'meadow', motif: 'hills', celestial: 'sun', props: [at(0.5, 0.62, 0.3, bookProp), at(0.78, 0.32, 0.1, (x, y, s, p) => sparkle(x, y, s, p.accent))] },
   'tip-blurry': { size: 'thumb', palette: 'paper', motif: 'none', celestial: 'none', props: [at(0.5, 0.5, 0.3, (x, y, s) => `<g transform="translate(${r2(x)} ${r2(y)})" opacity="0.55"><circle cx="0" cy="0" r="${r2(s)}" fill="#9aa3b2"/><circle cx="${r2(s * 0.9)}" cy="${r2(-s * 0.2)}" r="${r2(s * 0.75)}" fill="#b6bdc9"/></g>`)] },
   'tip-angle': { size: 'thumb', palette: 'paper', motif: 'none', celestial: 'none', props: [at(0.5, 0.5, 0.3, (x, y, s) => `<g transform="translate(${r2(x)} ${r2(y)}) rotate(24)"><ellipse rx="${r2(s * 0.6)}" ry="${r2(s)}" fill="#b6bdc9"/></g>`)] },

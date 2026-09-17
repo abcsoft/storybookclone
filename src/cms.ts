@@ -348,6 +348,15 @@ export async function loadHomeSections(db: D1Database, currency: string): Promis
     }
   }
 
+  // ONE title per homepage. Two adjacent shelves can be filled from overlapping
+  // collections (every book is in `all-books`, and each age collection is a
+  // subset of it), which used to render the same four covers twice in a row —
+  // "Storybooks families come back to" immediately followed by the identical
+  // "New in the catalogue". A product-grid therefore skips any title a shelf
+  // above it has already shown. If that leaves it empty the section renders its
+  // own empty state rather than repeating the shelf above it.
+  const alreadyShown = new Set<string>()
+
   return blocks.map((block) => {
     let products: Product[] = []
     if (block.kind === 'product-grid' || block.kind === 'sticker-cross-sell') {
@@ -356,7 +365,9 @@ export async function loadHomeSections(db: D1Database, currency: string): Promis
       products = chosen
         .map((s) => productsBySlug.get(s))
         .filter((p): p is Product => !!p)
+        .filter((p) => !alreadyShown.has(p.slug))
         .slice(0, block.maxItems > 0 ? block.maxItems : 4)
+      for (const p of products) alreadyShown.add(p.slug)
     }
     const collections = block.kind === 'collection-grid' ? (collectionsByKind.get(block.dataKey) || []).slice(0, block.maxItems > 0 ? block.maxItems : 6) : []
     return { block, products, collections, faqs }

@@ -63,9 +63,11 @@ function rotateDraftKey(slug) {
   const next = document.querySelector('.pdp-next')
   const prev = document.querySelector('.pdp-prev')
   if (main && thumbs.length) {
-    const items = thumbs
-      .map(t => t.querySelector('img'))
-      .map(img => ({ src: img?.src || '', alt: img?.alt || '' }))
+    const caption = document.getElementById('pdp-img-caption')
+    const items = thumbs.map(t => {
+      const img = t.querySelector('img')
+      return { src: img?.src || '', alt: img?.alt || '', caption: t.dataset.caption || '' }
+    })
     let i = 0
     const set = (idx) => {
       i = (idx + items.length) % items.length
@@ -73,6 +75,12 @@ function rotateDraftKey(slug) {
       if (wrap) wrap.classList.add('is-loading')
       main.src = items[i].src
       main.alt = items[i].alt
+      // A view that needs explaining (the illustration of the personalisation)
+      // carries its own caption, so the rail never shows an unexplained picture.
+      if (caption) {
+        caption.textContent = items[i].caption
+        caption.hidden = !items[i].caption
+      }
       setTimeout(() => wrap?.classList.remove('is-loading'), 50)
       thumbs.forEach((t, k) => t.classList.toggle('active', k === i))
       dots.forEach((d, k) => d.classList.toggle('active', k === i))

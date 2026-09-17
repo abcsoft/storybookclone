@@ -130,11 +130,20 @@ function mobileDrawer(shell: StoreShell | undefined, store: StoreContext | undef
       <a href="/cart">Cart</a>
       ${loggedIn ? `<a href="/my-books">My Books</a><a href="/account">My account</a>` : '<a href="/login">Login</a>'}
     </nav>
-    ${store && store.countries.length ? `<div class="drawer-locale">${localeSelector(store, path)}</div>` : ''}
+    ${store && store.countries.length ? `<div class="drawer-locale">${localeSelector(store, path, '-drawer')}</div>` : ''}
   </div>`
 }
 
-function localeSelector(store: StoreContext | undefined, path: string): string {
+/**
+ * Country / currency selector.
+ *
+ * It is rendered TWICE per page — once in the header and once in the mobile
+ * drawer — so the ids need a per-instance suffix: two elements sharing
+ * `id="country-select"` (and two labels pointing at it) is invalid HTML and
+ * makes the label ambiguous for assistive technology. The suffix is what keeps
+ * `#country-select` resolving to exactly one element.
+ */
+function localeSelector(store: StoreContext | undefined, path: string, idSuffix = ''): string {
   if (!store || !store.countries.length) return ''
   const options = store.countries
     .map((c) => `<option value="${esc(c.code)}"${c.code === store.country ? ' selected' : ''}>${esc(c.name)} — ${esc(c.currency)}</option>`)
@@ -142,9 +151,11 @@ function localeSelector(store: StoreContext | undefined, path: string): string {
   return `
   <form class="locale-form" method="post" action="/locale" aria-label="Country and currency">
     <input type="hidden" name="next" value="${esc(path)}">
-    <label class="sr-only" for="country-select">Country and currency</label>
-    <span class="locale-flag" aria-hidden="true">${icon('globe')}</span>
-    <select id="country-select" name="country">${options}</select>
+    <label class="sr-only" for="country-select${esc(idSuffix)}">Country and currency</label>
+    ${/* No globe glyph: the control already announces itself as country and
+         currency, and an unlabelled globe only implies a language switch that
+         this control does not perform. */ ''}
+    <select id="country-select${esc(idSuffix)}" name="country">${options}</select>
     <button type="submit" class="locale-submit">Update</button>
   </form>`
 }

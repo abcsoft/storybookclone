@@ -110,6 +110,28 @@ export async function queryProducts(db: D1Database, f: CatalogQuery): Promise<Pr
   return (results || []).map(toProduct)
 }
 
+/**
+ * The LOWEST price the server holds for an active product in `currency`.
+ *
+ * This backs the storefront's "from" line, so it is deliberately a real price
+ * row for the selected currency (`product_prices`, the same join the catalog
+ * reads) and never a converted or invented amount. A currency with no price
+ * rows yields null, and the caller then shows no "from" line at all.
+ */
+export async function minPriceMinor(db: D1Database, currency: string, category?: 'book' | 'sticker'): Promise<number | null> {
+  const where = category ? 'p.active = 1 AND p.category = ?' : 'p.active = 1'
+  const row = await db
+    .prepare(
+      `SELECT MIN(pp.price_minor) AS min_minor
+         FROM products p
+         JOIN product_prices pp ON pp.product_id = p.id AND pp.currency = ?
+        WHERE ${where}`
+    )
+    .bind(...(category ? [currency, category] : [currency]))
+    .first<{ min_minor: number | null }>()
+  return row?.min_minor == null ? null : Number(row.min_minor)
+}
+
 export async function getProductBySlug(db: D1Database, slug: string): Promise<Product | null> {
   const row = await db.prepare('SELECT * FROM products WHERE slug = ? AND active = 1').bind(slug).first<ProductRow>()
   return row ? toProduct(row) : null

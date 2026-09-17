@@ -31,7 +31,7 @@ import { brand } from './brand'
 import { blogIndexPage, blogPostPage, catalogView, collectionPage, collectionsIndexPage, contentPage, contactPage, faqsPage, homePage, supportPage } from './pages'
 import { productDetailPage } from './pages_pdp'
 import { loadPdp, loadProductFacts } from './pdp'
-import { getProductBySlug, getProductVariants, queryProducts } from './db'
+import { getProductBySlug, getProductVariants, minPriceMinor, queryProducts } from './db'
 import { createReview, listPublishedReviews, reviewSummary, validateReview } from './reviews'
 import { htmlNotFound, moneyOf, originOf, renderPage, storeOf } from './page-context'
 import {
@@ -78,8 +78,13 @@ export function registerStorefrontRoutes(app: Hono<any>) {
     const db = c.env.DB
     const store = storeOf(c)
     const fmt = moneyOf(c)
-    const sections = await loadHomeSections(db, store.currency)
-    const body = homePage(sections, fmt, { tips: PHOTO_TIPS })
+    const [sections, fromMinor] = await Promise.all([
+      loadHomeSections(db, store.currency),
+      // The hero's "from" figure: the real lowest storybook price the server
+      // holds for the currency this visitor selected.
+      minPriceMinor(db, store.currency, 'book')
+    ])
+    const body = homePage(sections, fmt, { tips: PHOTO_TIPS }, { fromMinor })
     const jsonLd = [
       organizationJsonLd({ origin: originOf(c), name: brand().name, logoPath: brand().logoPath, description: brand().description }),
       itemListJsonLd(

@@ -177,9 +177,19 @@ function loadingState(label: string): string {
 // homepage — a renderer for ordered CMS blocks
 // ---------------------------------------------------------------------------
 
-export function homePage(sections: HomeSectionData[], fmt: Money, photos: { tips: Array<{ kind: 'bad' | 'good'; label: string; imageUrl: string }> }): string {
+export type HomeHeroFacts = {
+  /**
+   * The lowest price the server holds for a storybook in the visitor's selected
+   * currency, in minor units — or null when that currency has no price rows.
+   * Rendered as the hero's "from" line so a visitor sees a price above the fold;
+   * it is real server data, never a converted or invented figure.
+   */
+  fromMinor: number | null
+}
+
+export function homePage(sections: HomeSectionData[], fmt: Money, photos: { tips: Array<{ kind: 'bad' | 'good'; label: string; imageUrl: string }> }, hero: HomeHeroFacts = { fromMinor: null }): string {
   return sections
-    .map(({ block, products, collections, faqs }, index) => renderBlock(block, products, collections, faqs, fmt, photos, index))
+    .map(({ block, products, collections, faqs }, index) => renderBlock(block, products, collections, faqs, fmt, photos, index, hero))
     .join('\n')
 }
 
@@ -190,10 +200,15 @@ function renderBlock(
   faqs: FaqItem[],
   fmt: Money,
   photos: { tips: Array<{ kind: 'bad' | 'good'; label: string; imageUrl: string }> },
-  index: number
+  index: number,
+  hero: HomeHeroFacts
 ): string {
   const cta = block.ctaLabel && block.ctaHref ? `<a class="btn btn-primary" href="${esc(block.ctaHref)}">${esc(block.ctaLabel)} ${icon('arrow-right')}</a>` : ''
-  const secondary = block.secondaryCtaLabel && block.secondaryCtaHref ? `<a class="btn btn-outline" href="${esc(block.secondaryCtaHref)}">${esc(block.secondaryCtaLabel)}</a>` : ''
+  // The hero's second action is a LINK, not a second button: an outlined pill
+  // beside a filled one reads as a disabled button and competes with the action
+  // the page is actually asking for. As a text link it stays available and
+  // stays subordinate.
+  const secondary = block.secondaryCtaLabel && block.secondaryCtaHref ? `<a class="hero-secondary" href="${esc(block.secondaryCtaHref)}">${esc(block.secondaryCtaLabel)} ${icon('arrow-right')}</a>` : ''
   const media = block.imagePath
     ? `<div class="hero-media"><img src="${esc(block.imagePath)}" alt="${esc(block.imageAlt || '')}" loading="eager" fetchpriority="high" decoding="async" width="720" height="560"></div>`
     : ''
@@ -211,6 +226,19 @@ function renderBlock(
         <h1 id="hero-title">${esc(block.title)}</h1>
         <p class="hero-sub">${esc(block.subtitle)}</p>
         <div class="hero-actions">${cta}${secondary}</div>
+        ${
+          /* A price and one reassurance, above the fold, next to the actions.
+             The price is the real lowest storybook price for the visitor's
+             currency (src/db.ts::minPriceMinor) and is omitted entirely when
+             that currency has no price rows; the second half states the one
+             thing this build can promise today. */
+          hero.fromMinor != null
+            ? `<p class="hero-proof">
+          <span class="hero-from">Storybooks from ${esc(fmt(hero.fromMinor))}</span>
+          <span class="hero-assurance">${icon('circle-info')} <span>Nothing is charged in this version.</span></span>
+        </p>`
+            : ''
+        }
       </div>
       ${media}
     </div>

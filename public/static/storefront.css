@@ -236,12 +236,17 @@ summary:focus-visible,
 .btn-purple:hover { background: var(--c-primary-strong); border-color: var(--c-primary-strong); box-shadow: var(--shadow-md); }
 .btn-accent { background: var(--c-accent); border-color: var(--c-accent); color: var(--c-ink); }
 .btn-accent:hover { background: #e8962a; border-color: #e8962a; }
+/* A secondary button is still a BUTTON: it keeps a real 2px border in a strong
+   ink tone so it cannot read as a disabled control, and only gains the accent on
+   hover. (The hero's second action is a text link instead — see
+   `.hero-secondary` — because an outlined pill beside a filled one competes
+   with the primary action.) */
 .btn-outline {
   background: var(--c-surface);
-  border-color: var(--c-line);
+  border-color: var(--c-ink-2);
   color: var(--c-ink);
 }
-.btn-outline:hover { border-color: var(--c-primary); color: var(--c-primary-strong); }
+.btn-outline:hover { background: var(--c-primary-soft); border-color: var(--c-primary); color: var(--c-primary-strong); }
 .btn-dark { background: var(--c-ink); border-color: var(--c-ink); color: #ffffff; }
 .btn-sm {
   min-height: 40px;
@@ -339,11 +344,13 @@ summary:focus-visible,
 }
 .photo-policy-note i { color: var(--c-muted); margin-top: 0.2em; }
 
-/* The section label. Sentence case by design: the storefront does not shout. */
+/* The section label. Sentence case by design: the storefront does not shout.
+   Deliberately NOT the accent colour: the accent belongs to the things a
+   visitor can act on, so a label never reads as a control. */
 .eyebrow {
   display: block;
   margin: 0;
-  color: var(--c-primary);
+  color: var(--c-ink-2);
   font-family: var(--font);
   font-size: var(--fs-sm);
   font-weight: 800;
@@ -504,7 +511,6 @@ summary:focus-visible,
 }
 
 .locale-form { display: flex; align-items: center; gap: var(--sp-1); }
-.locale-flag { color: var(--c-muted); display: inline-flex; }
 .locale-form select {
   max-width: 210px;
   min-height: 40px;
@@ -742,7 +748,35 @@ summary:focus-visible,
 .hero-copy { max-width: 46ch; }
 .hero-copy h1 { margin: var(--sp-3) 0 var(--sp-4); }
 .hero-sub { font-size: var(--fs-lg); line-height: 1.6; color: var(--c-ink-2); margin: 0 0 var(--sp-5); max-width: 44ch; }
-.hero-actions { display: flex; gap: var(--sp-3); flex-wrap: wrap; }
+.hero-actions { display: flex; align-items: center; gap: var(--sp-3) var(--sp-5); flex-wrap: wrap; }
+/* The hero's secondary action: an underlined link, sized for touch, clearly
+   subordinate to the filled primary button beside it. */
+.hero-secondary {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-height: 48px;
+  font-weight: 700;
+  color: var(--c-primary);
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+.hero-secondary:hover { color: var(--c-primary-strong); }
+.hero-secondary i { font-size: 0.85em; }
+/* The proof line under the hero actions: the real lowest price the server holds
+   for this currency, plus the one reassurance the shop can actually keep. */
+.hero-proof { display: flex; flex-wrap: wrap; gap: var(--sp-2) var(--sp-4); align-items: center; margin: var(--sp-5) 0 0; }
+.hero-from {
+  font-weight: 800;
+  color: var(--c-ink);
+  background: var(--c-surface);
+  border: 1px solid var(--c-line);
+  border-radius: var(--radius-pill);
+  padding: var(--sp-1) var(--sp-4);
+  font-size: var(--fs-sm);
+}
+.hero-assurance { margin: 0; color: var(--c-ink-2); font-size: var(--fs-sm); display: inline-flex; align-items: center; gap: var(--sp-2); }
+.hero-assurance i { color: var(--c-success); }
 
 /* The hero image sits in a framed card with a soft offset backing plate, so the
    illustration reads as the book it belongs to rather than a bare <img>. */
@@ -810,21 +844,33 @@ summary:focus-visible,
   background: var(--c-surface-2);
 }
 .card-cover-wrap img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
+/* Badges ON a card are labels on the artwork, not the loudest thing in the
+   card: a saturated "Most ordered"/"New" pill used to out-shout the product
+   title. They carry the same words on a quiet surface instead, and the saving
+   keeps a berry tint because it is the one badge that states a number. */
 .card-cover-wrap .badge {
   position: absolute;
   top: var(--sp-3);
   z-index: 1;
   box-shadow: var(--shadow-sm);
+  background: rgba(255, 255, 255, 0.94);
+  color: var(--c-ink);
+  border: 1px solid var(--c-line);
+  font-weight: 700;
 }
+.card-cover-wrap .badge-sale { color: var(--c-berry); border-color: var(--c-berry-soft); }
 .card-badge-discount { left: var(--sp-3); }
 .card-badge-flag { right: var(--sp-3); }
 
 .card-body { padding: var(--sp-4) var(--sp-4) var(--sp-5); display: flex; flex-direction: column; gap: var(--sp-2); flex: 1; }
 .card-meta { display: flex; align-items: center; gap: var(--sp-2); margin: 0; font-size: var(--fs-sm); color: var(--c-muted); }
 .card-ages { display: inline-flex; align-items: center; gap: var(--sp-1); }
+/* The TITLE is the loudest thing in the card. It is one step above the badge
+   (which sits on the artwork) and above the meta/price lines, so the shelf reads
+   as a list of stories rather than a list of labels. */
 .card-body h3,
-.card-title { margin: 0; font-size: var(--fs-lg); line-height: var(--lh-snug); }
-.card-title a:hover { color: var(--c-primary-strong); }
+.card-title { margin: 0; font-size: var(--fs-xl); line-height: var(--lh-snug); }
+.card-title a:hover { color: var(--c-primary-strong); text-decoration: underline; text-underline-offset: 3px; }
 .card-tagline {
   margin: 0;
   color: var(--c-muted);
@@ -1021,7 +1067,7 @@ summary:focus-visible,
   font-weight: 800;
   font-size: var(--fs-xl);
   line-height: 1;
-  color: var(--c-primary);
+  color: var(--c-ink-2);
   transition: transform var(--dur-2) var(--ease-1);
 }
 .faq-item[open] summary::after { content: '\2212'; }
@@ -1450,7 +1496,9 @@ summary:focus-visible,
   .acct-list > li, .acct-version { padding: var(--sp-3); }
   .acct-actions .btn { width: 100%; justify-content: center; }
   .card-body { padding: var(--sp-3) var(--sp-3) var(--sp-4); }
-  .card-body h3, .card-title { font-size: var(--fs-base); }
+  /* The title stays one step above the badge even in the narrowest two-up
+     grid, so the card never becomes a wall of labels. */
+  .card-body h3, .card-title { font-size: var(--fs-lg); }
   .card-foot { gap: var(--sp-2); }
   .btn { padding: var(--sp-3) var(--sp-5); }
   .promo-code { letter-spacing: 0.04em; }

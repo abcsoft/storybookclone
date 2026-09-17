@@ -239,6 +239,28 @@ export function productDetailPage(d: PdpData, pathPrefix: string) {
   const sale = heroCompareMinor && heroCompareMinor > heroMinor ? `-${Math.round((1 - heroMinor / heroCompareMinor) * 100)}%` : ''
   const salePercent = sale || page.banner_badge
 
+  // SHOW THE PRODUCT. The operator gallery for a storybook typically holds the
+  // cover alone, which left the thumbnail rail with a single lonely image and no
+  // sight of what "personalised" means. So a storybook with exactly ONE gallery
+  // image gains a second view: an ORIGINAL illustration of the one
+  // personalisation this build really performs — the child's name printed on the
+  // cover, which is exactly what the reader does (src/pages_reader.ts,
+  // `.cover-title-name`). It is labelled as an illustration, it contains no
+  // photograph and no real child, and an operator who adds their own second
+  // image replaces it entirely.
+  const galleryViews: Array<{ image_url: string; alt: string; caption: string }> = gallery.map((g) => ({
+    image_url: g.image_url,
+    alt: g.alt,
+    caption: ''
+  }))
+  if (isBook && galleryViews.length === 1) {
+    galleryViews.push({
+      image_url: '/static/img/art/personalised-cover.svg',
+      alt: 'Illustration of a personalised cover with a child’s name printed on it',
+      caption: 'An illustration of the personalisation: your child’s name on the cover.'
+    })
+  }
+
   return `<nav class="breadcrumb" aria-label="Breadcrumb"><ol>
     <li><a href="/">Home</a></li>
     <li><a href="${esc(pathPrefix)}">${isSticker ? 'Sticker packs' : 'Storybooks'}</a></li>
@@ -248,12 +270,13 @@ export function productDetailPage(d: PdpData, pathPrefix: string) {
   <section class="pdp-hero">
     <div class="pdp-hero-inner">
       <div class="pdp-gallery">
-        <div class="pdp-thumbs">
-          ${gallery.map((g, i) => `<button class="pdp-thumb ${i === 0 ? 'active' : ''}" data-idx="${i}" aria-label="View image ${i + 1}"><img src="${esc(g.image_url)}" alt="${esc(g.alt)}"></button>`).join('')}
+        <div class="pdp-thumbs"${galleryViews.length === 1 ? ' data-single="1"' : ''}>
+          ${galleryViews.map((g, i) => `<button class="pdp-thumb ${i === 0 ? 'active' : ''}" data-idx="${i}"${g.caption ? ` data-caption="${esc(g.caption)}"` : ''} aria-label="${g.caption ? esc(g.caption) : `View image ${i + 1}`}"><img src="${esc(g.image_url)}" alt="${esc(g.alt)}"></button>`).join('')}
         </div>
         <div class="pdp-main-img" id="pdp-main-img">
-          <img id="pdp-main-image" src="${esc(gallery[0]?.image_url || p.image)}" alt="${esc(p.title)}" data-count="${gallery.length}">
-          ${gallery.length > 1 ? `<button class="pdp-arrow pdp-prev" aria-label="Previous image">‹</button><button class="pdp-arrow pdp-next" aria-label="Next image">›</button><div class="pdp-dots">${gallery.map((_, i) => `<button class="pdp-dot ${i === 0 ? 'active' : ''}" data-idx="${i}" aria-label="Slide ${i + 1}"></button>`).join('')}</div>` : ''}
+          <img id="pdp-main-image" src="${esc(galleryViews[0]?.image_url || p.image)}" alt="${esc(galleryViews[0]?.alt || p.title)}" data-count="${galleryViews.length}">
+          ${galleryViews.length > 1 ? `<button class="pdp-arrow pdp-prev" aria-label="Previous image">‹</button><button class="pdp-arrow pdp-next" aria-label="Next image">›</button><div class="pdp-dots">${galleryViews.map((_, i) => `<button class="pdp-dot ${i === 0 ? 'active' : ''}" data-idx="${i}" aria-label="Slide ${i + 1}"></button>`).join('')}</div>` : ''}
+          <p class="pdp-img-caption" id="pdp-img-caption"${galleryViews[0].caption ? '' : ' hidden'}>${esc(galleryViews[0].caption)}</p>
         </div>
       </div>
       <div class="pdp-hero-info">
