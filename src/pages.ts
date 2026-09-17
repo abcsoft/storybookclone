@@ -125,7 +125,7 @@ export function productGrid(items: Product[], fmt: Money): string {
  * for them — the promotional band, the footer's "How this store works"
  * disclosure, the product page's own notes and the FAQs.
  */
-function sectionHead(opts: { eyebrow?: string; title: string; subtitle?: string; linkLabel?: string; linkHref?: string; centered?: boolean }): string {
+function sectionHead(opts: { eyebrow?: string; title: string; linkLabel?: string; linkHref?: string; centered?: boolean }): string {
   return `
       <div class="section-head${opts.centered ? ' centered' : ''}">
         <div>
