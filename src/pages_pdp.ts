@@ -6,7 +6,7 @@ import { PHOTO_POLICY } from './photo-policy'
 import { PERSONALIZATION_LIMITS, CHILD_NAME_ALLOWED_CHARS_PATTERN, CHILD_NAME_ALLOWED_CHARS_HINT, AGE_BEHAVIOUR } from './personalization/user-books'
 import type { ProductVariant } from './db'
 import { esc } from './layout'
-import { reviewsSection, factsList, stickyMobileCta, type Money } from './pages'
+import { reviewsSection, factsList, stickyMobileCta, autoDiscountNote, type Money } from './pages'
 import type { PdpFacts } from './pdp'
 import type { Review, ReviewSummary } from './reviews'
 import type { LanguageOption } from './locale'
@@ -74,9 +74,12 @@ function defaultPdp(product: Product): PdpBlockData {
     { step_no: 3, title: 'Save & Review in Your Cart', body: 'Your choices are saved to your own book, and the cart shows the same price the server charges.' }
   ]
   return {
-    // T-04/T-06: the banner advertises only the discount that actually exists
-    // and auto-applies (EXTRA20, seeded by the app's own bootstrap) — never a
-    // code or a saving the server cannot honour.
+    // T-04/T-06: the discount badge advertises only the saving that actually
+    // exists, computed from the product's own compare-at price — never a code
+    // or a saving the server cannot honour. `banner_text` is still part of the
+    // row (an admin can edit it) but the renderer no longer draws it as a promo
+    // band: the store-wide offer is stated once, on the shell's announcement
+    // band, and once more beside this page's own call to action.
     page: { banner_text: 'Order 2+ books and save 20% automatically', banner_code: 'EXTRA20', banner_badge: product.compareAt ? `SAVE ${Math.round((1 - product.price / product.compareAt) * 100)}%` : '', preorder_note: '' },
     gallery: [{ id: 0, image_url: product.image, alt: product.title, sort_order: 1, active: 1 }],
     accordions: [
@@ -94,11 +97,14 @@ function defaultPdp(product: Product): PdpBlockData {
     ],
     magic: { heading: 'See How a Simple Photo Becomes a Beautiful Story', left_image: '', left_caption: 'Your real photo', right_image: '', right_caption: 'Personalised illustrated version', body: 'Your photo is used to build the illustrated version of your child that appears on the pages.' },
     // T-06: no invented counts, endorsements or press names. These are the
-    // service commitments the code can actually back today.
+    // service commitments the code can actually back today, written the way a
+    // customer reads them rather than the way the code is built — the claims
+    // (private photos, editable revisions, a total that is re-checked before an
+    // order is recorded) are unchanged.
     trust: [
-      { id: 1, title: 'Private by Default', body: 'Photos are stored in private storage and are only readable by the browser that uploaded them, the order owner, or an admin.', icon: 'shield', sort_order: 1 },
-      { id: 2, title: 'You Control the Books', body: 'Your book lives under your own account or browser session, and every edit is preserved as a separate revision you can go back to.', icon: 'sparkle', sort_order: 2 },
-      { id: 3, title: 'Server-Verified Prices', body: 'Prices, discounts and totals are computed by the server on every quote and order — never read from the browser.', icon: 'globe', sort_order: 3 }
+      { id: 1, title: 'Private by Default', body: 'Your photo is private. It can be seen only by you (the browser that uploaded it), the owner of the order, or our staff.', icon: 'shield', sort_order: 1 },
+      { id: 2, title: 'You Control the Books', body: 'Your book is saved to your own account — or to this browser if you are not signed in — and every edit is kept, so you can always go back to an earlier version.', icon: 'sparkle', sort_order: 2 },
+      { id: 3, title: 'Prices You Can Trust', body: 'The price you see is the price you pay. Your cart itemises everything, and the total is confirmed again when you place your order.', icon: 'globe', sort_order: 3 }
     ],
     reactions: [],
     // T-06: hard-coded press/partner logos removed. Any media logos shown from
@@ -181,8 +187,10 @@ export function productDetailPage(d: PdpData, pathPrefix: string) {
   }
   const ageValue = Math.min(Math.max(6, p.ageMin), p.ageMax)
   const defaultCover = defaultVariant?.code || 'standard'
-  // Merge defaults so missing rows still render
-  const page       = d.page.banner_text ? d.page : fallback.page
+  // Merge defaults so missing rows still render. The row is used for the
+  // discount badge and the optional pre-order note; the offer band itself is
+  // gone (one band per page), so the merge keys on the badge it still draws.
+  const page       = d.page.banner_badge ? d.page : fallback.page
   const gallery    = d.gallery.length ? d.gallery : fallback.gallery
   const accordions = d.accordions.length ? d.accordions : fallback.accordions
   const steps      = d.steps.length ? d.steps : fallback.steps
@@ -237,10 +245,6 @@ export function productDetailPage(d: PdpData, pathPrefix: string) {
     <li aria-current="page">${esc(p.title)}</li>
   </ol></nav>
 
-  <section class="pdp-banner">
-    <p><strong>${esc(page.banner_text || 'Order 2+ books and save 20% automatically')}</strong></p>
-  </section>
-
   <section class="pdp-hero">
     <div class="pdp-hero-inner">
       <div class="pdp-gallery">
@@ -256,7 +260,7 @@ export function productDetailPage(d: PdpData, pathPrefix: string) {
         <h1>${esc(p.title)}</h1>
         <!-- T-06: no star rating / review count. There is no reviewed product
              data in this version, so none is displayed or invented. -->
-        <p class="pdp-tagline">${esc(p.tagline || (isSticker ? 'Personalized sticker packs that celebrate their big dreams' : 'A personalised adventure, starring your little one'))}</p>
+        <p class="pdp-tagline">${esc(p.tagline || (isSticker ? 'Personalised sticker packs that celebrate their big dreams' : 'A personalised adventure, starring your little one'))}</p>
 
         <div class="pdp-price-row">
           <div class="pdp-price">
@@ -276,6 +280,10 @@ export function productDetailPage(d: PdpData, pathPrefix: string) {
         </div>
 
         <a href="#personalise" class="btn btn-purple pdp-cta"><i class="fas fa-wand-magic-sparkles"></i> Personalise ${isSticker ? 'my sticker pack' : 'now'}</a>
+        ${/* The store-wide offer belongs beside the primary action, stated with
+             the SAME mechanic (and wording) as checkout — not as a second promo
+             band above the gallery, which contradicted the shell's own band. */ ''}
+        ${isBook ? autoDiscountNote('pdp-cta-offer') : ''}
         ${page.preorder_note ? `<p class="pdp-preorder">${esc(page.preorder_note)}</p>` : ''}
       </div>
     </div>
@@ -288,7 +296,7 @@ export function productDetailPage(d: PdpData, pathPrefix: string) {
         <div class="pdp-personalise-left">
           <h2 class="pdp-personalise-title">Start Personalising</h2>
           <p class="pdp-personalise-desc">
-            Personalise your ${isSticker ? 'sticker pack' : 'storybook'} by uploading your child’s photo${isSticker ? '' : ', then review every page in the reader'}. Checkout re-verifies the price on our server${isSticker ? ' — printing and delivery are later milestones.' : '.'}
+            Personalise your ${isSticker ? 'sticker pack' : 'storybook'} by uploading your child’s photo${isSticker ? '' : ', then review every page in the reader'}. Checkout confirms the price before your order is recorded${isSticker ? ' — printing and delivery are later milestones.' : '.'}
           </p>
 
           <div class="pdp-steps-horizontal">
@@ -473,7 +481,7 @@ export function productDetailPage(d: PdpData, pathPrefix: string) {
               <div><dt>Dedication</dt><dd id="preview-dedication">—</dd></div>
               <div><dt>Cover</dt><dd id="preview-cover">${esc(coverLabels[defaultCover] || defaultCover)}</dd></div>
             </dl>
-            <p class="review-note"><i class="fas fa-circle-info"></i> These details are saved to your own book so you can review and edit them. This version generates no illustrated pages and sends no notification — nothing is emailed from this build.</p>
+            <p class="review-note"><i class="fas fa-circle-info"></i> These details are saved to your own book so you can review and change them. This version does not draw the story pages yet, and it does not email you about them.</p>
           </div>
 
           <!-- Face selection — shown only when analysis finds more than one face -->

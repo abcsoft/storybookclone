@@ -323,9 +323,10 @@ summary:focus-visible,
 .section-head.centered { flex-direction: column; align-items: center; text-align: center; }
 .section-head.centered h2 { max-width: 26ch; }
 
-/* The quiet place a section's explanatory line lives: below the shelf it
-   describes, at footnote size, never as a shout above the heading. */
-.section-note {
+/* The photo limits the shop accepts, in the shopper's own words. A footnote
+   under the tips, never a second headline and never a note about which server
+   enforces what. */
+.photo-policy-note {
   display: flex;
   align-items: flex-start;
   gap: var(--sp-2);
@@ -336,8 +337,7 @@ summary:focus-visible,
   font-size: var(--fs-sm);
   max-width: 82ch;
 }
-.section-note i { color: var(--c-muted); margin-top: 0.2em; }
-.section-note.centered { margin-left: auto; margin-right: auto; justify-content: center; text-align: left; }
+.photo-policy-note i { color: var(--c-muted); margin-top: 0.2em; }
 
 /* The section label. Sentence case by design: the storefront does not shout. */
 .eyebrow {
@@ -612,8 +612,18 @@ summary:focus-visible,
   padding: 0 var(--sp-5) var(--sp-7);
   display: grid;
   gap: var(--sp-6) var(--sp-7);
-  grid-template-columns: minmax(220px, 1.4fr) repeat(auto-fit, minmax(150px, 1fr));
+  /* Two states, and no fixed minimum that cannot shrink. Below 900px the brand
+     column and its neighbours get EQUAL auto-fitting tracks; above it the brand
+     column keeps the wider 1.4fr share. `min(150px, 100%)` means a track can
+     never demand more than the container has, and `min-width: 0` on the items
+     lets a nested flex row (the newsletter input + button) shrink into its
+     track instead of pushing the whole grid wider than the viewport. */
+  grid-template-columns: minmax(220px, 1.4fr) repeat(auto-fit, minmax(min(150px, 100%), 1fr));
 }
+@media (max-width: 899px) {
+  .footer-grid { grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr)); }
+}
+.footer-grid > * { min-width: 0; }
 .footer-grid h2 {
   font-family: var(--font);
   font-size: var(--fs-sm);
@@ -632,7 +642,12 @@ summary:focus-visible,
 
 .newsletter { display: flex; gap: var(--sp-2); flex-wrap: wrap; }
 .newsletter input {
+  /* `min-width: 0` is what actually stops the footer overflowing: an <input>
+     has an intrinsic preferred width (its `size` attribute, ~180px) that
+     `flex-shrink` may not go below while `min-width` is `auto`, so at 768px the
+     field used to stick out of its column and past the viewport edge. */
   flex: 1 1 180px;
+  min-width: 0;
   min-height: 48px;
   border: 1px solid transparent;
   border-radius: var(--radius-pill);
@@ -1027,6 +1042,40 @@ summary:focus-visible,
    -------------------------------------------------------------------------- */
 .catalog-layout { display: grid; gap: var(--sp-6); grid-template-columns: 1fr; align-items: start; }
 @media (min-width: 1024px) { .catalog-layout { grid-template-columns: 280px minmax(0, 1fr); } }
+
+/* The filter panel is a real disclosure. Below the sidebar breakpoint the open
+   panel ran for more than a screen and pushed the first title about two screens
+   down the page, so it now collapses behind this toggle; at 1024px and up the
+   toggle is hidden and the panel is the sticky sidebar it always was. The
+   server renders it OPEN, so with JavaScript disabled every filter is simply
+   visible and still usable. */
+.catalog-filter-panel { min-width: 0; }
+.catalog-filter-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  min-height: 52px;
+  padding: 0 var(--sp-5);
+  background: var(--c-surface);
+  border: 1px solid var(--c-line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-xs);
+  font-weight: 800;
+  cursor: pointer;
+  list-style: none;
+}
+.catalog-filter-toggle::-webkit-details-marker { display: none; }
+.catalog-filter-toggle-label { display: inline-flex; align-items: center; gap: var(--sp-2); }
+.catalog-filter-toggle-count { color: var(--c-primary); font-size: var(--fs-sm); font-weight: 800; }
+.catalog-filter-toggle::after { content: '\25BE'; color: var(--c-muted); font-weight: 800; line-height: 1; }
+.catalog-filter-panel[open] > .catalog-filter-toggle::after { content: '\25B4'; }
+.catalog-filter-panel[open] > .catalog-filter-toggle { border-bottom-left-radius: 0; border-bottom-right-radius: 0; border-bottom-color: transparent; }
+.catalog-filter-panel > .catalog-filters { margin-top: var(--sp-3); }
+@media (min-width: 1024px) {
+  .catalog-filter-toggle { display: none; }
+  .catalog-filter-panel > .catalog-filters { margin-top: 0; }
+}
 .catalog-filters {
   background: var(--c-surface);
   border: 1px solid var(--c-line);

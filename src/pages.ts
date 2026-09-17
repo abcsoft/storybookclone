@@ -42,6 +42,25 @@ function asMinor(p: Product): number | null {
 // ---------------------------------------------------------------------------
 
 /**
+ * The ONE sentence that states the store-wide automatic discount.
+ *
+ * A single offer must have a single mechanic, stated the same way everywhere it
+ * appears, so this is rendered from one place: the checkout form and the
+ * product page's CTA area. It is deliberately NOT a second promo band — the
+ * promotional band belongs to the shell (`announcements`, src/layout.ts), which
+ * renders it once per page for every visitor.
+ *
+ * The mechanic it describes is the one the server actually applies: the
+ * `discounts` row seeded for this store carries both a code (EXTRA20) and
+ * `auto_apply = 1` with `min_books = 2`, and src/commerce/coupons.ts selects an
+ * auto-applying coupon when the cart does not name one. So the saving is real,
+ * the code is real, and no code has to be typed to get it.
+ */
+export function autoDiscountNote(className = 'tiny'): string {
+  return `<p class="${esc(className)}">Code <strong>EXTRA20</strong> applies automatically: 20% off when you order 2 or more books.</p>`
+}
+
+/**
  * The catalogue card.
  *
  * The cover dominates (a 4:5 frame, never zero-height), the title and the
@@ -96,13 +115,15 @@ export function productGrid(items: Product[], fmt: Money): string {
 }
 
 /**
- * The heading of a section: a small label, the shelf title, and an optional
- * "see everything" link.
+ * The heading of a section: a small label and the shelf title.
  *
- * The section's explanatory line is deliberately NOT rendered here — it goes to
- * `sectionNote()` below the shelf. That is what stops the storefront's truthful
- * operational statements from reading as shouting meta-commentary above every
- * headline.
+ * The heading carries the shelf title and nothing else. It deliberately does
+ * NOT render the block's `subtitle`: those subtitles were written as notes about
+ * how the store is built (which server enforces what, which claim is not being
+ * made), and rendering them as storefront copy made the shop read like a test
+ * harness. The honest, customer-facing statements now live where a shopper looks
+ * for them — the promotional band, the footer's "How this store works"
+ * disclosure, the product page's own notes and the FAQs.
  */
 function sectionHead(opts: { eyebrow?: string; title: string; subtitle?: string; linkLabel?: string; linkHref?: string; centered?: boolean }): string {
   return `
@@ -113,20 +134,6 @@ function sectionHead(opts: { eyebrow?: string; title: string; subtitle?: string;
         </div>
         ${opts.linkLabel && opts.linkHref ? `<a class="link" href="${esc(opts.linkHref)}">${esc(opts.linkLabel)} ${icon('arrow-right')}</a>` : ''}
       </div>`
-}
-
-/**
- * The restrained home for a section's explanatory line.
- *
- * Every sentence the CMS stores as a block subtitle is still RENDERED — it is
- * simply placed under the shelf it describes, at footnote size, behind a
- * hairline rule, instead of above the heading as a second headline. Nothing is
- * deleted, softened or re-worded here; only its position and weight change.
- */
-function sectionNote(text: string | undefined, opts: { centered?: boolean } = {}): string {
-  if (!text) return ''
-  return `
-      <p class="section-note${opts.centered ? ' centered' : ''}">${icon('circle-info')} <span>${esc(text)}</span></p>`
 }
 
 export function faqAccordion(items: FaqItem[]): string {
@@ -216,7 +223,6 @@ function renderBlock(
     <div class="wrap">
       ${sectionHead({ eyebrow: block.eyebrow, title: block.title })}
       ${emptyState({ title: 'Nothing in this section yet', body: 'No titles are linked to this section. An administrator can add them in the catalogue.', actionLabel: 'Browse everything', actionHref: '/books' })}
-      ${sectionNote(block.subtitle)}
     </div>
   </section>`
       }
@@ -225,7 +231,6 @@ function renderBlock(
     <div class="wrap">
       ${sectionHead({ eyebrow: block.eyebrow, title: block.title, linkLabel: block.ctaLabel, linkHref: block.ctaHref })}
       ${productGrid(products, fmt)}
-      ${sectionNote(block.subtitle)}
     </div>
   </section>`
 
@@ -236,7 +241,6 @@ function renderBlock(
     <div class="wrap">
       ${sectionHead({ eyebrow: block.eyebrow, title: block.title, centered: true })}
       ${emptyState({ title: 'No collections here yet', body: 'No collections of this kind are published. An administrator can create one in the catalogue.', actionLabel: 'Browse everything', actionHref: '/books' })}
-      ${sectionNote(block.subtitle, { centered: true })}
     </div>
   </section>`
       }
@@ -247,7 +251,6 @@ function renderBlock(
       <div class="grid-3 collection-list">
         ${collections.map((c) => collectionCard(c)).join('')}
       </div>
-      ${sectionNote(block.subtitle, { centered: true })}
     </div>
   </section>`
 
@@ -262,7 +265,6 @@ function renderBlock(
         <li class="step"><span class="num">3</span><h3>Read every page</h3><p>Open the reader and check the personalisation. Each edit is saved as its own revision.</p></li>
         <li class="step"><span class="num">4</span><h3>Add it to your cart</h3><p>Totals are calculated on the server. This version records the order without charging a payment.</p></li>
       </ol>
-      ${sectionNote(block.subtitle, { centered: true })}
     </div>
   </section>`
 
@@ -275,16 +277,18 @@ function renderBlock(
       ${sectionHead({ eyebrow: block.eyebrow, title: block.title })}
       <div class="tips-grid">
         <div class="tips-col">
-          <h3 class="tips-heading tips-bad">${icon('eye-slash')} These do not work</h3>
+          <h3 class="tips-heading tips-bad">${icon('eye-slash')} Photos to avoid</h3>
           <ul class="tips-list">${bad.map((t) => `<li><img src="${esc(t.imageUrl)}" alt="" width="240" height="240" loading="lazy"><span>${esc(t.label)}</span></li>`).join('')}</ul>
         </div>
         <div class="tips-col">
-          <h3 class="tips-heading tips-good">${icon('check-circle')} These do</h3>
+          <h3 class="tips-heading tips-good">${icon('check-circle')} Photos that work</h3>
           <ul class="tips-list">${good.map((t) => `<li><img src="${esc(t.imageUrl)}" alt="" width="240" height="240" loading="lazy"><span>${esc(t.label)}</span></li>`).join('')}</ul>
         </div>
       </div>
-      ${sectionNote(block.subtitle)}
-      <p class="tiny">The upload policy on the product page is the policy the server enforces: ${esc(humanPhotoPolicy())}</p>
+      ${/* The accepted formats and limits, in the shopper's own words. The
+           numbers are the server's own PHOTO_POLICY, so the shop never
+           advertises a limit it would not accept. */ ''}
+      <p class="photo-policy-note">${icon('camera-retro')} <span>Accepted photos: ${esc(humanPhotoPolicy())}.</span></p>
     </div>
   </section>`
     }
@@ -305,7 +309,6 @@ function renderBlock(
           )
           .join('')}
       </div>
-      ${sectionNote(block.subtitle, { centered: true })}
     </div>
   </section>`
 
@@ -331,7 +334,6 @@ function renderBlock(
     <div class="wrap wrap-narrow">
       ${sectionHead({ eyebrow: block.eyebrow, title: block.title, centered: true })}
       ${faqAccordion(faqs.slice(0, block.maxItems || 5))}
-      ${sectionNote(block.subtitle, { centered: true })}
       ${block.ctaLabel && block.ctaHref ? `<p class="section-foot centered"><a class="link" href="${esc(block.ctaHref)}">${esc(block.ctaLabel)} ${icon('arrow-right')}</a></p>` : ''}
     </div>
   </section>`
@@ -362,7 +364,6 @@ function renderBlock(
         <button type="submit" class="btn btn-accent">Subscribe</button>
       </form>
       <p class="nl-msg tiny" role="status" aria-live="polite" hidden></p>
-      ${sectionNote(block.subtitle, { centered: true })}
     </div>
   </section>`
 
@@ -430,11 +431,15 @@ function filterForm(opts: CatalogViewOptions): string {
       <li><label class="check"><input type="checkbox" name="${esc(name)}" value="${esc(value)}"${checked ? ' checked' : ''}><span>${esc(label)}</span> <span class="facet-count">${count}</span></label></li>`
   const minMajor = f.priceMin != null ? Math.round(f.priceMin / 100) : ''
   const maxMajor = f.priceMax != null ? Math.round(f.priceMax / 100) : ''
+  // "Clear all" is offered only when there is really something to clear: with no
+  // active filter the link would offer to undo nothing (and a count that reads
+  // "23 titles match these filters" when nothing is filtering is simply wrong).
+  const clearable = opts.result.chips.length > 0
   return `
   <form class="catalog-filters" id="catalog-filters" method="get" action="${esc(opts.action)}" aria-label="Filter the catalogue">
     <div class="filter-head">
       <h2>Filters</h2>
-      <a class="link" href="${esc(opts.basePath)}">Clear all</a>
+      ${clearable ? `<a class="link" href="${esc(opts.basePath)}">Clear all</a>` : ''}
     </div>
     <div class="filter-group">
       <h3>Search</h3>
@@ -448,19 +453,23 @@ function filterForm(opts: CatalogViewOptions): string {
     ${
       facets.languages.length
         ? `<fieldset class="filter-group"><legend>Available in</legend><ul>${facets.languages.map((l) => checkbox('language', l.value, l.label, l.count, f.language.includes(l.value))).join('')}</ul>
-           <p class="tiny">Only languages with published translations are listed.</p></fieldset>`
+           <p class="tiny">Only the languages that have a published edition are offered.</p></fieldset>`
         : ''
     }
     <fieldset class="filter-group">
       <legend>Availability in your currency</legend>
       <ul>
-        ${checkbox('availability', 'available', `Available (${facets.availability.available})`, facets.availability.available + facets.availability.unavailable, f.availability === 'available')}
-        ${checkbox('availability', 'unavailable', `Not offered (${facets.availability.unavailable})`, facets.availability.available + facets.availability.unavailable, f.availability === 'unavailable')}
+        ${/* The label names the facet; the count beside it is that facet's own
+             count. Both used to print a number — the label printed the facet's
+             count and the trailing number printed the WHOLE result set, so
+             "Not offered (0)" appeared next to "23". */ ''}
+        ${checkbox('availability', 'available', 'Available', facets.availability.available, f.availability === 'available')}
+        ${checkbox('availability', 'unavailable', 'Not offered', facets.availability.unavailable, f.availability === 'unavailable')}
       </ul>
     </fieldset>
     <div class="filter-group">
       <h3>Price</h3>
-      ${facets.price ? `<p class="tiny">This result set runs from ${esc(String(facets.price.minMinor / 100))} to ${esc(String(facets.price.maxMinor / 100))}.</p>` : ''}
+      ${facets.price ? `<p class="tiny">Prices here run from ${esc(opts.fmt(facets.price.minMinor))} to ${esc(opts.fmt(facets.price.maxMinor))}.</p>` : ''}
       <div class="price-range">
         <label class="sr-only" for="price-min">Minimum price</label>
         <input id="price-min" type="number" name="price_min" min="0" step="1" value="${esc(String(minMajor))}" placeholder="Min">
@@ -509,12 +518,22 @@ function chips(chips: ActiveChip[], basePath: string): string {
 
 export function catalogView(opts: CatalogViewOptions): string {
   const { result, basePath, filters } = { result: opts.result, basePath: opts.basePath, filters: opts.result.filters }
+  const noun = result.total === 1 ? 'title' : 'titles'
+  // The results line describes the state the shopper is actually in. With no
+  // filter applied it must not claim that anything is being filtered, and with
+  // a filter applied it must say how many titles survive it.
+  const filtered = result.chips.length > 0
   const count =
     result.total === 0
-      ? 'No titles match these filters'
-      : `${result.total} ${result.total === 1 ? 'title' : 'titles'} match${result.total === 1 ? 'es' : ''} these filters`
+      ? filtered
+        ? 'No titles match these filters'
+        : 'No titles are published yet'
+      : filtered
+        ? `${result.total} ${noun} match${result.total === 1 ? 'es' : ''} these filters`
+        : `${result.total} ${noun}`
   const grid = result.items.length ? productGrid(result.items, opts.fmt) : ''
   const pageLinks = paginationLinks(filters, basePath, result.pageCount)
+  const filterCount = result.chips.length
   return `
   <section class="page-hero">
     <div class="wrap">
@@ -526,7 +545,18 @@ export function catalogView(opts: CatalogViewOptions): string {
   </section>
   <section class="section">
     <div class="wrap catalog-layout">
-      ${filterForm(opts)}
+      ${/* A real disclosure: on a phone the open filter panel pushed the first
+           title about two screens down the page. It is rendered OPEN so it
+           works with JavaScript disabled, and /static/catalog.js collapses it
+           below the sidebar breakpoint — above it the summary is hidden and the
+           panel is always shown. */ ''}
+      <details class="catalog-filter-panel" id="catalog-filter-panel" open>
+        <summary class="catalog-filter-toggle">
+          <span class="catalog-filter-toggle-label">${icon('filter')} Filters</span>
+          ${filterCount ? `<span class="catalog-filter-toggle-count">${filterCount} applied</span>` : ''}
+        </summary>
+        ${filterForm(opts)}
+      </details>
       <div class="catalog-results">
         <p class="result-count" id="result-count" role="status">${esc(count)}</p>
         ${chips(result.chips, basePath)}
@@ -546,7 +576,8 @@ export function catalogView(opts: CatalogViewOptions): string {
         }
       </div>
     </div>
-  </section>`
+  </section>
+  <script type="module" src="/static/catalog.js"></script>`
 }
 
 // ---------------------------------------------------------------------------
@@ -969,7 +1000,7 @@ export function checkoutPage(user: { name?: string; email?: string } | null = nu
           <option value="express">Express</option>
         </select>
         <p class="tiny">No delivery is scheduled in this version: printing and shipping are later milestones, so these amounts are recorded on the order only.</p>
-        <p class="tiny">Code <strong>EXTRA20</strong> applies automatically: 20% off when you order 2 or more books.</p>
+        ${autoDiscountNote()}
         ${/* COM-07: this notice is filled in by the CLIENT from the server's own
              capability report, so it always describes what this deployment
              actually does. The default below is deliberately neutral: it claims

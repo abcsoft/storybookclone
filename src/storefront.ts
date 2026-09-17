@@ -128,10 +128,15 @@ export function registerStorefrontRoutes(app: Hono<any>) {
       { label: 'Sticker packs', href: catalogTabHref(filters, '/stickers', 'sticker'), active: category === 'sticker' }
     ]
     const title = category === 'book' ? 'Personalised storybooks' : 'Personalised sticker packs'
+    // The shopper's own words. The catalog used to explain that "all prices come
+    // from the server in the currency you selected" — an implementation note
+    // wearing customer copy. What it stood for (every price is real, and it is
+    // the price for the currency the visitor picked) is still stated, as the
+    // visitor experiences it.
     const subtitle =
       category === 'book'
-        ? 'Every title lists its reading age. Filter by theme, language, format, availability and price — all prices come from the server in the currency you selected.'
-        : 'Sticker packs use the same photo and name as your book. Choose a pack and personalise it in one step.'
+        ? 'Every title lists its reading age, and every price is shown in the currency you selected. Filter by theme, language, format, availability and price.'
+        : 'Sticker packs use the same photo and name as your book, priced in the currency you selected. Choose a pack and personalise it in one step.'
     const body = catalogView({
       result,
       basePath,

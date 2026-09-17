@@ -160,7 +160,7 @@ function searchOverlay(): string {
                aria-describedby="search-hint" aria-controls="search-suggestions" aria-expanded="false" role="combobox" aria-autocomplete="list">
         <button type="submit" class="btn btn-primary">Search</button>
       </form>
-      <p class="tiny" id="search-hint">Suggestions come from the live catalogue.</p>
+      <p class="tiny" id="search-hint">Titles appear as you type.</p>
       <ul class="search-suggestions" id="search-suggestions" role="listbox" aria-label="Search suggestions" hidden></ul>
       <button type="button" class="icon-btn search-close" id="search-close" aria-label="Close search">${icon('xmark')}</button>
     </div>

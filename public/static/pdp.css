@@ -1,8 +1,8 @@
 /* =========================================================================
    Product detail page (PDP) styles
    Layout: long-scrolling product page with a sticky buy box.
-   - top thin purple banner with code chip
-   - hero with thumbnail rail + main image + price/CTA + accordions
+   - hero with thumbnail rail + main image + price/CTA + accordions, with the
+     store-wide offer stated once BESIDE the primary action
    - purple "Start Personalising" panel with TIPS card
    - magic before/after slider
    - dark-purple "Why trust" band
@@ -42,19 +42,6 @@ body.pdp-page {
   background: var(--pdp-bg);
   color: var(--pdp-ink);
 }
-
-/* ---------- Top thin banner ---------- */
-.pdp-banner {
-  background: var(--pdp-purple);
-  color: #fff;
-  padding: 8px 14px;
-  text-align: center;
-  font-size: 13.5px;
-  font-weight: 600;
-  letter-spacing: 0.01em;
-}
-.pdp-banner p { margin: 0; }
-.pdp-banner strong { font-weight: 800; }
 
 /* ---------- HERO ---------- */
 .pdp-hero {
@@ -219,6 +206,22 @@ body.pdp-page {
 .pdp-preorder {
   margin: 12px 0 0; font-size: 13px; color: var(--pdp-muted); text-align: center;
 }
+/* The store-wide offer, stated beside the primary action. It wears the SAME
+   accent as the shell's promotional band on purpose: those two are one offer,
+   described once, so they must not look like two competing announcements. It is
+   deliberately not a purple band: purple is reserved for interactive elements. */
+.pdp-cta-offer {
+  margin: 12px 0 0;
+  padding: 8px 12px;
+  background: var(--c-accent-soft);
+  border: 1px solid var(--c-accent);
+  border-radius: var(--radius-sm);
+  color: var(--c-accent-ink);
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: center;
+}
+.pdp-cta-offer strong { font-weight: 800; }
 
 /* ---------- Personalise panel ---------- */
 .pdp-personalise {
