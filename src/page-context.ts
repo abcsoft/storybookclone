@@ -111,6 +111,10 @@ export type RenderOptions = {
   status?: number
   meta?: PageMeta
   notFound?: boolean
+  /** Extra class(es) for `<body>`. */
+  bodyClass?: string
+  /** The page renders `.sticky-cta`; reserve the space it occupies. */
+  stickyCta?: boolean
 }
 
 /**
@@ -129,7 +133,9 @@ export function renderPage(c: Context<any>, title: string, body: string, opts: R
     store,
     meta: opts.meta,
     path: new URL(c.req.url).pathname,
-    notFound: opts.notFound
+    notFound: opts.notFound,
+    bodyClass: opts.bodyClass,
+    stickyCta: opts.stickyCta
   })
   return opts.status ? c.html(html, opts.status as any) : c.html(html)
 }

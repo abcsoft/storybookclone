@@ -69,6 +69,13 @@ export type PageOptions = {
   path?: string
   /** True when this is the 404 page. */
   notFound?: boolean
+  /**
+   * Extra class(es) on `<body>` — e.g. the PDP's own `pdp-page` root, which
+   * scopes pdp.css's base rules to the product page.
+   */
+  bodyClass?: string
+  /** True when the page renders `.sticky-cta`; reserves the space it occupies. */
+  stickyCta?: boolean
 }
 
 function jsonLdScript(nodes: JsonLd[] | undefined): string {
@@ -110,13 +117,18 @@ function desktopNav(shell: StoreShell | undefined, active: string | undefined): 
   return `<nav class="desktop-nav" aria-label="Primary">${items.map((i) => navLink(i, active)).join('')}</nav>`
 }
 
-function mobileDrawer(shell: StoreShell | undefined, store: StoreContext | undefined, path: string): string {
+function mobileDrawer(shell: StoreShell | undefined, store: StoreContext | undefined, path: string, loggedIn: boolean): string {
   const items = shell?.mobileNav?.length ? shell.mobileNav : shell?.primaryNav || []
   return `
   <div class="mobile-drawer" id="mobile-drawer" hidden>
-    <nav aria-label="Mobile">
-      ${items.map((i) => `<a href="${esc(i.href)}">${esc(i.label)}</a>`).join('')}
-      <a href="/login">Login</a>
+    <div class="mobile-drawer-head">
+      <p id="mobile-drawer-title">Menu</p>
+      <button type="button" class="icon-btn" id="drawer-close" aria-label="Close menu">${icon('xmark')}</button>
+    </div>
+    <nav aria-label="Mobile" aria-labelledby="mobile-drawer-title">
+      ${items.map((i) => navLink(i, path)).join('')}
+      <a href="/cart">Cart</a>
+      ${loggedIn ? `<a href="/my-books">My Books</a><a href="/account">My account</a>` : '<a href="/login">Login</a>'}
     </nav>
     ${store && store.countries.length ? `<div class="drawer-locale">${localeSelector(store, path)}</div>` : ''}
   </div>`
@@ -197,13 +209,22 @@ function footer(shell: StoreShell | undefined, b: BrandConfig): string {
         <form id="newsletter-form" class="newsletter" method="post" action="/api/newsletter">
           <label class="sr-only" for="nl-email">Email address</label>
           <input id="nl-email" name="email" type="email" required placeholder="you@example.com" autocomplete="email">
-          <button type="submit" class="btn btn-primary">Subscribe</button>
+          <button type="submit" class="btn btn-accent">Subscribe</button>
         </form>
         <p class="nl-msg tiny" role="status" aria-live="polite" hidden></p>
       </section>
     </div>
+    ${
+      /* The restrained home for the store's operational disclosures: out of the
+         main visual flow, still present and still accurate on every page. */
+      notes.length
+        ? `<section class="footer-disclosure" aria-labelledby="footer-disclosure-title">
+      <h2 id="footer-disclosure-title">How this store works</h2>
+      <ul>${notes.map((n) => `<li>${esc(n)}</li>`).join('')}</ul>
+    </section>`
+        : ''
+    }
     <div class="footer-bottom">
-      ${notes.map((n) => `<p>${esc(n)}</p>`).join('')}
       <p class="footer-copy">${esc(b.name)} © ${esc(String(b.copyrightYear))} All rights reserved</p>
       <p class="footer-contact">Contact: <a href="mailto:${esc(b.contactEmail)}">${esc(b.contactEmail)}</a></p>
     </div>
@@ -243,21 +264,29 @@ export function page(opts: PageOptions): string {
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link href="/static/style.css" rel="stylesheet">
   <link href="/static/storefront.css" rel="stylesheet">
+  ${/* The product/app component layer of the SAME design system: the PDP, the
+       reader, the cart and My Books all render its classes, so it is part of
+       the shell rather than a per-page opt-in. It is scoped (`body.pdp-page`
+       plus `pdp-`/`book-`/`reader-`/`cart-` prefixes) and declares no tokens of
+       its own — every value it uses comes from storefront.css. */ ''}
+  <link href="/static/pdp.css" rel="stylesheet">
   <link href="/static/icons.css" rel="stylesheet">
   ${jsonLdScript(opts.meta?.jsonLd)}
 </head>
-<body data-currency="${esc(store?.currency || 'USD')}" data-currency-symbol="${esc(store?.currencySettings.symbol || '$')}" data-country="${esc(store?.country || 'US')}">
+<body class="${esc(['store', opts.stickyCta ? 'has-sticky-cta' : '', opts.bodyClass || ''].filter(Boolean).join(' '))}" data-currency="${esc(store?.currency || 'USD')}" data-currency-symbol="${esc(store?.currencySettings.symbol || '$')}" data-country="${esc(store?.country || 'US')}">
   <a class="skip-link" href="#main">Skip to content</a>
   ${announcementBar(shell)}
   <header class="site-header" id="site-header">
     <div class="nav-inner">
-      <button class="icon-btn hamburger" id="menu-toggle" aria-label="Open menu" aria-expanded="false" aria-controls="mobile-drawer">
-        ${icon('bars')}
-      </button>
-      <a class="brand" href="/" aria-label="${esc(b.name)} home">
-        <img src="${esc(b.logoPath)}" alt="" width="40" height="40">
-        <span>${esc(b.name)}</span>
-      </a>
+      <div class="nav-left">
+        <button class="icon-btn hamburger" id="menu-toggle" aria-label="Open menu" aria-expanded="false" aria-controls="mobile-drawer">
+          ${icon('bars')}
+        </button>
+        <a class="brand" href="/" aria-label="${esc(b.name)} home">
+          <img src="${esc(b.logoPath)}" alt="" width="36" height="36">
+          <span>${esc(b.name)}</span>
+        </a>
+      </div>
       ${desktopNav(shell, opts.active)}
       <div class="nav-actions">
         <button class="icon-btn" id="search-toggle" aria-label="Search" aria-expanded="false" aria-controls="search-overlay">
@@ -280,7 +309,7 @@ export function page(opts: PageOptions): string {
       </div>
     </div>
   </header>
-  ${mobileDrawer(shell, store, path)}
+  ${mobileDrawer(shell, store, path, !!opts.loggedIn)}
   ${searchOverlay()}
   <main id="main"${opts.active ? ` data-active="${esc(opts.active)}"` : ''}>${opts.body}</main>
   ${footer(shell, b)}

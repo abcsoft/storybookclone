@@ -15,6 +15,7 @@
 
 import { esc, stars } from './layout'
 import { brand } from './brand'
+import { cardBadges, sectionClass, sectionTone } from './theme'
 import type { Product } from './product'
 import type { CmsBlock, CmsPage, FaqItem, Collection, HomeSectionData } from './cms'
 import type { CatalogResult, CatalogFilters, ActiveChip } from './catalog'
@@ -40,30 +41,50 @@ function asMinor(p: Product): number | null {
 // shared blocks
 // ---------------------------------------------------------------------------
 
+/**
+ * The catalogue card.
+ *
+ * The cover dominates (a 4:5 frame, never zero-height), the title and the
+ * price line are tight, and there is exactly ONE call to action. The price line
+ * keeps the compare-at amount as a struck-through `<s>` whenever the server
+ * sends one, so a saving is only ever shown when it is real.
+ *
+ * Badges come from `cardBadges()` (src/theme.ts), which reads the product's own
+ * `new_release` / `bestseller` flags and the compare-at price — so a card shows
+ * `-20%` / `New` / `Most ordered` only when the DATA supports it, and a product
+ * with no such flag gets an unbadged card rather than a decorative label. At
+ * most one badge per corner, which is what stops them painting on top of each
+ * other.
+ */
 export function productCard(p: Product, fmt: Money): string {
   const isSticker = p.category === 'sticker'
   const link = isSticker ? `/stickers/${p.slug}` : `/books/${p.slug}`
   const minor = asMinor(p)
   const available = p.availableInCurrency !== false && minor != null
   const compareMinor = typeof p.compareAtMinor === 'number' ? p.compareAtMinor : p.compareAt != null ? Math.round(p.compareAt * 100) : null
-  const sale = available && compareMinor != null && compareMinor > (minor as number) ? `-${Math.round((1 - (minor as number) / compareMinor) * 100)}%` : ''
+  const badges = cardBadges({
+    newRelease: p.newRelease,
+    bestseller: p.bestseller,
+    priceMinor: available ? (minor as number) : null,
+    compareAtMinor: compareMinor
+  })
+  const compareShown = available && compareMinor != null && compareMinor > (minor as number) ? compareMinor : null
+  const action = isSticker ? 'Personalise this sticker pack' : 'Personalise this story'
   return `
   <article class="product-card">
-    <a class="card-cover-wrap" href="${esc(link)}">
-      <img src="${esc(p.image)}" alt="${esc(p.title)}" loading="lazy" decoding="async" width="600" height="600">
-      ${p.bestseller ? '<span class="badge badge-best">Most ordered</span>' : ''}
-      ${p.newRelease ? '<span class="badge badge-new">New</span>' : ''}
-      ${sale ? `<span class="badge badge-sale">${sale}</span>` : ''}
+    <a class="card-cover-wrap" href="${esc(link)}" tabindex="-1" aria-hidden="true">
+      <img src="${esc(p.image)}" alt="" loading="lazy" decoding="async" width="600" height="600">
+      ${badges.map((b) => `<span class="badge ${esc(b.className)} card-badge-${esc(b.slot)}">${esc(b.label)}</span>`).join('')}
     </a>
     <div class="card-body">
-      <p class="card-meta"><span class="card-ages">${icon('child')} ${esc(p.ages)}</span></p>
-      <h3><a href="${esc(link)}">${esc(p.title)}</a></h3>
+      <p class="card-meta"><span class="card-ages">${icon('child')} Ages ${esc(p.ages)}</span></p>
+      <h3 class="card-title"><a href="${esc(link)}">${esc(p.title)}</a></h3>
       <p class="card-tagline">${esc(p.tagline || p.description.slice(0, 90))}</p>
       <div class="card-foot">
         <p class="card-price">
-          ${available ? `<strong>${esc(fmt(minor as number))}</strong>${compareMinor != null && compareMinor > (minor as number) ? ` <s>${esc(fmt(compareMinor))}</s>` : ''}` : '<span class="unavailable">Not available in your currency</span>'}
+          ${available ? `<strong>${esc(fmt(minor as number))}</strong>${compareShown ? ` <s>${esc(fmt(compareShown))}</s>` : ''}` : '<span class="unavailable">Not available in your currency</span>'}
         </p>
-        <a class="btn-sm btn-primary" href="${esc(link)}">${isSticker ? 'Personalise' : 'Read more'}</a>
+        <a class="btn btn-primary btn-sm card-cta" href="${esc(link)}">${esc(action)}</a>
       </div>
     </div>
   </article>`
@@ -74,16 +95,38 @@ export function productGrid(items: Product[], fmt: Money): string {
   return `<div class="grid-4">${items.map((p) => productCard(p, fmt)).join('')}</div>`
 }
 
+/**
+ * The heading of a section: a small label, the shelf title, and an optional
+ * "see everything" link.
+ *
+ * The section's explanatory line is deliberately NOT rendered here — it goes to
+ * `sectionNote()` below the shelf. That is what stops the storefront's truthful
+ * operational statements from reading as shouting meta-commentary above every
+ * headline.
+ */
 function sectionHead(opts: { eyebrow?: string; title: string; subtitle?: string; linkLabel?: string; linkHref?: string; centered?: boolean }): string {
   return `
       <div class="section-head${opts.centered ? ' centered' : ''}">
         <div>
           ${opts.eyebrow ? `<p class="eyebrow">${esc(opts.eyebrow)}</p>` : ''}
           <h2>${esc(opts.title)}</h2>
-          ${opts.subtitle ? `<p class="section-sub">${esc(opts.subtitle)}</p>` : ''}
         </div>
         ${opts.linkLabel && opts.linkHref ? `<a class="link" href="${esc(opts.linkHref)}">${esc(opts.linkLabel)} ${icon('arrow-right')}</a>` : ''}
       </div>`
+}
+
+/**
+ * The restrained home for a section's explanatory line.
+ *
+ * Every sentence the CMS stores as a block subtitle is still RENDERED — it is
+ * simply placed under the shelf it describes, at footnote size, behind a
+ * hairline rule, instead of above the heading as a second headline. Nothing is
+ * deleted, softened or re-worded here; only its position and weight change.
+ */
+function sectionNote(text: string | undefined, opts: { centered?: boolean } = {}): string {
+  if (!text) return ''
+  return `
+      <p class="section-note${opts.centered ? ' centered' : ''}">${icon('circle-info')} <span>${esc(text)}</span></p>`
 }
 
 export function faqAccordion(items: FaqItem[]): string {
@@ -128,7 +171,9 @@ function loadingState(label: string): string {
 // ---------------------------------------------------------------------------
 
 export function homePage(sections: HomeSectionData[], fmt: Money, photos: { tips: Array<{ kind: 'bad' | 'good'; label: string; imageUrl: string }> }): string {
-  return sections.map(({ block, products, collections, faqs }) => renderBlock(block, products, collections, faqs, fmt, photos)).join('\n')
+  return sections
+    .map(({ block, products, collections, faqs }, index) => renderBlock(block, products, collections, faqs, fmt, photos, index))
+    .join('\n')
 }
 
 function renderBlock(
@@ -137,13 +182,17 @@ function renderBlock(
   collections: Collection[],
   faqs: FaqItem[],
   fmt: Money,
-  photos: { tips: Array<{ kind: 'bad' | 'good'; label: string; imageUrl: string }> }
+  photos: { tips: Array<{ kind: 'bad' | 'good'; label: string; imageUrl: string }> },
+  index: number
 ): string {
   const cta = block.ctaLabel && block.ctaHref ? `<a class="btn btn-primary" href="${esc(block.ctaHref)}">${esc(block.ctaLabel)} ${icon('arrow-right')}</a>` : ''
   const secondary = block.secondaryCtaLabel && block.secondaryCtaHref ? `<a class="btn btn-outline" href="${esc(block.secondaryCtaHref)}">${esc(block.secondaryCtaLabel)}</a>` : ''
   const media = block.imagePath
-    ? `<div class="hero-media"><img src="${esc(block.imagePath)}" alt="${esc(block.imageAlt || '')}" loading="eager" decoding="async" width="720" height="560"></div>`
+    ? `<div class="hero-media"><img src="${esc(block.imagePath)}" alt="${esc(block.imageAlt || '')}" loading="eager" fetchpriority="high" decoding="async" width="720" height="560"></div>`
     : ''
+  // The band a section sits on alternates with its position, so a reordered CMS
+  // block list still reads as a sequence of separate shelves.
+  const tone = sectionTone(index)
 
   switch (block.kind) {
     case 'hero':
@@ -163,61 +212,57 @@ function renderBlock(
     case 'product-grid':
       if (!products.length) {
         return `
-  <section class="section">
+  <section class="${sectionClass(tone)}">
     <div class="wrap">
-      ${sectionHead({ eyebrow: block.eyebrow, title: block.title, subtitle: block.subtitle })}
+      ${sectionHead({ eyebrow: block.eyebrow, title: block.title })}
       ${emptyState({ title: 'Nothing in this section yet', body: 'No titles are linked to this section. An administrator can add them in the catalogue.', actionLabel: 'Browse everything', actionHref: '/books' })}
+      ${sectionNote(block.subtitle)}
     </div>
   </section>`
       }
       return `
-  <section class="section">
+  <section class="${sectionClass(tone)}">
     <div class="wrap">
-      ${sectionHead({ eyebrow: block.eyebrow, title: block.title, subtitle: block.subtitle, linkLabel: block.ctaLabel, linkHref: block.ctaHref })}
+      ${sectionHead({ eyebrow: block.eyebrow, title: block.title, linkLabel: block.ctaLabel, linkHref: block.ctaHref })}
       ${productGrid(products, fmt)}
+      ${sectionNote(block.subtitle)}
     </div>
   </section>`
 
     case 'collection-grid':
       if (!collections.length) {
         return `
-  <section class="section bg-soft">
+  <section class="${sectionClass(tone)}">
     <div class="wrap">
-      ${sectionHead({ eyebrow: block.eyebrow, title: block.title, subtitle: block.subtitle, centered: true })}
+      ${sectionHead({ eyebrow: block.eyebrow, title: block.title, centered: true })}
       ${emptyState({ title: 'No collections here yet', body: 'No collections of this kind are published. An administrator can create one in the catalogue.', actionLabel: 'Browse everything', actionHref: '/books' })}
+      ${sectionNote(block.subtitle, { centered: true })}
     </div>
   </section>`
       }
       return `
-  <section class="section bg-soft">
+  <section class="${sectionClass(tone)}">
     <div class="wrap">
-      ${sectionHead({ eyebrow: block.eyebrow, title: block.title, subtitle: block.subtitle, centered: true, linkLabel: block.ctaLabel, linkHref: block.ctaHref })}
+      ${sectionHead({ eyebrow: block.eyebrow, title: block.title, centered: true, linkLabel: block.ctaLabel, linkHref: block.ctaHref })}
       <div class="grid-3 collection-list">
-        ${collections
-          .map(
-            (c) => `
-        <a class="collection-card" href="/collections/${esc(c.slug)}">
-          <h3>${esc(c.title)}</h3>
-          <p>${esc(c.subtitle || c.description)}</p>
-          <span class="link">Open collection ${icon('arrow-right')}</span>
-        </a>`
-          )
-          .join('')}
+        ${collections.map((c) => collectionCard(c)).join('')}
       </div>
+      ${sectionNote(block.subtitle, { centered: true })}
     </div>
   </section>`
 
     case 'steps':
       return `
-  <section class="section how">
+  <section class="${sectionClass(tone)}">
     <div class="wrap">
-      ${sectionHead({ eyebrow: block.eyebrow, title: block.title, subtitle: block.subtitle, centered: true })}
+      ${sectionHead({ eyebrow: block.eyebrow, title: block.title, centered: true })}
       <ol class="steps">
         <li class="step"><span class="num">1</span><h3>Choose a story</h3><p>Every title lists the reading age and the format, and collections group them by theme.</p></li>
         <li class="step"><span class="num">2</span><h3>Upload one photo</h3><p>${esc(humanPhotoPolicy())}</p></li>
         <li class="step"><span class="num">3</span><h3>Read every page</h3><p>Open the reader and check the personalisation. Each edit is saved as its own revision.</p></li>
         <li class="step"><span class="num">4</span><h3>Add it to your cart</h3><p>Totals are calculated on the server. This version records the order without charging a payment.</p></li>
       </ol>
+      ${sectionNote(block.subtitle, { centered: true })}
     </div>
   </section>`
 
@@ -225,19 +270,20 @@ function renderBlock(
       const bad = photos.tips.filter((t) => t.kind === 'bad')
       const good = photos.tips.filter((t) => t.kind === 'good')
       return `
-  <section class="section bg-soft">
+  <section class="${sectionClass(tone)}">
     <div class="wrap">
-      ${sectionHead({ eyebrow: block.eyebrow, title: block.title, subtitle: block.subtitle })}
+      ${sectionHead({ eyebrow: block.eyebrow, title: block.title })}
       <div class="tips-grid">
-        <div>
+        <div class="tips-col">
           <h3 class="tips-heading tips-bad">${icon('eye-slash')} These do not work</h3>
           <ul class="tips-list">${bad.map((t) => `<li><img src="${esc(t.imageUrl)}" alt="" width="240" height="240" loading="lazy"><span>${esc(t.label)}</span></li>`).join('')}</ul>
         </div>
-        <div>
+        <div class="tips-col">
           <h3 class="tips-heading tips-good">${icon('check-circle')} These do</h3>
           <ul class="tips-list">${good.map((t) => `<li><img src="${esc(t.imageUrl)}" alt="" width="240" height="240" loading="lazy"><span>${esc(t.label)}</span></li>`).join('')}</ul>
         </div>
       </div>
+      ${sectionNote(block.subtitle)}
       <p class="tiny">The upload policy on the product page is the policy the server enforces: ${esc(humanPhotoPolicy())}</p>
     </div>
   </section>`
@@ -245,77 +291,84 @@ function renderBlock(
 
     case 'age-grid':
       return `
-  <section class="section age-section">
+  <section class="${sectionClass(tone, 'age-section')}">
     <div class="wrap">
-      ${sectionHead({ eyebrow: block.eyebrow, title: block.title, subtitle: block.subtitle, centered: true })}
+      ${sectionHead({ eyebrow: block.eyebrow, title: block.title, centered: true })}
       <div class="age-grid">
         ${AGE_BUCKETS.slice(0, 3)
           .map(
             (b) => `
         <a class="age-card" href="/books?age=${esc(b.value)}">
           <img src="/static/img/art/age-${esc(b.value)}.svg" alt="" width="640" height="420" loading="lazy">
-          <span class="age-info"><h3>${esc(b.label)}</h3><span class="btn-sm">See titles ${icon('chevron-right')}</span></span>
+          <span class="age-info"><h3>${esc(b.label)}</h3><span class="btn btn-sm">See titles ${icon('chevron-right')}</span></span>
         </a>`
           )
           .join('')}
       </div>
+      ${sectionNote(block.subtitle, { centered: true })}
     </div>
   </section>`
 
     case 'sticker-cross-sell':
       return `
-  <section class="section">
-    <div class="wrap cta-banner">
-      <div class="cta-copy">
-        ${block.eyebrow ? `<span class="badge">${esc(block.eyebrow)}</span>` : ''}
-        <h2>${esc(block.title)}</h2>
-        <p>${esc(block.subtitle)}</p>
-        ${cta}
+  <section class="${sectionClass(tone)}">
+    <div class="wrap">
+      <div class="cta-banner">
+        <div class="cta-copy">
+          ${block.eyebrow ? `<span class="badge">${esc(block.eyebrow)}</span>` : ''}
+          <h2>${esc(block.title)}</h2>
+          <p>${esc(block.subtitle)}</p>
+          ${cta}
+        </div>
+        ${block.imagePath ? `<div class="cta-image"><img src="${esc(block.imagePath)}" alt="${esc(block.imageAlt || '')}" width="960" height="540" loading="lazy"></div>` : ''}
       </div>
-      ${block.imagePath ? `<div class="cta-image"><img src="${esc(block.imagePath)}" alt="${esc(block.imageAlt || '')}" width="960" height="540" loading="lazy"></div>` : ''}
     </div>
   </section>`
 
     case 'faq-preview':
       return `
-  <section class="section bg-soft">
+  <section class="${sectionClass(tone)}">
     <div class="wrap wrap-narrow">
-      ${sectionHead({ eyebrow: block.eyebrow, title: block.title, subtitle: block.subtitle, centered: true })}
+      ${sectionHead({ eyebrow: block.eyebrow, title: block.title, centered: true })}
       ${faqAccordion(faqs.slice(0, block.maxItems || 5))}
+      ${sectionNote(block.subtitle, { centered: true })}
       ${block.ctaLabel && block.ctaHref ? `<p class="section-foot centered"><a class="link" href="${esc(block.ctaHref)}">${esc(block.ctaLabel)} ${icon('arrow-right')}</a></p>` : ''}
     </div>
   </section>`
 
     case 'final-cta':
       return `
-  <section class="section bg-soft">
-    <div class="wrap cta-banner">
-      <div class="cta-copy">
-        <h2>${esc(block.title)}</h2>
-        <p>${esc(block.subtitle)}</p>
-        ${cta}
-      </div>
+  <section class="${sectionClass(tone)}">
+    <div class="wrap">
+      <div class="cta-banner">
+        <div class="cta-copy">
+          <h2>${esc(block.title)}</h2>
+          <p>${esc(block.subtitle)}</p>
+          ${cta}
+        </div>
       ${block.imagePath ? `<div class="cta-image"><img src="${esc(block.imagePath)}" alt="${esc(block.imageAlt || '')}" width="640" height="420" loading="lazy"></div>` : ''}
+      </div>
     </div>
   </section>`
 
     case 'newsletter':
       return `
-  <section class="section">
+  <section class="${sectionClass(tone, 'newsletter-block')}">
     <div class="wrap wrap-narrow centered-text">
-      ${sectionHead({ eyebrow: block.eyebrow, title: block.title, subtitle: block.subtitle, centered: true })}
+      ${sectionHead({ eyebrow: block.eyebrow, title: block.title, centered: true })}
       <form class="newsletter newsletter-inline" method="post" action="/api/newsletter">
         <label class="sr-only" for="home-nl-email">Email address</label>
         <input id="home-nl-email" name="email" type="email" required placeholder="you@example.com" autocomplete="email">
-        <button type="submit" class="btn btn-primary">Subscribe</button>
+        <button type="submit" class="btn btn-accent">Subscribe</button>
       </form>
       <p class="nl-msg tiny" role="status" aria-live="polite" hidden></p>
+      ${sectionNote(block.subtitle, { centered: true })}
     </div>
   </section>`
 
     case 'rich-text':
       return `
-  <section class="section">
+  <section class="${sectionClass(tone)}">
     <div class="wrap wrap-narrow prose">
       ${block.title ? `<h2>${esc(block.title)}</h2>` : ''}
       ${block.body}
@@ -329,6 +382,28 @@ function renderBlock(
     default:
       return ''
   }
+}
+
+/**
+ * A collection rendered cover-forward: the collection's own hero illustration
+ * carries the card, with the title and the count of what is inside it beneath.
+ * Used by the homepage audience/theme rows and the collections index, so a
+ * collection looks the same wherever it is listed.
+ */
+function collectionCard(c: Collection): string {
+  return `
+        <a class="collection-card" href="/collections/${esc(c.slug)}">
+          ${
+            c.heroImage
+              ? `<span class="collection-cover"><img src="${esc(c.heroImage)}" alt="${esc(c.heroAlt || '')}" width="640" height="480" loading="lazy"></span>`
+              : ''
+          }
+          <span class="collection-body">
+            <h3>${esc(c.title)}</h3>
+            <p>${esc(c.subtitle || c.description)}</p>
+            <span class="link">Open collection ${icon('arrow-right')}</span>
+          </span>
+        </a>`
 }
 
 // ---------------------------------------------------------------------------
@@ -518,7 +593,7 @@ export function collectionPage(opts: {
   </section>
   ${
     faqs.length
-      ? `<section class="section bg-soft"><div class="wrap wrap-narrow">
+      ? `<section class="section section-soft"><div class="wrap wrap-narrow">
       ${sectionHead({ eyebrow: 'Questions', title: `${collection.title}: common questions`, centered: true })}
       ${faqAccordion(faqs)}
     </div></section>`
@@ -546,21 +621,15 @@ export function collectionsIndexPage(collections: Collection[]): string {
   </section>
   ${groups
     .map(
-      (g) => `
-  <section class="section">
+      (g, i) => `
+  <section class="${sectionClass(sectionTone(i))}">
     <div class="wrap">
-      <h2>${esc(g.label)}</h2>
+      <div class="section-head">
+        <div><h2>${esc(g.label)}</h2></div>
+        <span class="badge">${g.items.length} ${g.items.length === 1 ? 'collection' : 'collections'}</span>
+      </div>
       <div class="grid-3 collection-list">
-        ${g.items
-          .map(
-            (c) => `
-        <a class="collection-card" href="/collections/${esc(c.slug)}">
-          <h3>${esc(c.title)}</h3>
-          <p>${esc(c.subtitle || c.description)}</p>
-          <span class="link">Open collection ${icon('arrow-right')}</span>
-        </a>`
-          )
-          .join('')}
+        ${g.items.map((c) => collectionCard(c)).join('')}
       </div>
     </div>
   </section>`
@@ -644,7 +713,7 @@ export function faqsPage(items: FaqItem[]): string {
     </div>
   </section>
   <section class="section">
-    <div class="wrap wrap-narrow">
+    <div class="wrap wrap-narrow faqs-page">
       ${
         groups.length
           ? groups

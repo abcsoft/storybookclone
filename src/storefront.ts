@@ -337,6 +337,10 @@ export function registerStorefrontRoutes(app: Hono<any>) {
     return renderPage(c, product.title, body, {
       active: pathPrefix,
       description: product.description || product.tagline,
+      // The product page's own base rules in pdp.css are scoped to this class,
+      // and it renders `.sticky-cta`, whose space must be reserved.
+      bodyClass: 'pdp-page',
+      stickyCta: true,
       meta: {
         canonical: canonicalFor(originOf(c), `${pathPrefix}/${product.slug}`),
         ogType: 'product',

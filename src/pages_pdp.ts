@@ -194,6 +194,38 @@ export function productDetailPage(d: PdpData, pathPrefix: string) {
   const faqs       = d.faqs.length ? d.faqs : fallback.faqs
   const related    = d.related.length ? d.related : fallback.related
 
+  // "You may also like": the catalogue-derived picks (`d.relatedProducts`, same
+  // category, bestseller first) are preferred over the CMS `pdp_related` rows,
+  // because only those carry the price row for the visitor's currency. Both
+  // shapes are normalised into ONE list here, so the `.length` guard and the
+  // `.map()` that renders the grid can never disagree — they used to, which is
+  // what produced a heading over an empty grid.
+  type RelatedCard = { href: string; title: string; image: string; priceMinor: number; compareAtMinor: number | null; discount: number }
+  const relatedItems: RelatedCard[] = d.relatedProducts.length
+    ? d.relatedProducts.map((x) => ({
+        href: x.category === 'sticker' ? `/stickers/${x.slug}` : `/books/${x.slug}`,
+        title: x.title,
+        image: x.image,
+        priceMinor: x.priceMinor ?? Math.round(x.price * 100),
+        compareAtMinor: x.compareAtMinor ?? (x.compareAt != null ? Math.round(x.compareAt * 100) : null),
+        discount: 0
+      }))
+    : related.map((x) => ({
+        href: x.slug.includes('sticker') ? `/stickers/${x.slug}` : `/books/${x.slug}`,
+        title: x.title,
+        image: x.image,
+        priceMinor: x.priceMinor ?? Math.round(x.price * 100),
+        compareAtMinor: x.compareAtMinor ?? (x.compareAt != null ? Math.round(x.compareAt * 100) : null),
+        discount: 0
+      }))
+  for (const item of relatedItems) {
+    // A "-N%" badge is shown only when a compare-at price the server sent is
+    // actually higher than the price being charged.
+    if (item.compareAtMinor != null && item.compareAtMinor > item.priceMinor) {
+      item.discount = Math.round((1 - item.priceMinor / item.compareAtMinor) * 100)
+    }
+  }
+
   const heroMinor = defaultVariant?.priceMinor ?? 0
   const heroCompareMinor = defaultVariant?.compareAtPriceMinor ?? null
   const sale = heroCompareMinor && heroCompareMinor > heroMinor ? `-${Math.round((1 - heroMinor / heroCompareMinor) * 100)}%` : ''
@@ -511,18 +543,15 @@ export function productDetailPage(d: PdpData, pathPrefix: string) {
   <section class="pdp-related">
     <div class="pdp-related-inner">
       <h2>You may also like</h2>
-      ${(d.relatedProducts.length ? d.relatedProducts : related).length ? `
+      ${relatedItems.length ? `
         <div class="pdp-related-grid">
-          ${related.map(r => {
-            const href = r.slug.includes('sticker') ? `/stickers/${r.slug}` : `/books/${r.slug}`
-            const sBadge = r.compareAt ? `<span class="pdp-related-badge">-${Math.round((1 - r.price / r.compareAt) * 100)}%</span>` : ''
-            return `<a class="pdp-related-card" href="${href}">
-              ${sBadge}
+          ${relatedItems.map((r) => `
+            <a class="pdp-related-card" href="${esc(r.href)}">
+              ${r.discount ? `<span class="pdp-related-badge">-${r.discount}%</span>` : ''}
               <div class="pdp-related-cover"><img src="${esc(r.image)}" alt="${esc(r.title)}"></div>
               <h4>${esc(r.title)}</h4>
-              <p class="pdp-related-price">From ${esc(fmt(Number(r.priceMinor ?? Math.round(r.price * 100))))}${r.compareAtMinor ? ` <s class="pdp-related-was">${esc(fmt(r.compareAtMinor))}</s>` : ''}</p>
-            </a>`
-          }).join('')}
+              <p class="pdp-related-price">From ${esc(fmt(r.priceMinor))}${r.compareAtMinor ? ` <s class="pdp-related-was">${esc(fmt(r.compareAtMinor))}</s>` : ''}</p>
+            </a>`).join('')}
         </div>` : `<p class="pdp-related-empty">No related products yet — admins can pick any 3 from the editor.</p>`}
     </div>
   </section>

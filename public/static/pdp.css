@@ -11,25 +11,30 @@
    ========================================================================= */
 
 :root {
-  --pdp-purple-lightest: #fdfaff;
-  --pdp-purple-soft:     #f3eaff;
+  /* The product/app layer consumes the storefront design system instead of
+     declaring a second palette of its own: every value below references a token
+     from public/static/storefront.css. That is what keeps the product page, the
+     cards that lead to it and the cart it feeds on one visual language. The
+     names stay `--pdp-*` so the rest of this file needed no rewrite. */
+  --pdp-purple-lightest: var(--c-primary-soft);
+  --pdp-purple-soft:     var(--c-primary-soft);
   --pdp-purple-100:      #e7d6ff;
   --pdp-purple-300:      #c79bff;
-  --pdp-purple:          #a855f7;        /* primary */
-  --pdp-purple-600:      #8b30ee;
-  --pdp-purple-700:      #7424d8;
-  --pdp-purple-dark:     #5b16b3;
+  --pdp-purple:          var(--c-primary);
+  --pdp-purple-600:      var(--c-primary);
+  --pdp-purple-700:      var(--c-primary-strong);
+  --pdp-purple-dark:     var(--c-primary-strong);
   --pdp-purple-deep:     #430a8a;
-  --pdp-red:             #ff3b30;        /* SAVE badge */
-  --pdp-ink:             #1d0f33;
-  --pdp-muted:           #6c6377;
-  --pdp-line:            #ece4f5;
-  --pdp-bg:              #ffffff;
-  --pdp-radius-lg:       20px;
-  --pdp-radius:          14px;
-  --pdp-radius-sm:       10px;
-  --pdp-shadow:          0 6px 24px rgba(91, 22, 179, 0.08);
-  --pdp-shadow-strong:   0 14px 40px rgba(91, 22, 179, 0.18);
+  --pdp-red:             var(--c-berry);
+  --pdp-ink:             var(--c-ink);
+  --pdp-muted:           var(--c-muted);
+  --pdp-line:            var(--c-line);
+  --pdp-bg:              var(--c-bg);
+  --pdp-radius-lg:       var(--radius-lg);
+  --pdp-radius:          var(--radius-md);
+  --pdp-radius-sm:       var(--radius-sm);
+  --pdp-shadow:          var(--shadow-sm);
+  --pdp-shadow-strong:   var(--shadow-md);
 }
 
 /* Base body reset for PDP pages (the layout already provides global, this overrides accents) */
@@ -2227,3 +2232,77 @@ body.pdp-page {
       position: static;
     }
   }
+
+/* =========================================================================
+   DESIGN-SYSTEM HARMONISATION
+   -------------------------------------------------------------------------
+   The rules above are the product page's own component layer and were written
+   against a second, locally-declared palette. Now that the `--pdp-*` tokens
+   point at the storefront design system (see the top of this file), what is
+   left is a small set of hard-coded surfaces that would otherwise still read as
+   a different site: section backgrounds, heading typography and the empty
+   "Before / After" frames.
+
+   These overrides are deliberately LAST in the file so they win without needing
+   !important, and every value is a token from public/static/storefront.css.
+   ========================================================================= */
+
+/* Headings inside the product page use the same display face as the rest of
+   the storefront, so the PDP reads as the same shop one click deeper. */
+.pdp-hero-info h1,
+.pdp-magic h2,
+.pdp-trust h2,
+.pdp-related h2,
+.pdp-faqs h2,
+.pdp-personalise-title {
+  font-family: var(--font-display);
+  letter-spacing: -0.02em;
+}
+
+/* Section rhythm + surfaces, on the storefront's bands. */
+.pdp-magic { background: var(--c-surface); }
+.pdp-related { background: var(--c-surface-2); }
+.pdp-faqs { background: var(--c-surface); }
+.pdp-trust {
+  background: linear-gradient(140deg, var(--c-primary-strong), var(--c-ink));
+  color: #ffffff;
+}
+.pdp-trust h2, .pdp-trust h3 { color: #ffffff; }
+.pdp-trust-card { background: rgba(255, 255, 255, 0.10); border-color: rgba(255, 255, 255, 0.18); }
+.pdp-trust-card p { color: #ded6f2; }
+
+/* The "Before / After" frames when the CMS has no image for them: an explicit
+   empty state rather than a blank panel that reads as a broken image. */
+.pdp-magic-frame:has(.pdp-magic-placeholder) {
+  background: var(--c-surface-2);
+  border: 2px dashed var(--c-line);
+  box-shadow: none;
+}
+.pdp-magic-placeholder {
+  color: var(--c-muted);
+  gap: var(--sp-3);
+  /* Bottom padding clears the absolutely-positioned caption badge, which sits
+     at the frame's bottom edge. */
+  padding: var(--sp-5) var(--sp-5) var(--sp-8);
+  text-align: center;
+}
+.pdp-magic-placeholder i { font-size: 32px; color: var(--c-primary); }
+.pdp-magic-placeholder span { font-size: var(--fs-sm); font-weight: 700; letter-spacing: 0.02em; }
+
+.pdp-related-empty {
+  background: var(--c-surface);
+  border: 1px dashed var(--c-line);
+  border-radius: var(--radius-md);
+  padding: var(--sp-5);
+  margin: 0;
+  max-width: 52ch;
+  margin-inline: auto;
+}
+
+/* The thumbnail rail on a narrow screen becomes a horizontal strip instead of
+   a column that squeezes the main image. */
+@media (max-width: 640px) {
+  .pdp-gallery { grid-template-columns: 1fr; min-height: 0; }
+  .pdp-thumbs { flex-direction: row; overflow-x: auto; padding-bottom: var(--sp-1); }
+  .pdp-thumb { width: 64px; height: 64px; flex: none; }
+}

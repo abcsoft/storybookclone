@@ -44,16 +44,64 @@ function trapFocus(root, onEscape) {
   return () => document.removeEventListener('keydown', handler)
 }
 
+/**
+ * The mobile navigation drawer.
+ *
+ * It is an inline disclosure panel under the sticky header, not a modal
+ * overlay, so the toggle stays on screen and keeps working while it is open
+ * (open -> close -> open). What it does own is the keyboard contract:
+ *   * `aria-expanded` mirrors the real state on the toggle;
+ *   * Escape closes it from anywhere inside it;
+ *   * Tab is TRAPPED inside the drawer while it is open, so a keyboard user
+ *     cannot tab off into the page behind a panel that covers it;
+ *   * focus moves to the drawer's own close control on open and returns to the
+ *     toggle on close, so focus is never lost or left on a hidden element.
+ *
+ * With JavaScript disabled the plain link list is still rendered and usable —
+ * it is simply never hidden.
+ */
 export function initMobileNav() {
   const toggle = document.getElementById('menu-toggle')
   const drawer = document.getElementById('mobile-drawer')
   if (!toggle || !drawer) return
-  const setOpen = (open) => {
-    if (open) drawer.removeAttribute('hidden')
-    else drawer.setAttribute('hidden', '')
-    toggle.setAttribute('aria-expanded', open ? 'true' : 'false')
+
+  const close = document.getElementById('drawer-close')
+  let release = null
+
+  const isOpen = () => !drawer.hasAttribute('hidden')
+
+  const closeDrawer = ({ restoreFocus = true } = {}) => {
+    drawer.setAttribute('hidden', '')
+    toggle.setAttribute('aria-expanded', 'false')
+    if (release) release()
+    release = null
+    if (restoreFocus) toggle.focus()
   }
-  toggle.addEventListener('click', () => setOpen(drawer.hasAttribute('hidden')))
+
+  const openDrawer = () => {
+    drawer.removeAttribute('hidden')
+    toggle.setAttribute('aria-expanded', 'true')
+    release = trapFocus(drawer, closeDrawer)
+    const first = close || focusables(drawer)[0]
+    if (first) first.focus()
+  }
+
+  toggle.addEventListener('click', () => (isOpen() ? closeDrawer() : openDrawer()))
+  close?.addEventListener('click', () => closeDrawer())
+
+  // A pointer press outside the drawer and its toggle closes it, so it can
+  // never be left open covering the page it belongs to.
+  document.addEventListener('click', (event) => {
+    if (!isOpen()) return
+    if (drawer.contains(event.target) || toggle.contains(event.target)) return
+    closeDrawer({ restoreFocus: false })
+  })
+
+  // Resizing up to the desktop layout hides the drawer by CSS; keep the ARIA
+  // state truthful and drop the trap rather than leaving a stale "expanded".
+  window.addEventListener('resize', () => {
+    if (isOpen() && window.innerWidth >= 1024) closeDrawer({ restoreFocus: false })
+  })
 }
 
 export function initSearch() {
