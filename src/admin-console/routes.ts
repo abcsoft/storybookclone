@@ -17,6 +17,7 @@ import { esc } from '../layout'
 import { adminPage } from '../admin'
 import {
   adminAuditView,
+  adminBookDetailView,
   adminBooksView,
   adminCustomerDetailView,
   adminCustomersView,
@@ -33,6 +34,7 @@ import {
   adminSupportTicketView
 } from './views'
 import { auditMutation, listAuditEvents, auditActions } from './audit'
+import { setUserBookState, userBookDetail } from './books'
 import { readEventStream, streamsFor } from './events'
 import { EXPORT_KINDS, exportKindsFor, listExportJobs, runExport } from './exports'
 import { listFeatureFlags, providerHealthReport, setFeatureFlag } from './integrations'
@@ -280,6 +282,62 @@ function registerCustomerRoutes(app: Hono<any>) {
         query
       })
     )
+  })
+
+  // The detail screen behind the list's row link. Before this route existed the
+  // link was dead and `books.manage` gated nothing.
+  app.get('/admin/books/:id', async (c: AdminCtx) => {
+    const publicId = str(c.req.param('id'), 80)
+    const detail = await userBookDetail(c.env.DB, publicId)
+    if (!detail) {
+      return c.html(
+        adminPage({
+          title: 'User book',
+          active: 'books',
+          permissions: perms(c),
+          body: `<p class="a-notice error" role="alert">No user book with that id.</p><p><a class="link" href="/admin/books">← All user books</a></p>`
+        }),
+        404
+      )
+    }
+    return c.html(
+      adminBookDetailView({
+        permissions: perms(c),
+        detail,
+        // No re-auth field: the shipped permission catalogue (seeded by
+        // migration 0033, which is published and immutable) seeds `books.manage`
+        // with `high_risk = 0`, and the panel's rule is that re-auth marks
+        // exactly the catalogue's high-risk set. The controls on this action are
+        // a required reason, optimistic concurrency, the domain state machine
+        // and exactly one audit event.
+        flash: c.req.query('saved'),
+        error: c.req.query('error')
+      })
+    )
+  })
+
+  app.post('/admin/books/:id/state', async (c: AdminCtx) => {
+    const publicId = str(c.req.param('id'), 80)
+    const form = await c.req.parseBody()
+    const back = `/admin/books/${encodeURIComponent(publicId)}`
+    const actor = actorId(c)
+    if (actor == null) return c.redirect(flashPath(back, 'Your session could not be resolved. Sign in again.', true))
+    const result = await setUserBookState(c.env.DB, {
+      publicId,
+      to: str(form.to, 30),
+      actorUserId: actor,
+      reason: str(form.reason, 500),
+      expectedVersion: intParam(form.version, 1, Number.MAX_SAFE_INTEGER) ?? undefined
+    })
+    if (!result.ok) return c.redirect(flashPath(back, result.message, true))
+    await auditMutation(c, {
+      action: 'books.state',
+      entityType: 'user_book',
+      entityId: publicId,
+      reason: str(form.reason, 500),
+      metadata: { to: result.state, version: str(form.version, 20) }
+    })
+    return c.redirect(flashPath(back, `Book moved to ${result.state.replace(/_/g, ' ')}.`))
   })
 
   app.get('/admin/fulfilment', async (c: AdminCtx) => {

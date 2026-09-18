@@ -271,10 +271,10 @@ export function productDetailPage(d: PdpData, pathPrefix: string) {
     <div class="pdp-hero-inner">
       <div class="pdp-gallery">
         <div class="pdp-thumbs"${galleryViews.length === 1 ? ' data-single="1"' : ''}>
-          ${galleryViews.map((g, i) => `<button class="pdp-thumb ${i === 0 ? 'active' : ''}" data-idx="${i}"${g.caption ? ` data-caption="${esc(g.caption)}"` : ''} aria-label="${g.caption ? esc(g.caption) : `View image ${i + 1}`}"><img src="${esc(g.image_url)}" alt="${esc(g.alt)}"></button>`).join('')}
+          ${galleryViews.map((g, i) => `<button class="pdp-thumb ${i === 0 ? 'active' : ''}" data-idx="${i}"${g.caption ? ` data-caption="${esc(g.caption)}"` : ''} aria-label="${g.caption ? esc(g.caption) : `View image ${i + 1}`}"><img src="${esc(g.image_url)}" alt="${esc(g.alt)}" width="72" height="72" loading="lazy" decoding="async"></button>`).join('')}
         </div>
         <div class="pdp-main-img" id="pdp-main-img">
-          <img id="pdp-main-image" src="${esc(galleryViews[0]?.image_url || p.image)}" alt="${esc(galleryViews[0]?.alt || p.title)}" data-count="${galleryViews.length}">
+          <img id="pdp-main-image" src="${esc(galleryViews[0]?.image_url || p.image)}" alt="${esc(galleryViews[0]?.alt || p.title)}" data-count="${galleryViews.length}" width="720" height="720" fetchpriority="high" decoding="async">
           ${galleryViews.length > 1 ? `<button class="pdp-arrow pdp-prev" aria-label="Previous image">‹</button><button class="pdp-arrow pdp-next" aria-label="Next image">›</button><div class="pdp-dots">${galleryViews.map((_, i) => `<button class="pdp-dot ${i === 0 ? 'active' : ''}" data-idx="${i}" aria-label="Slide ${i + 1}"></button>`).join('')}</div>` : ''}
           <p class="pdp-img-caption" id="pdp-img-caption"${galleryViews[0].caption ? '' : ' hidden'}>${esc(galleryViews[0].caption)}</p>
         </div>
@@ -332,7 +332,7 @@ export function productDetailPage(d: PdpData, pathPrefix: string) {
                 <div class="pdp-step-avatar">
                   <!-- S-12/S-13: no real-person photo is shipped as UI artwork;
                        this is the app's own illustration. -->
-                  <img src="/static/img/art/step-2.svg" alt="Upload your child's picture" class="pdp-step-img step-img-1">
+                  <img src="/static/img/art/step-2.svg" alt="Upload your child's picture" class="pdp-step-img step-img-1" width="120" height="120" loading="lazy" decoding="async">
                 </div>
               </div>
               <div class="pdp-step-label">
@@ -350,7 +350,7 @@ export function productDetailPage(d: PdpData, pathPrefix: string) {
                   <i class="fas fa-check"></i>
                 </div>
                 <div class="pdp-step-avatar book-thumb">
-                  <img src="${gallery[0]?.image_url || '/static/img/art/step-3.svg'}" alt="Review the personalised book" class="pdp-step-img step-img-2">
+                  <img src="${gallery[0]?.image_url || '/static/img/art/step-3.svg'}" alt="Review the personalised book" class="pdp-step-img step-img-2" width="120" height="120" loading="lazy" decoding="async">
                 </div>
               </div>
               <div class="pdp-step-label">
@@ -368,7 +368,7 @@ export function productDetailPage(d: PdpData, pathPrefix: string) {
                   <i class="fas fa-cart-shopping"></i>
                 </div>
                 <div class="pdp-step-avatar">
-                  <img src="/static/img/art/step-4.svg" alt="Saved to your cart" class="pdp-step-img step-img-3">
+                  <img src="/static/img/art/step-4.svg" alt="Saved to your cart" class="pdp-step-img step-img-3" width="120" height="120" loading="lazy" decoding="async">
                 </div>
               </div>
               <div class="pdp-step-label">
@@ -386,7 +386,7 @@ export function productDetailPage(d: PdpData, pathPrefix: string) {
             <!-- Uploaded Avatar Circle with 'X' close/delete button -->
             <div class="pdp-avatar-wrapper">
               <div class="pdp-avatar-container" id="avatar-container" title="Click to upload or change photo">
-                <img id="photo-preview" src="/static/img/photo-placeholder.svg" alt="Child photo preview" class="pdp-avatar-img">
+                <img id="photo-preview" src="/static/img/photo-placeholder.svg" alt="Child photo preview" class="pdp-avatar-img" width="96" height="96" decoding="async">
                 <div class="pdp-avatar-empty" id="avatar-empty" style="display: none;">
                   <i class="fas fa-camera"></i>
                   <span>Upload Photo</span>
@@ -498,7 +498,7 @@ export function productDetailPage(d: PdpData, pathPrefix: string) {
         <div class="book-preview-stage review-stage">
           <div class="review-summary">
             <div class="review-photo-wrap">
-              <img src="/static/img/photo-placeholder.svg" alt="Uploaded photo" id="preview-child-face" class="review-photo">
+              <img src="/static/img/photo-placeholder.svg" alt="Uploaded photo" id="preview-child-face" class="review-photo" width="160" height="160" loading="lazy" decoding="async">
             </div>
             <dl class="review-fields">
               <div><dt>Dedication</dt><dd id="preview-dedication">—</dd></div>
@@ -537,12 +537,12 @@ export function productDetailPage(d: PdpData, pathPrefix: string) {
       <h2>${esc(magic.heading)}</h2>
       <div class="pdp-magic-slider">
         <div class="pdp-magic-frame pdp-magic-left">
-          ${magic.left_image ? `<img src="${esc(magic.left_image)}" alt="${esc(magic.left_caption)}">` : `<div class="pdp-magic-placeholder"><i class="fas fa-camera-retro"></i><span>Before</span></div>`}
+          ${magic.left_image ? `<img src="${esc(magic.left_image)}" alt="${esc(magic.left_caption)}" width="520" height="520" loading="lazy" decoding="async">` : `<div class="pdp-magic-placeholder"><i class="fas fa-camera-retro"></i><span>Before</span></div>`}
           <span class="pdp-magic-cap">${esc(magic.left_caption || 'Your real photo')}</span>
         </div>
         <div class="pdp-magic-arrow" aria-hidden="true">➜</div>
         <div class="pdp-magic-frame pdp-magic-right">
-          ${magic.right_image ? `<img src="${esc(magic.right_image)}" alt="${esc(magic.right_caption)}">` : `<div class="pdp-magic-placeholder"><i class="fas fa-palette"></i><span>After</span></div>`}
+          ${magic.right_image ? `<img src="${esc(magic.right_image)}" alt="${esc(magic.right_caption)}" width="520" height="520" loading="lazy" decoding="async">` : `<div class="pdp-magic-placeholder"><i class="fas fa-palette"></i><span>After</span></div>`}
           <span class="pdp-magic-cap">${esc(magic.right_caption || 'Personalised version')}</span>
         </div>
       </div>
@@ -579,7 +579,7 @@ export function productDetailPage(d: PdpData, pathPrefix: string) {
           ${relatedItems.map((r) => `
             <a class="pdp-related-card" href="${esc(r.href)}">
               ${r.discount ? `<span class="pdp-related-badge">-${r.discount}%</span>` : ''}
-              <div class="pdp-related-cover"><img src="${esc(r.image)}" alt="${esc(r.title)}"></div>
+              <div class="pdp-related-cover"><img src="${esc(r.image)}" alt="${esc(r.title)}" width="240" height="240" loading="lazy" decoding="async"></div>
               <h4>${esc(r.title)}</h4>
               <p class="pdp-related-price">From ${esc(fmt(r.priceMinor))}${r.compareAtMinor ? ` <s class="pdp-related-was">${esc(fmt(r.compareAtMinor))}</s>` : ''}</p>
             </a>`).join('')}

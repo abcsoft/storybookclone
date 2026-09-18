@@ -39,6 +39,8 @@ import {
   type CartRow
 } from './cart'
 import { createQuote, pricedCartFromQuote, priceCart, readQuote } from './quote'
+import { resolveVariantPrice } from './pricing'
+import { isOrderableBookState, type UserBookRow } from '../personalization/types'
 import { cartLinesFromClient } from './cart-lines'
 import {
   checkoutPayloadHash,
@@ -266,6 +268,41 @@ function sessionRateLimit(action: string, c: Ctx, max: number, windowSeconds: nu
   return durableRateLimit(dbOf(c), rateLimitKey(action, c), { max, windowSeconds })
 }
 
+/**
+ * The first ACTIVE sticker product that genuinely has a price in `currency`.
+ *
+ * Deterministic (ordered by product id) so the same cart always sees the same
+ * suggestion, and it only ever returns a product the pricing authority can
+ * actually price — a sticker with no price row in this currency is skipped
+ * rather than shown with a made-up amount.
+ */
+async function firstAvailableSticker(
+  db: D1Database,
+  currency: string
+): Promise<{ slug: string; title: string; image: string; variantCode: string; variantLabel: string; priceMinor: number; currency: string } | null> {
+  const rows =
+    (
+      await db
+        .prepare("SELECT slug, title, image FROM products WHERE active = 1 AND category = 'sticker' ORDER BY id")
+        .all<{ slug: string; title: string; image: string | null }>()
+    ).results || []
+  for (const row of rows) {
+    const price = await resolveVariantPrice(db, { slug: row.slug, currency })
+    if (price.ok) {
+      return {
+        slug: row.slug,
+        title: row.title,
+        image: row.image || '/static/img/placeholder-cover.svg',
+        variantCode: price.price.variantCode,
+        variantLabel: price.price.variantLabel,
+        priceMinor: price.price.priceMinor,
+        currency: price.price.currency
+      }
+    }
+  }
+  return null
+}
+
 // ---------------------------------------------------------------------------
 // Registration
 // ---------------------------------------------------------------------------
@@ -299,6 +336,79 @@ export function registerCommerceRoutes(app: Hono<any>): void {
       return c.json({ id: null, currency: store.currency, items: [], itemCount: 0, couponCode: null, shippingMethod: 'standard', status: 'empty' })
     }
     return c.json(await cartJson(c, cart))
+  })
+
+  // ---- GET /api/v1/cart/add-ons (COM-14 cross-sell) ----
+  //
+  // Conditional, OPT-IN cross-sell. The SERVER decides what may be offered, at
+  // what price, and to whom; the browser only reports which KINDS its local cart
+  // currently holds, which is a display hint — never a price, never an ownership
+  // claim, and never a thing that gets added automatically (this is a GET; it
+  // writes nothing).
+  //
+  //  * a cart that holds a BOOK (and no sticker) whose owned, orderable
+  //    companion book the caller proves -> a real sticker add-on with its real
+  //    server-side price,
+  //  * a cart that holds a STICKER only -> an "add a personalised book" prompt
+  //    that links to the editor (books need a photo, so it is not one-click),
+  //  * neither, or no provable ownership -> nothing at all.
+  //
+  // "No ownership leakage": the sticker's personalisation source is the
+  // caller's OWN book id, resolved here from the owner chain, and the response
+  // never contains another owner's identifier, an internal id or a storage key.
+  app.get('/api/v1/cart/add-ons', async (c) => {
+    const db = dbOf(c)
+    const store = await storeContext(c)
+    const kinds = new Set(
+      String(c.req.query('kinds') || '')
+        .split(',')
+        .map((k) => k.trim().toLowerCase())
+        .filter((k) => k === 'book' || k === 'sticker')
+    )
+    const bookId = String(c.req.query('bookId') || '').trim()
+    const owner = await personalizationContext(c)
+
+    let eligibleBookId: string | null = null
+    if (bookId && owner.type && owner.id != null) {
+      const book = await db.prepare('SELECT * FROM user_books WHERE public_id = ?').bind(bookId).first<UserBookRow>()
+      const owned =
+        !!book &&
+        ((owner.type === 'user' && book.user_id === Number(owner.id)) || (owner.type === 'prospect' && book.prospect_id === String(owner.id)))
+      if (owned && isOrderableBookState(book.state) && book.current_revision > 0) eligibleBookId = book.public_id
+    }
+
+    const addOns: Array<Record<string, unknown>> = []
+    if (kinds.has('book') && !kinds.has('sticker') && eligibleBookId) {
+      const sticker = await firstAvailableSticker(db, store.currency)
+      if (sticker) {
+        addOns.push({
+          kind: 'sticker',
+          slug: sticker.slug,
+          title: sticker.title,
+          variantCode: sticker.variantCode,
+          variantLabel: sticker.variantLabel,
+          priceMinor: sticker.priceMinor,
+          currency: sticker.currency,
+          image: sticker.image,
+          // The CALLER'S OWN companion book, already proven above. Stickers have
+          // no personalisation of their own, so the order derives the child's
+          // details from this book.
+          bookId: eligibleBookId,
+          addable: true,
+          reason: null
+        })
+      }
+    } else if (kinds.has('sticker') && !kinds.has('book')) {
+      addOns.push({
+        kind: 'book',
+        addable: false,
+        browseHref: '/books',
+        title: 'Add another personalised book',
+        reason: 'A personalised book needs a photo and your child’s details, so this opens the editor rather than adding instantly.'
+      })
+    }
+
+    return c.json({ currency: store.currency, addOns })
   })
 
   // ---- POST /api/v1/cart/items ----

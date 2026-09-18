@@ -43,7 +43,7 @@ import {
   type CatalogQuery,
   type DiscountRow
 } from './db'
-import { money } from './data'
+import { money } from './legacy-money'
 import {
   attachUser,
   hashPassword,
@@ -72,6 +72,8 @@ import {
   type AiSettingsRow
 } from './admin'
 import { personalizedBookReaderPage } from './pages_reader'
+import { previewStepPage, visiblePreviewPage } from './pages_preview'
+import { isOrderableBookState } from './personalization/types'
 import { getCookie, setCookie } from 'hono/cookie'
 import { createOrder, verifyGuestOrderToken, type CreateOrderInput } from './orders'
 import { resolveGuestOrderTokenSecrets, MissingSecretError, sha256Hex, timingSafeEqual } from './secrets'
@@ -904,6 +906,74 @@ app.post('/reset-password', async (c) => {
     })
 
     return html(c, `${title} - Customizer`, readerHtml, 'my-books')
+  })
+
+  // The PREVIEW step (`/my/books/:slug/preview`) — the step after the Book
+  // step (owner request 4). Ownership is resolved exactly as the reader route
+  // does: the `userBookId` query param only counts when it names a book the
+  // CALLER owns, and every personalization field comes from that book's current
+  // revision. A stranger's id (or no id at all) gets the editor page instead of
+  // an error page that would confirm the id exists.
+  app.get('/my/books/:slug/preview', async (c) => {
+    const slug = c.req.param('slug')
+    const q = c.req.query()
+    const p = await getProductBySlug(c.env.DB, slug)
+
+    let book: any = null
+    let revision: any = null
+    if (q.userBookId) {
+      const owner = await resolvePersonalizationOwner(c)
+      if (owner) {
+        const owned = await c.env.DB.prepare(
+          'SELECT * FROM user_books WHERE public_id = ? AND ' + (owner.type === 'user' ? 'user_id = ?' : 'prospect_id = ?')
+        )
+          .bind(q.userBookId, owner.type === 'user' ? owner.userId : owner.prospectId)
+          .first<any>()
+        if (owned) {
+          book = owned
+          if (owned.current_revision > 0) {
+            revision = await c.env.DB.prepare('SELECT * FROM personalization_inputs WHERE user_book_id = ? AND revision = ?')
+              .bind(owned.id, owned.current_revision)
+              .first<any>()
+          }
+        }
+      }
+    }
+    if (!book) return c.redirect(`/my/books/${encodeURIComponent(slug)}${q.userBookId ? `?userBookId=${encodeURIComponent(q.userBookId)}` : ''}`)
+
+    const generation = await loadGenerationPanelState(c.env as never, book)
+    const title = p ? p.title : 'Your personalised storybook'
+
+    // Cover/format + price come from the SAME server-owned variants the quote
+    // and order snapshot use — the page never invents a price.
+    const variantInfo = p ? await getProductVariants(c.env.DB, p.slug) : null
+    const variants = variantInfo?.variants || []
+    const defaultVariant = variants.find((v) => v.isDefault) || variants[0]
+    const requestedCover = String(q.cover || '')
+    const coverType = variants.some((v) => v.code === requestedCover) ? requestedCover : defaultVariant?.code || 'standard'
+    const coverLabel = variants.find((v) => v.code === coverType)?.label || coverType
+
+    const previewHtml = previewStepPage({
+      slug,
+      title,
+      childName: String(revision?.child_name ?? ''),
+      childAge: String(revision?.child_age ?? ''),
+      userBookId: book.public_id,
+      generationPanelHtml: renderGenerationPanel(generation, { hidePageGrid: true }),
+      generation,
+      checkoutHref: '/cart',
+      // Continue is only offered once there is a real published page to look at
+      // AND the book's revision is final enough for the cart/order to accept.
+      canContinue: !!visiblePreviewPage(generation) && isOrderableBookState(book.state),
+      cart: {
+        coverType,
+        coverLabel,
+        price: defaultVariant?.price ?? Number(p?.price ?? 0),
+        cartImage: p?.image
+      }
+    })
+
+    return html(c, `${title} - Preview`, previewHtml, 'my-books')
   })
 
 /**

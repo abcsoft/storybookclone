@@ -558,11 +558,3 @@ export function careers() {
   return products.filter((p) => p.career)
 }
 
-/**
- * Legacy plain-USD display helper, kept for the admin screens only. The
- * storefront formats money with the selected currency's own settings
- * (src/locale.ts::formatMoneyForCurrency) — never with this.
- */
-export function money(n: number) {
-  return `$${Number(n || 0).toFixed(2)}`
-}

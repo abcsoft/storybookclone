@@ -19,6 +19,7 @@ import type { AdminTicketRow, SlaState } from './support'
 import { SLA_POLICY_NOTE } from './support'
 import type { AdminPrivacyRow, RetentionFailureRow } from './privacy'
 import type { DashboardCounts } from './ops'
+import type { UserBookDetail } from './books'
 import type { ExportJobRow, ExportKind } from './exports'
 import { EXPORT_ROW_LIMIT } from './exports'
 import type { FeatureFlagRow, ProviderHealthReport } from './integrations'
@@ -394,6 +395,190 @@ export function adminBooksView(opts: {
   </table></div>
   ${adminPager('/admin/books', state, {})}`
   return adminPage({ title: 'User books', active: 'books', permissions, body })
+}
+
+// ==================================================== ADM-05/11 user books
+
+/**
+ * The user-book detail screen behind the list's row link.
+ *
+ * Before this screen the list linked every row to `/admin/books/:id`, which did
+ * not exist — a dead link — and `books.manage` was granted to seeded roles while
+ * gating nothing. This renders the §10 triad for the node (inputs/faces,
+ * generations/previews, revisions/approvals) from bounded reads, and offers the
+ * ONE action `books.manage` exists for: moving an unfinished book to cancelled
+ * or expired, with a required reason.
+ *
+ * There is deliberately NO password re-confirmation field here. The panel's rule
+ * is that re-auth marks exactly the high-risk set in the permission catalogue,
+ * and `books.manage` is seeded with `high_risk = 0` (migration 0033, which is
+ * published and immutable). Rendering a challenge that the guard does not check
+ * would look like a control without being one.
+ */
+export function adminBookDetailView(opts: {
+  permissions: readonly string[]
+  detail: UserBookDetail
+  flash?: string
+  error?: string
+}): string {
+  const { detail } = opts
+  const b = detail.book
+  const canManage = opts.permissions.includes('books.manage')
+  const terminal = b.state === 'expired' || b.state === 'cancelled'
+
+  const body = `
+  <p class="a-inline-note"><a class="link" href="/admin/books">← All user books</a></p>
+  <h1>User book <code>${esc(b.publicId.slice(0, 20))}…</code></h1>
+  <p class="a-muted">
+    The personalisation lifecycle for one book: what the customer entered, what the face detector found,
+    every generation attempt and every published preview version. Private photo and preview objects are
+    never linked from here by key — an operator who needs the bytes requests a short-lived, single-use
+    capability instead (ADM-04/ADM-11), and every request for one is audited.
+  </p>
+  ${notice('ok', opts.flash)}
+  ${notice('error', opts.error)}
+
+  <dl class="a-grid">
+    ${kv('Owner', `${esc(b.ownerType)}: ${esc(b.ownerLabel)}`)}
+    ${kv('Product', esc(b.productTitle || '—'))}
+    ${kv('State', badge(b.state))}
+    ${kv('Current revision', esc(String(b.currentRevision)))}
+    ${kv('Checkout-able now', detail.orderable ? badge('yes', 'ok') : badge('no', 'warn'))}
+    ${kv('Consent recorded', b.consentAt ? when(b.consentAt) : '<span class="a-muted">not recorded</span>')}
+    ${kv('Retention deadline', b.retentionDeadline ? when(b.retentionDeadline) : '<span class="a-muted">not set</span>')}
+    ${kv('Created', when(b.createdAt))}
+    ${kv('Updated', when(b.updatedAt))}
+  </dl>
+
+  <h2>Inputs and faces</h2>
+  <div class="a-table-scroll"><table class="a-table">
+    <thead><tr><th scope="col">Revision</th><th scope="col">Child</th><th scope="col">Age</th><th scope="col">Language</th><th scope="col">Photo</th><th scope="col">Recorded</th></tr></thead>
+    <tbody>
+    ${
+      detail.revisions.length
+        ? detail.revisions
+            .map(
+              (r) => `<tr>
+      <td>${esc(String(r.revision))}${r.isCurrent ? ' ' + badge('current', 'ok') : ''}</td>
+      <td>${esc(r.childName)}</td>
+      <td>${r.childAge == null ? '<span class="a-muted">—</span>' : esc(String(r.childAge))}</td>
+      <td>${esc(r.languageCode)}</td>
+      <td>${r.hasPhoto ? 'attached' : '<span class="a-muted">none</span>'}</td>
+      <td>${when(r.createdAt)}</td>
+    </tr>`
+            )
+            .join('')
+        : '<tr><td colspan="6"><p class="a-empty" role="status">No personalisation revision has been saved.</p></td></tr>'
+    }
+    </tbody>
+  </table></div>
+  <h3>Detected faces on the selected photo</h3>
+  ${
+    detail.faces.length
+      ? `<ul class="a-list">${detail.faces
+          .map(
+            (f) =>
+              `<li>${esc(f.category)} · confidence ${esc(f.confidence.toFixed(2))} · box #${esc(String(f.sortOrder + 1))}${f.selected ? ' ' + badge('selected', 'ok') : ''}</li>`
+          )
+          .join('')}</ul>`
+      : '<p class="a-muted">No faces are recorded for the current photo (or no photo is attached yet).</p>'
+  }
+
+  <h2>Generations</h2>
+  <div class="a-table-scroll"><table class="a-table">
+    <thead><tr><th scope="col">Job</th><th scope="col">Status</th><th scope="col">Input revision</th><th scope="col">Attempts</th><th scope="col">Created</th><th scope="col">Updated</th></tr></thead>
+    <tbody>
+    ${
+      detail.jobs.length
+        ? detail.jobs
+            .map(
+              (j) => `<tr>
+      <td><a class="a-link" href="/admin/generation/jobs/${esc(j.publicId)}"><code>${esc(j.publicId.slice(0, 14))}…</code></a></td>
+      <td>${badge(j.status, j.status === 'succeeded' ? 'ok' : j.status === 'failed_permanent' || j.status === 'dead_letter' ? 'bad' : 'plain')}</td>
+      <td>${esc(String(j.inputRevision))}</td>
+      <td>${esc(String(j.attempts))} / ${esc(String(j.maxAttempts))}</td>
+      <td>${when(j.createdAt)}</td>
+      <td>${when(j.updatedAt)}</td>
+    </tr>`
+            )
+            .join('')
+        : '<tr><td colspan="6"><p class="a-empty" role="status">No generation has been requested for this book.</p></td></tr>'
+    }
+    </tbody>
+  </table></div>
+
+  <h2>Preview versions and approvals</h2>
+  <div class="a-table-scroll"><table class="a-table">
+    <thead><tr><th scope="col">Version</th><th scope="col">Status</th><th scope="col">Scenes</th><th scope="col">Watermarked pages</th><th scope="col">Watermark</th><th scope="col">Finalised</th><th scope="col">Approval</th></tr></thead>
+    <tbody>
+    ${
+      detail.previews.length
+        ? detail.previews
+            .map(
+              (p) => `<tr>
+      <td>${esc(String(p.version))}${p.inputRevision === b.currentRevision ? ' ' + badge('current', 'ok') : ''}</td>
+      <td>${badge(p.status, p.status === 'ready' ? 'ok' : p.status === 'failed' ? 'bad' : 'plain')}</td>
+      <td>${esc(String(p.sceneCount))}</td>
+      <td>${esc(String(p.pageAssets))}</td>
+      <td>${p.watermarkLabel ? esc(p.watermarkLabel) : '<span class="a-muted">—</span>'}</td>
+      <td>${when(p.finalizedAt)}</td>
+      <td>${p.approved ? badge('approved', 'ok') : '<span class="a-muted">not approved</span>'}</td>
+    </tr>`
+            )
+            .join('')
+        : '<tr><td colspan="7"><p class="a-empty" role="status">No preview version has been published for this book.</p></td></tr>'
+    }
+    </tbody>
+  </table></div>
+  <p class="a-inline-note">
+    Approving on a customer's behalf is deliberately NOT offered: an approval is the customer's own decision about
+    an exact version (ADM-11). An operator can see the exact version there and direct the customer to their own
+    preview page.
+  </p>
+
+  <h2>Recent events</h2>
+  <div class="a-table-scroll"><table class="a-table">
+    <thead><tr><th scope="col">When</th><th scope="col">Event</th><th scope="col">Actor</th><th scope="col">From → To</th></tr></thead>
+    <tbody>
+    ${
+      detail.events.length
+        ? detail.events
+            .map(
+              (e) =>
+                `<tr><td>${when(e.createdAt)}</td><td><code>${esc(e.eventType)}</code></td><td>${esc(e.actorType)}</td><td>${esc(e.fromState ?? '—')} → ${esc(e.toState)}</td></tr>`
+            )
+            .join('')
+        : '<tr><td colspan="4"><p class="a-empty" role="status">No events recorded.</p></td></tr>'
+    }
+    </tbody>
+  </table></div>
+
+  <h2>Book actions</h2>
+  ${
+    terminal
+      ? `<p class="a-muted">This book is ${esc(b.state)} — a terminal state, so no further lifecycle action is available.</p>`
+      : canManage
+        ? `<form class="a-card" method="post" action="/admin/books/${esc(b.publicId)}/state">
+        <input type="hidden" name="version" value="${esc(String(b.version))}">
+        <label>Move to
+          <select name="to" required>
+            <option value="">Choose…</option>
+            <option value="cancelled">Cancelled</option>
+            <option value="expired">Expired</option>
+          </select>
+        </label>
+        <label>Reason (recorded against your account)<input type="text" name="reason" required maxlength="500"></label>
+        <p class="a-muted tiny">An accepted change writes exactly one append-only event for this book and one audit entry for you. Generating, publishing and approving are NOT done from here — those have their own screens and their own permissions.</p>
+        <button class="btn btn-primary" type="submit">Apply</button>
+      </form>`
+        : `<p class="a-muted">Your role can view this book but not change its lifecycle state (that needs <code>books.manage</code>).</p>`
+  }
+  `
+  return adminPage({ title: 'User book', active: 'books', permissions: opts.permissions, body })
+}
+
+function kv(label: string, value: string): string {
+  return `<div><dt>${esc(label)}</dt><dd>${value}</dd></div>`
 }
 
 // ============================================================ ADM-14 support

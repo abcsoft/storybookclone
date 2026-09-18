@@ -14,6 +14,11 @@
 // In BOTH cases the amount comes from the server: the paid path reads the
 // server-priced quote, and the unpaid path's order is priced by the server from
 // its own catalog. A browser-supplied price is never used.
+//
+// LAYOUT (owner request 6): the form is in the left column and this module
+// renders the single right-hand Order Summary card — item list, subtotal,
+// discount, shipping, total, the code prompt and the primary action. The
+// primary button lives inside that card but submits the form by id.
 import { readCart, clearCart } from './cart.js'
 import { quote as fetchQuote, placeOrder, reconcileCart, requestQuote, createCheckoutSession, paymentConfig } from './api.js'
 import { money as formatMoney } from './format.js'
@@ -37,20 +42,69 @@ function money(minor) {
   return formatMoney(minor)
 }
 
-function summaryHtml(q) {
+function esc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+}
+
+/**
+ * The Summary card. Every amount is an integer minor unit straight from the
+ * server's quote; the item list matches the local cart's lines to the server's
+ * own priced lines (positionally, then by title + variant), so a row can never
+ * show a browser-invented price.
+ */
+function summaryHtml(q, items, appliedCode, codeNotice) {
   const subtotal = q.subtotalMinor ?? Math.round((q.subtotal || 0) * 100)
   const discount = q.discountMinor ?? Math.round((q.discount || 0) * 100)
   const shipping = q.shippingMinor ?? Math.round((q.shipping || 0) * 100)
   const tax = q.taxMinor ?? Math.round((q.tax || 0) * 100)
   const total = q.totalMinor ?? Math.round((q.total || 0) * 100)
+  const lines = Array.isArray(q.lines) ? q.lines : []
+  const positional = lines.length === items.length ? lines : null
+  const rowFor = (item, index) => {
+    if (positional) return positional[index] || null
+    return lines.find((l) => l.title === item.title && l.variantCode === (item.coverType || l.variantCode)) || null
+  }
+
+  const itemRows = items
+    .map((item, index) => {
+      const line = rowFor(item, index)
+      const qty = Number(item.qty) || 1
+      return `
+      <li class="checkout-item">
+        <span class="checkout-item-name">${esc(item.title)}${qty > 1 ? ` <span class="checkout-item-qty">×${qty}</span>` : ''}</span>
+        <span class="checkout-item-amount">${line ? money(line.lineTotalMinor) : '—'}</span>
+      </li>`
+    })
+    .join('')
+
   return `
     <div class="checkout-summary-card">
-      <h2>Order summary</h2>
+      <h2>Order Summary</h2>
+      <ul class="checkout-items">${itemRows}</ul>
       <div class="checkout-summary-row"><span>Subtotal</span><span>${money(subtotal)}</span></div>
-      ${discount > 0 ? `<div class="checkout-summary-row"><span>Discount${q.code ? ` (${q.code})` : ''}</span><span>−${money(discount)}</span></div>` : ''}
+      ${discount > 0 ? `<div class="checkout-summary-row discount"><span>Discount${q.code ? ` (${esc(q.code)})` : ''}</span><span>−${money(discount)}</span></div>` : ''}
       <div class="checkout-summary-row"><span>Shipping</span><span>${shipping > 0 ? money(shipping) : 'Included'}</span></div>
-      ${tax > 0 ? `<div class="checkout-summary-row"><span>${q.taxLabel || 'Tax'} (included)</span><span>${money(tax)}</span></div>` : ''}
-      <div class="checkout-summary-row total"><span>Total</span><span>${money(total)}</span></div>
+      ${tax > 0 ? `<div class="checkout-summary-row"><span>${esc(q.taxLabel || 'Tax')} (included)</span><span>${money(tax)}</span></div>` : ''}
+      <div class="checkout-summary-row total"><span>Order total</span><span>${money(total)}</span></div>
+
+      <form class="checkout-code-form" id="checkout-code-form">
+        <label for="checkout-code">Discount code</label>
+        <div class="checkout-code-row">
+          <input id="checkout-code" name="code" type="text" autocomplete="off" placeholder="Enter code" value="${esc(appliedCode || q.code || '')}">
+          <button type="submit" class="btn btn-outline btn-sm" id="checkout-code-apply">Apply</button>
+        </div>
+        ${
+          codeNotice
+            ? `<p class="checkout-code-status tiny${codeNotice.ok ? '' : ' is-error'}" role="status" aria-live="polite">${esc(codeNotice.message)}</p>`
+            : ''
+        }
+      </form>
+
+      <button class="btn btn-primary checkout-pay-btn" type="submit" form="checkout-form" id="place-order-btn">Checkout</button>
       <p class="tiny muted">Prices are calculated on our server — nothing your browser sends is trusted as-is.</p>
     </div>`
 }
@@ -67,13 +121,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const shippingSelect = document.getElementById('shipping')
   const errorBox = document.getElementById('checkout-error')
-  const submitBtn = document.getElementById('place-order-btn')
   const summaryEl = document.getElementById('checkout-summary')
 
   // Server capability determines the flow. It is read once; a failure here
   // simply means the unpaid path, which is the honest default.
   let payment = { configured: false, detail: 'Payment is not configured.' }
   let quoteId = null
+  let appliedCode = ''
+  let codeNotice = null
 
   function showError(message) {
     if (!errorBox) return
@@ -82,14 +137,24 @@ document.addEventListener('DOMContentLoaded', () => {
     errorBox.classList.toggle('error', !!message)
   }
 
+  function submitButton() {
+    // Rendered with the summary card, so it is looked up lazily rather than at
+    // load: the first paint can legitimately happen before the summary exists.
+    return document.getElementById('place-order-btn')
+  }
+
   async function renderUnpaidSummary(shippingMethod) {
     if (!summaryEl) return
-    const result = await fetchQuote(cart, undefined, shippingMethod)
+    const result = await fetchQuote(cart, appliedCode || undefined, shippingMethod)
     if (!result.ok) {
-      summaryEl.innerHTML = `<p class="notice">Could not calculate your total right now. Please refresh and try again.</p>`
+      summaryEl.innerHTML = `<div class="checkout-summary-card"><h2>Order Summary</h2><p class="notice">Could not calculate your total right now. Please refresh and try again.</p></div>`
       return
     }
-    summaryEl.innerHTML = summaryHtml(result.data)
+    // A code that produced no discount is reported as not applying — and the
+    // SERVER is what decided that (the display quote only discounts a code it
+    // finds usable for this order).
+    if (appliedCode) codeNotice = result.data.discountMinor > 0 ? { ok: true, message: 'Code applied.' } : { ok: false, message: 'That code does not apply to this order.' }
+    summaryEl.innerHTML = summaryHtml(result.data, cart, appliedCode, codeNotice)
   }
 
   async function refreshPaidQuote() {
@@ -98,14 +163,20 @@ document.addEventListener('DOMContentLoaded', () => {
     // its own expiring quote. The returned quoteId is the only thing the session
     // step needs — the amounts come from the server both times.
     await reconcileCart(cart)
-    const result = await requestQuote({ shipping: shippingSelect?.value || 'standard' })
+    const result = await requestQuote({ shipping: shippingSelect?.value || 'standard', couponCode: appliedCode || undefined })
     if (!result.ok) {
-      summaryEl.innerHTML = `<p class="notice">Could not calculate your total right now. ${result.error ? String(result.error) : 'Please refresh and try again.'}</p>`
+      summaryEl.innerHTML = `<div class="checkout-summary-card"><h2>Order Summary</h2><p class="notice">Could not calculate your total right now. ${esc(result.error || 'Please refresh and try again.')}</p></div>`
       quoteId = null
       return
     }
     quoteId = result.data.quoteId || null
-    summaryEl.innerHTML = summaryHtml(result.data)
+    if (appliedCode) codeNotice = result.data.discountMinor > 0 ? { ok: true, message: 'Code applied.' } : { ok: false, message: 'That code does not apply to this order.' }
+    summaryEl.innerHTML = summaryHtml(result.data, cart, appliedCode, codeNotice)
+  }
+
+  async function reprice() {
+    if (payment.configured) await refreshPaidQuote()
+    else await renderUnpaidSummary(shippingSelect?.value || 'standard')
   }
 
   async function init() {
@@ -121,21 +192,32 @@ document.addEventListener('DOMContentLoaded', () => {
         notice.textContent =
           'Payment is handled by our payment provider. You will be taken there to pay, and this order is confirmed as paid once the provider tells us the payment succeeded.'
       }
-      await refreshPaidQuote()
-    } else {
-      if (notice) {
-        notice.textContent =
-          'No payment provider is configured for this store, so this is a test checkout: your order is recorded without collecting any payment.'
-      }
-      await renderUnpaidSummary(shippingSelect?.value || 'standard')
+    } else if (notice) {
+      notice.textContent =
+        'No payment provider is configured for this store, so this is a test checkout: your order is recorded without collecting any payment.'
     }
+    await reprice()
   }
 
   init()
 
   shippingSelect?.addEventListener('change', () => {
-    if (payment.configured) refreshPaidQuote()
-    else renderUnpaidSummary(shippingSelect.value)
+    void reprice()
+  })
+
+  // The code prompt is re-rendered with every summary, so its submit is handled
+  // by delegation on the container that survives those re-renders.
+  summaryEl?.addEventListener('submit', async (e) => {
+    const target = e.target
+    if (!target || target.id !== 'checkout-code-form') return
+    e.preventDefault()
+    e.stopPropagation()
+    const input = document.getElementById('checkout-code')
+    appliedCode = String(input?.value || '').trim()
+    codeNotice = appliedCode ? { ok: true, message: 'Checking that code with the server…' } : null
+    const applyBtn = document.getElementById('checkout-code-apply')
+    if (applyBtn) applyBtn.disabled = true
+    await reprice()
   })
 
   /** The paid path: session -> provider redirect. Nothing here pays an order. */
@@ -204,6 +286,8 @@ document.addEventListener('DOMContentLoaded', () => {
       city: fd.get('city'),
       country: fd.get('country'),
       shippingMethod: fd.get('shipping') || 'standard',
+      // Validated and priced server-side; an unusable code is refused there.
+      code: appliedCode || undefined,
       // This build has no payment provider configured, so this order records no
       // payment. It is an explicitly labelled manual method and is never charged.
       paymentMethod: 'test-manual'
@@ -234,9 +318,11 @@ document.addEventListener('DOMContentLoaded', () => {
       return
     }
 
-    submitBtn.disabled = true
-    const originalLabel = submitBtn.textContent
-    submitBtn.textContent = payment.configured ? 'Starting payment…' : 'Placing order…'
+    const submitBtn = submitButton()
+    if (submitBtn) {
+      submitBtn.disabled = true
+      submitBtn.textContent = payment.configured ? 'Starting payment…' : 'Placing order…'
+    }
     const fd = new FormData(form)
 
     try {
@@ -244,8 +330,10 @@ document.addEventListener('DOMContentLoaded', () => {
       else await submitUnpaid(fd)
     } catch (err) {
       showError(err instanceof Error ? err.message : 'Something went wrong. Please try again.')
-      submitBtn.disabled = false
-      submitBtn.textContent = originalLabel
+      if (submitBtn) {
+        submitBtn.disabled = false
+        submitBtn.textContent = 'Checkout'
+      }
     }
   })
 })

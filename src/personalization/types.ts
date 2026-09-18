@@ -60,6 +60,30 @@ export const USER_BOOK_STATES: readonly UserBookState[] = [
 
 export type ActorType = 'user' | 'prospect' | 'admin' | 'system'
 
+/**
+ * The states in which a personalised book has a FINAL personalisation revision
+ * and may therefore be put in a cart / ordered.
+ *
+ * `ready_to_generate` and `manual_photo_review` were the original pair. The
+ * generation half of the lifecycle (Phase 3) was added later, and a book whose
+ * preview has been published (`preview_ready`) or explicitly approved
+ * (`approved`) has an EQUALLY final revision — the revision is what checkout
+ * snapshots, and it only changes by producing a NEW revision, which moves the
+ * book back to `revision_requested`. Excluding those two states made the
+ * generate-then-buy flow (the Preview step) impossible to complete, so both
+ * consumers share this one list rather than each spelling it out.
+ */
+export const ORDERABLE_BOOK_STATES: readonly UserBookState[] = [
+  'ready_to_generate',
+  'manual_photo_review',
+  'preview_ready',
+  'approved'
+]
+
+export function isOrderableBookState(state: string): boolean {
+  return (ORDERABLE_BOOK_STATES as readonly string[]).includes(state)
+}
+
 export type UserBookRow = {
   id: number
   public_id: string

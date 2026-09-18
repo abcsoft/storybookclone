@@ -2,7 +2,7 @@
 // (banner, gallery, accordions, steps, photo tips, magic, trust, reactions, media, related, FAQs).
 import { esc } from './layout'
 import { brand } from './brand'
-import { money } from './data'
+import { money } from './legacy-money'
 import { loadPdp, ensurePdpPageRow } from './pdp'
 import { queryProducts, type Product } from './db'
 
@@ -13,7 +13,7 @@ function adminPage(opts: { title: string; active: string; body: string; previewH
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>${esc(opts.title)} · ${esc(brand().name)} Admin</title>
-  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
   <link href="/static/admin.css" rel="stylesheet">
   <link href="/static/icons.css" rel="stylesheet">
   <link href="/static/storefront.css" rel="stylesheet">

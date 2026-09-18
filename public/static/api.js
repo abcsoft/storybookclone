@@ -155,6 +155,23 @@ export function serverCart() {
   return request('/api/v1/cart')
 }
 
+/**
+ * Conditional cart cross-sell (COM-14).
+ *
+ * `kinds` and `bookId` are DISPLAY HINTS only — the server decides what may be
+ * offered, to whom, and at what price, and it never writes anything (this is a
+ * GET). `bookId` is the caller's own owned book; a book the caller does not own
+ * simply yields no sticker offer rather than an error, so this endpoint cannot
+ * be used to probe for someone else's book.
+ */
+export function cartAddOns({ kinds, bookId } = {}) {
+  const params = new URLSearchParams()
+  if (kinds && kinds.length) params.set('kinds', kinds.join(','))
+  if (bookId) params.set('bookId', bookId)
+  const qs = params.toString()
+  return request('/api/v1/cart/add-ons' + (qs ? `?${qs}` : ''))
+}
+
 export function addServerCartItem(item) {
   return request('/api/v1/cart/items', {
     method: 'POST',

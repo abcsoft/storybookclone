@@ -1,0 +1,26 @@
+# Cache-Control policy for the static asset layer (SF-02).
+#
+# These rules apply to responses served by Cloudflare Pages' asset layer
+# (public/ -> dist/), which is exactly the `/static/*` namespace excluded from
+# the Worker in dist/_routes.json. They are NOT for dynamic routes: the Worker
+# sets `private, no-store` itself on every token/private route (preview assets,
+# photos, admin, account), and those responses never reach these rules.
+#
+# File names are NOT content-hashed, so this deliberately avoids `immutable`
+# and a year-long max-age: a deploy that changes storefront.css must be picked
+# up by a returning visitor within the hour. `stale-while-revalidate` keeps
+# repeat navigation instant while the revalidation happens in the background.
+/static/img/*
+  Cache-Control: public, max-age=604800, stale-while-revalidate=604800
+
+/static/icons/*
+  Cache-Control: public, max-age=604800, stale-while-revalidate=604800
+
+/static/*.css
+  Cache-Control: public, max-age=3600, stale-while-revalidate=86400
+
+/static/*.js
+  Cache-Control: public, max-age=3600, stale-while-revalidate=86400
+
+/static/favicon.svg
+  Cache-Control: public, max-age=86400, stale-while-revalidate=604800

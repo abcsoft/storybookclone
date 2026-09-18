@@ -19,7 +19,7 @@
 import { sha256Hex } from '../secrets'
 import { normalizeCurrencyCode } from '../money'
 import { activeVariantsFor, findProductBySlug, pickVariant } from './pricing'
-import type { UserBookRow } from '../personalization/types'
+import { isOrderableBookState, type UserBookRow } from '../personalization/types'
 
 export const CART_COOKIE = 'ww_cart'
 export const CART_TTL_SECONDS = 60 * 60 * 24 * 30 // 30 days
@@ -303,7 +303,7 @@ export async function addCartItem(
   const qty = clampQty(input.qty)
   let userBookInternalId: number | null = null
   if (input.userBookId) {
-    const resolved = await resolveOwnedBook(db, String(input.userBookId), product.id, ctx)
+    const resolved = await resolveOwnedBook(db, String(input.userBookId), product.id, product.category, ctx)
     if (!resolved.ok) return resolved
     userBookInternalId = resolved.value
   }
@@ -379,11 +379,20 @@ async function priceFor(
  * book must belong to the SAME product as the line. A foreign or not-ready book
  * is refused with a generic message — it never confirms that someone else's
  * book exists.
+ *
+ * ONE deliberate exception, added for the cart cross-sell: a STICKER may carry
+ * the purchaser's own companion book as its personalisation source. Order
+ * creation requires a child name and a photo for every line, and a sticker has
+ * none of its own, so the add-on borrows the book's revision — the same trick
+ * the reader's "continue to cart" already relies on. The book must still be
+ * owned AND orderable; only the product equality is relaxed, and only for
+ * stickers.
  */
 async function resolveOwnedBook(
   db: D1Database,
   publicId: string,
   productId: number,
+  category: string,
   ctx: { personalizationOwnerType?: 'user' | 'prospect' | null; personalizationOwnerId?: number | string | null }
 ): Promise<CartWriteResult<number>> {
   const generic: CartWriteResult<number> = { ok: false, status: 400, error: 'That personalised book could not be verified.', code: 'book_not_owned' }
@@ -394,8 +403,10 @@ async function resolveOwnedBook(
     (ctx.personalizationOwnerType === 'user' && book.user_id === Number(ctx.personalizationOwnerId)) ||
     (ctx.personalizationOwnerType === 'prospect' && book.prospect_id === String(ctx.personalizationOwnerId))
   if (!owned) return generic
-  if (book.product_id !== productId) return { ok: false, status: 400, error: 'That personalised book does not match the requested product.', code: 'book_product_mismatch' }
-  if ((book.state !== 'ready_to_generate' && book.state !== 'manual_photo_review') || book.current_revision === 0) {
+  if (book.product_id !== productId && category !== 'sticker') {
+    return { ok: false, status: 400, error: 'That personalised book does not match the requested product.', code: 'book_product_mismatch' }
+  }
+  if (!isOrderableBookState(book.state) || book.current_revision === 0) {
     return { ok: false, status: 400, error: 'Finish personalising this book before adding it to the cart.', code: 'book_not_ready' }
   }
   return { ok: true, value: book.id }

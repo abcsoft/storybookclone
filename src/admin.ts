@@ -1,7 +1,8 @@
 // Admin panel: layout + server-rendered views (dashboard, products, orders, users, discounts, inbox).
 import { esc } from './layout'
 import { brand } from './brand'
-import { money, type Product } from './data'
+import { money } from './legacy-money'
+import { type Product } from './product'
 import { type DiscountRow } from './db'
 import { groupedNav } from './admin-console/nav'
 import { permits } from './admin-console/guard'
@@ -36,8 +37,8 @@ export function adminPage(opts: { title: string; active: string; body: string; s
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>${esc(opts.title)} · ${esc(brand().name)} Admin</title>
-  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+    <title>${esc(opts.title)} · ${esc(brand().name)} Admin</title>
+    <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
   <link href="/static/admin.css" rel="stylesheet">
   <link href="/static/icons.css" rel="stylesheet">
   <link href="/static/storefront.css" rel="stylesheet">
@@ -73,7 +74,7 @@ export function adminLogin(msg?: string) {
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Admin Login · ${esc(brand().name)}</title>
-  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
   <link href="/static/admin.css" rel="stylesheet">
   <link href="/static/icons.css" rel="stylesheet">
 </head>

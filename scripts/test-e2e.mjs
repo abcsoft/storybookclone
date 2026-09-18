@@ -12,6 +12,8 @@
 //   7. CSRF: valid passes, missing/invalid/foreign-origin fail, in a real session.
 //   8. Admin picker render/save/reload, rejected status transition, no global state.
 //   9. Disabled provider/payment/email/PDF/shipping/refund/tracking claims absent.
+//  10. Storefront "round 2": the Preview step, the conditional cart cross-sell
+//      and the two-column checkout — see scripts/e2e-round2.mjs (runs last).
 // See test/unit/http-routes.test.ts and test/unit/orders.test.ts for the
 // API-level coverage of tampering/idempotency/atomicity edge cases a UI
 // click can't exercise cleanly.
@@ -21,6 +23,7 @@ import { runPhase3Journeys } from './e2e-phase3.mjs'
 import { runPhase4Journeys } from './e2e-phase4.mjs'
 import { runPhase5Journeys } from './e2e-phase5.mjs'
 import { runPhase6Journeys } from './e2e-phase6.mjs'
+import { runRound2Journeys } from './e2e-round2.mjs'
 import jpegCodec from 'jpeg-js'
 import { spawn, execFileSync } from 'node:child_process'
 import { writeFileSync, mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs'
@@ -1655,8 +1658,25 @@ async function main() {
     rmSync(tmpDirForPhase6, { recursive: true, force: true })
   }
 
+  // The owner-requested "round 2" group (preview step, conditional cart
+  // cross-sell, checkout layout, favicon/asset-layer check). It runs LAST, on
+  // the MAIN server, because it creates a preview: the phase-3/5/6 groups all
+  // assert GLOBAL preview and template counts, so a group that generates one
+  // must not run before them.
+  if (!onlyGroup || onlyGroup === 'round2') {
+    await runRound2Journeys({
+      browser,
+      base: BASE,
+      log,
+      fail,
+      attachDiagnostics,
+      assertClean,
+      helpers: { personalizeAndAddToCart, photoPath }
+    })
+  }
+
     console.log(
-    '\n[e2e] ALL JOURNEYS PASSED (guest, authenticated, double-submission, multi-face, upload-attack, cart-reload, cover-agreement, csrf, admin, disabled-claims, phase2-storefront-cms, phase3-generation-preview, phase4-commerce-payments, phase5-customer-lifecycle, phase6-admin-control-plane)\n'
+    '\n[e2e] ALL JOURNEYS PASSED (guest, authenticated, double-submission, multi-face, upload-attack, cart-reload, cover-agreement, csrf, admin, disabled-claims, phase2-storefront-cms, phase3-generation-preview, phase4-commerce-payments, phase5-customer-lifecycle, phase6-admin-control-plane, round2-storefront-preview-cart-checkout)\n'
   )
   } catch (err) {
     // Surface the local server log on failure only — never written to a file.

@@ -990,6 +990,10 @@ export function resetPasswordPage(token: string, msg?: string) {
 }
 
 export function cartPage() {
+  // The cart renderer is PAGE-scoped (like checkout.js and pdp.js): the shell's
+  // app.js must not carry it, because every other page would then download the
+  // largest script on the storefront for a route it never visits. See the header
+  // of public/static/cart-page.js.
   return `
   <section class="section cart-page-bg">
     <div class="wrap">
@@ -997,46 +1001,67 @@ export function cartPage() {
         ${loadingState('Loading your cart…')}
       </div>
     </div>
-  </section>`
+  </section>
+  <script type="module" src="/static/cart-page.js"></script>`
 }
 
 export function checkoutPage(user: { name?: string; email?: string } | null = null) {
+  // A narrow, centred two-column layout on a soft tinted page: the form in a
+  // left column of white input cards (contact / delivery / shipping) and ONE
+  // white Order Summary card on the right that carries the item list, the
+  // totals, the code prompt and the primary action.
+  //
+  // The primary action lives outside the <form> so it can sit in the summary
+  // card; it submits the form by id with the standard `form` attribute, so the
+  // association needs no JavaScript.
   return `
-  <section class="page-hero">
-    <div class="wrap">
-      <h1>Checkout</h1>
-      <p>Totals are recalculated on the server for the currency you selected.</p>
-    </div>
-  </section>
-  <section class="section">
-    <div class="wrap wrap-narrow">
-      <div id="checkout-summary">${loadingState('Loading your order summary…')}</div>
-      <form class="form" id="checkout-form">
-        <label for="fullName">Full name</label>
-        <input id="fullName" name="fullName" required autocomplete="name" value="${esc(user?.name || '')}">
-        <label for="email">Email</label>
-        <input id="email" name="email" type="email" required autocomplete="email" value="${esc(user?.email || '')}">
-        <label for="address">Address</label>
-        <input id="address" name="address" required autocomplete="street-address">
-        <label for="city">City</label>
-        <input id="city" name="city" required autocomplete="address-level2">
-        <label for="country">Country</label>
-        <input id="country" name="country" required autocomplete="country-name" value="">
-        <label for="shipping">Shipping method</label>
-        <select id="shipping" name="shipping" data-shipping>
-          <option value="standard">Standard</option>
-          <option value="express">Express</option>
-        </select>
-        <p class="tiny">No delivery is scheduled in this version: printing and shipping are later milestones, so these amounts are recorded on the order only.</p>
-        ${autoDiscountNote()}
-        ${/* COM-07: this notice is filled in by the CLIENT from the server's own
-             capability report, so it always describes what this deployment
-             actually does. The default below is deliberately neutral: it claims
-             neither that payment is taken nor that it is not. */ ''}
-        <p class="tiny checkout-test-payment-notice checkout-payment-notice" id="checkout-payment-notice">${icon('flask')} Checking how payment is handled for this store…</p>
-        <div id="checkout-error" class="notice" role="alert" hidden></div>
-        <button class="btn btn-primary" type="submit" id="place-order-btn">Place order</button>
-      </form>
+  <section class="checkout-page">
+    <div class="checkout-shell">
+      <div class="checkout-col checkout-col-form">
+        <h1 class="checkout-title">Checkout</h1>
+        <p class="checkout-intro">We recalculate every total on our server for the currency you selected.</p>
+        <form class="checkout-form" id="checkout-form">
+          <fieldset class="checkout-card">
+            <legend>Contact</legend>
+            <label for="fullName">Full name</label>
+            <input id="fullName" name="fullName" required autocomplete="name" value="${esc(user?.name || '')}">
+            <label for="email">Email</label>
+            <input id="email" name="email" type="email" required autocomplete="email" value="${esc(user?.email || '')}">
+          </fieldset>
+
+          <fieldset class="checkout-card">
+            <legend>Delivery address</legend>
+            <label for="address">Address</label>
+            <input id="address" name="address" required autocomplete="street-address">
+            <label for="city">City</label>
+            <input id="city" name="city" required autocomplete="address-level2">
+            <label for="country">Country</label>
+            <input id="country" name="country" required autocomplete="country-name" value="">
+          </fieldset>
+
+          <fieldset class="checkout-card">
+            <legend>Shipping method</legend>
+            <label for="shipping">Method</label>
+            <select id="shipping" name="shipping" data-shipping>
+              <option value="standard">Standard</option>
+              <option value="express">Express</option>
+            </select>
+            <p class="tiny">No delivery is scheduled in this version: printing and shipping are later milestones, so these amounts are recorded on the order only.</p>
+            ${autoDiscountNote()}
+          </fieldset>
+
+          ${/* COM-07: this notice is filled in by the CLIENT from the server's own
+               capability report, so it always describes what this deployment
+               actually does. The default below is deliberately neutral: it claims
+               neither that payment is taken nor that it is not. */ ''}
+          <p class="tiny checkout-test-payment-notice checkout-payment-notice" id="checkout-payment-notice">${icon('flask')} Checking how payment is handled for this store…</p>
+          <div id="checkout-error" class="notice" role="alert" hidden></div>
+        </form>
+      </div>
+
+      <div class="checkout-col checkout-col-summary">
+        <div id="checkout-summary">${loadingState('Loading your order summary…')}</div>
+      </div>
     </div>
   </section>
   <script type="module" src="/static/checkout.js"></script>`

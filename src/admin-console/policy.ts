@@ -66,6 +66,8 @@ export const ADMIN_POLICY: readonly AdminPolicyEntry[] = [
 
   // ------------------------------------------------------------- user books
   { method: G, path: '/admin/books', permission: 'books.read', label: 'User books' },
+  { method: G, path: '/admin/books/:id', permission: 'books.read', label: 'User book detail' },
+  { method: P, path: '/admin/books/:id/state', permission: 'books.manage', label: 'Move a user book to a terminal state' },
 
   // ----------------------------------------------------------------- catalog
   { method: G, path: '/admin/catalog', permission: 'catalog.read', label: 'Catalog' },

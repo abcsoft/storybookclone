@@ -9,7 +9,7 @@ import { sha256Hex, signWithRotation, hmacSha256Hex, timingSafeEqual, DEFAULT_GU
 import { PERSONALIZATION_LIMITS } from './personalization/user-books'
 import type { Owner } from './personalization/ownership'
 import { ownerToken as personalizationOwnerToken } from './personalization/uploads'
-import type { UserBookRow, PersonalizationInputRow } from './personalization/types'
+import { isOrderableBookState, type UserBookRow, type PersonalizationInputRow } from './personalization/types'
 
 export type OrderItemInput = {
   slug: string
@@ -167,16 +167,23 @@ export async function createOrder(
         (ctx.personalizationOwner.type === 'prospect' && book.prospect_id === ctx.personalizationOwner.prospectId))
     if (!book || !owned) return { ok: false, status: 400, error: 'That personalised book could not be verified.' }
 
-    const product = await db.prepare('SELECT id FROM products WHERE slug = ?').bind(String(item.slug)).first<{ id: number }>()
-    if (!product || product.id !== book.product_id) return { ok: false, status: 400, error: 'That personalised book does not match the requested product.' }
+    const product = await db.prepare('SELECT id, category FROM products WHERE slug = ?').bind(String(item.slug)).first<{ id: number; category: string }>()
+    if (!product) return { ok: false, status: 400, error: 'That personalised book does not match the requested product.' }
+    // A sticker add-on borrows the purchaser's OWN companion book for its child
+    // name/photo (the cart cross-sell), so for a sticker the product equality is
+    // the only thing relaxed — ownership was just proven above.
+    if (product.id !== book.product_id && product.category !== 'sticker') {
+      return { ok: false, status: 400, error: 'That personalised book does not match the requested product.' }
+    }
 
-    // A book is checkout-able when automated analysis produced a usable
-    // result (ready_to_generate) OR when no production analyzer is
-    // configured and the book was explicitly flagged for human review
-    // (manual_photo_review — C-01/C-02/C-03). Anything else (still awaiting
+    // A book is checkout-able when its personalisation revision is FINAL: a
+    // usable analysis result (ready_to_generate), the honest human-review
+    // outcome when no production analyzer is configured (manual_photo_review —
+    // C-01/C-02/C-03), a published preview (preview_ready) or an explicit
+    // approval of the exact version (approved). Anything else (still awaiting
     // analysis, awaiting an explicit face choice, zero faces found) is
     // genuinely not ready, and the client is told so before this point.
-    if ((book.state !== 'ready_to_generate' && book.state !== 'manual_photo_review') || book.current_revision === 0) {
+    if (!isOrderableBookState(book.state) || book.current_revision === 0) {
       return { ok: false, status: 400, error: 'Finish personalising this book (including photo analysis and face selection, if needed) before checkout.' }
     }
 

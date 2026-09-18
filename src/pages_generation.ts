@@ -82,8 +82,24 @@ function providerNotice(providers: ProviderHealth[]): string {
   return `<p class="gen-note" role="status"><strong>Generation is not switched on in this environment.</strong> ${esc(blocked[0].detail)}</p>`
 }
 
-/** The server-rendered panel. `data-` attributes are the contract the polling script reads. */
-export function renderGenerationPanel(state: GenerationPanelState): string {
+/**
+ * The server-rendered panel. `data-` attributes are the contract the polling
+ * script reads.
+ *
+ * `hidePageGrid` (used by the Preview step) keeps the panel's status, progress
+ * and actions but does NOT draw the page gallery: the Preview step has its own
+ * gallery, which shows ONE published page and locked placeholders. The grid
+ * MARKER is omitted entirely in that mode, and that omission is load-bearing —
+ * public/static/generation.js reloads the page once when it sees a preview and
+ * finds no `#gen-pages` element, which is exactly how the server-rendered
+ * Preview gallery appears after generating. Emitting an empty marker instead
+ * (as an earlier revision did) silently suppressed that reload: the panel said
+ * "ready" and offered Approve while the gallery above it still said no preview
+ * existed. There is no reload loop, because polling restarts only for a job in
+ * the `queued`/`working` phase, and a published preview for the current
+ * revision means the job is terminal.
+ */
+export function renderGenerationPanel(state: GenerationPanelState, opts: { hidePageGrid?: boolean } = {}): string {
   const { job, preview } = state
   const canCreate = ['ready_to_generate', 'revision_requested', 'generation_failed'].includes(state.bookState) && state.currentRevision > 0
   const canCancel = !!job?.canCancel
@@ -121,7 +137,7 @@ export function renderGenerationPanel(state: GenerationPanelState): string {
     <div class="gen-preview" id="gen-preview">
       ${
         preview
-          ? renderPreview(preview, state)
+          ? renderPreview(preview, state, !!opts.hidePageGrid)
           : `<p class="gen-empty" id="gen-empty">No preview yet. Generated pages appear here, watermarked, once they are ready.</p>`
       }
     </div>
@@ -130,16 +146,15 @@ export function renderGenerationPanel(state: GenerationPanelState): string {
   `
 }
 
-function renderPreview(preview: PreviewView, state: GenerationPanelState): string {
+function renderPreview(preview: PreviewView, state: GenerationPanelState, hidePageGrid = false): string {
   const label = preview.watermarkLabel || 'PREVIEW'
-  return `
-    <p class="gen-preview-meta" id="gen-preview-meta">
-      <strong>Version ${preview.version}</strong> · ${preview.sceneCount} pages · every page carries a visible
-      <strong>${esc(label)}</strong> watermark and is stored privately to your account.
-      ${preview.isCurrentRevision === false ? ' <em>This is not the current version of your book.</em>' : ''}
-      ${preview.approved ? ' <span class="gen-approved">Approved</span>' : ''}
-    </p>
-    <ul class="gen-pages" id="gen-pages">
+  // No marker at all in `hidePageGrid` mode: see renderGenerationPanel — its
+  // absence is the signal that makes generation.js reload onto the
+  // server-rendered Preview gallery. Drawing the real pages here would also
+  // leak the very assets the Preview step keeps locked.
+  const pages = hidePageGrid
+    ? ''
+    : `<ul class="gen-pages" id="gen-pages">
       ${preview.pages
         .map(
           (page, index) => `<li class="gen-page">
@@ -148,7 +163,15 @@ function renderPreview(preview: PreviewView, state: GenerationPanelState): strin
           </li>`
         )
         .join('')}
-    </ul>
+    </ul>`
+  return `
+    <p class="gen-preview-meta" id="gen-preview-meta">
+      <strong>Version ${preview.version}</strong> · ${preview.sceneCount} pages · every page carries a visible
+      <strong>${esc(label)}</strong> watermark and is stored privately to your account.
+      ${preview.isCurrentRevision === false ? ' <em>This is not the current version of your book.</em>' : ''}
+      ${preview.approved ? ' <span class="gen-approved">Approved</span>' : ''}
+    </p>
+    ${pages}
     ${
       preview.canApprove || preview.approved
         ? `<div class="gen-approve" id="gen-approval-block"${preview.approved ? ' hidden' : ''}>
