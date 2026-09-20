@@ -26,6 +26,7 @@ import type { FeatureFlagRow, ProviderHealthReport } from './integrations'
 import type { EventStream } from './events'
 import type { PermissionDef } from './rbac'
 import { permissionLabel } from './rbac'
+import { CONSENT_VERSION, type AdapterId, type PurchaseGate } from '../marketing/index'
 
 function notice(kind: 'ok' | 'error', message?: string): string {
   if (!message) return ''
@@ -959,6 +960,72 @@ export function adminIntegrationsView(opts: {
     <ul class="a-list">${report.notes.map((n) => `<li>${esc(n)}</li>`).join('')}</ul>
   </section>`
   return adminPage({ title: 'Integrations & health', active: 'integrations', permissions, body })
+}
+
+// ================================================ marketing & analytics
+
+/**
+ * ADM (marketing) — the read-only Marketing & analytics diagnostics screen.
+ *
+ * It reports configuration STATE only. Vendor ids are shown MASKED, never in
+ * full; no secret, token, key or provider payload is read into this page, and
+ * there is deliberately no way to inject a script from here. The sidebar entry
+ * is permission-gated, and the route itself is refused for anyone without the
+ * permission (the central guard is the control).
+ */
+export function adminMarketingView(opts: {
+  permissions: readonly string[]
+  enabled: boolean
+  adapters: Array<{ id: AdapterId; configured: boolean; masked: string | null; error: string | null }>
+  diagnostics: string[]
+  purchase: PurchaseGate
+}): string {
+  const labels: Record<string, string> = { meta: 'Meta Pixel', tiktok: 'TikTok Pixel', ga4: 'Google Analytics 4', googleAds: 'Google Ads' }
+  const body = `
+  <h1>Marketing &amp; analytics</h1>
+  <p class="a-muted">Configuration state only. Vendor ids are shown masked; no credential, token or raw script is ever read into this page — and there is deliberately no field that could inject one.</p>
+  <section class="a-card">
+    <h2>Global</h2>
+    <p>Marketing tracking: ${opts.enabled ? badge('enabled', 'ok') : badge('disabled', 'plain')} <span class="a-muted">(MARKETING_TRACKING_ENABLED is ${opts.enabled ? 'on' : 'off'}; it defaults to off)</span></p>
+    <p>Consent model version: <code>${CONSENT_VERSION}</code>. Defaults: necessary on; analytics and marketing denied until chosen.</p>
+  </section>
+  <section class="a-card">
+    <h2>Adapters</h2>
+    <div class="a-table-scroll"><table class="a-table" data-marketing-adapters>
+      <thead><tr><th scope="col">Adapter</th><th scope="col">State</th><th scope="col">Id (masked)</th><th scope="col">Validation</th></tr></thead>
+      <tbody>
+      ${opts.adapters
+        .map(
+          (a) => `<tr>
+        <td>${esc(labels[a.id] || a.id)}</td>
+        <td>${a.configured ? badge('configured', 'ok') : badge('not configured', 'plain')}</td>
+        <td><code>${a.masked ? esc(a.masked) : '—'}</code></td>
+        <td>${a.error ? badge(a.error, 'bad') : a.configured ? '<span class="a-muted">valid</span>' : '<span class="a-muted">no id set</span>'}</td>
+      </tr>`
+        )
+        .join('')}
+      </tbody>
+    </table></div>
+  </section>
+  <section class="a-card">
+    <h2>Purchase tracking</h2>
+    <p>${opts.purchase.active ? badge('active', 'ok') : badge('safely blocked', 'warn')}</p>
+    <p class="a-muted">${esc(opts.purchase.reason)}</p>
+  </section>
+  <section class="a-card">
+    <h2>Diagnostics</h2>
+    <ul class="a-list">${opts.diagnostics.map((d) => `<li>${esc(d)}</li>`).join('') || '<li>No issues.</li>'}</ul>
+  </section>
+  <section class="a-card">
+    <h2>Privacy rules in force</h2>
+    <ul class="a-list">
+      <li>No vendor library is loaded and no event is emitted before the matching consent category is granted.</li>
+      <li>Tracking is refused entirely on <code>/admin*</code>, <code>/api*</code>, the account and library surfaces, private photo/download and reader routes, and authenticated test sessions.</li>
+      <li>Child name/age, photos and upload keys, face data, dedication text, contact details, internal order/payment/userBook ids, capability tokens and private URLs are never sent to a vendor.</li>
+      <li>Purchase is never emitted from a browser signal; it requires a provider-authenticated capture and a durable exactly-once record.</li>
+    </ul>
+  </section>`
+  return adminPage({ title: 'Marketing & analytics', active: 'marketing', permissions: opts.permissions, body })
 }
 
 // ============================================================ ADM-19 events

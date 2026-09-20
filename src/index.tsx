@@ -240,6 +240,29 @@ export type Bindings = {
   // Optional overrides for the CUS-08 revision-request policy limits.
   REVISION_MAX_PER_REVISION?: string
   REVISION_MAX_PER_BOOK?: string
+  // ---- Consent-aware marketing analytics (vendor-neutral, consent-gated) ----
+  // The master switch. Unset = OFF: no vendor script is loaded and no event is
+  // emitted anywhere. See src/marketing/* and docs/MARKETING_ANALYTICS.md.
+  MARKETING_TRACKING_ENABLED?: string
+  // Vendor ids. All are PUBLIC values (they appear in a site's page source) and
+  // are validated against a strict allowlisted shape; an invalid value disables
+  // that ONE adapter safely rather than emitting a broken script tag. Never a
+  // secret: no token, API key or server-side credential belongs here.
+  META_PIXEL_ID?: string
+  TIKTOK_PIXEL_ID?: string
+  GA4_MEASUREMENT_ID?: string
+  GOOGLE_ADS_ID?: string
+  // The Google Ads conversion label used for a Purchase conversion. Shape
+  // validated independently; never a credential.
+  GOOGLE_ADS_PURCHASE_LABEL?: string
+  // Development-only: lets the automated browser journey observe the
+  // consent-gated request behaviour. Ignored outside an explicit development
+  // environment, so a deployed store never tracks an automated session.
+  MARKETING_ALLOW_AUTOMATION?: string
+  // The verified-payment-phase switch that will arm Purchase emission once a
+  // provider-authenticated capture AND a durable exactly-once record exist. It
+  // is inert on its own — see src/marketing/purchase.ts.
+  MARKETING_PURCHASE_TRACKING?: string
 }
 export type Vars = {
   user: AuthUser | null

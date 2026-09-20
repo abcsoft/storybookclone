@@ -25,6 +25,7 @@ import {
   adminExportsView,
   adminFulfilmentView,
   adminIntegrationsView,
+  adminMarketingView,
   adminPrivacyView,
   adminProspectsView,
   adminRetentionView,
@@ -37,6 +38,7 @@ import { auditMutation, listAuditEvents, auditActions } from './audit'
 import { setUserBookState, userBookDetail } from './books'
 import { readEventStream, streamsFor } from './events'
 import { EXPORT_KINDS, exportKindsFor, listExportJobs, runExport } from './exports'
+import { resolveMarketingConfig, purchaseTrackingGate } from '../marketing/index'
 import { listFeatureFlags, providerHealthReport, setFeatureFlag } from './integrations'
 import { listState, orderByClause, parseAdminList } from './list'
 import {
@@ -646,6 +648,19 @@ function registerSystemRoutes(app: Hono<any>) {
         reauth,
         flash: c.req.query('saved'),
         error: c.req.query('error')
+      })
+    )
+  })
+
+  app.get('/admin/marketing', async (c: AdminCtx) => {
+    const config = resolveMarketingConfig(c.env as never)
+    return c.html(
+      adminMarketingView({
+        permissions: perms(c),
+        enabled: config.enabled,
+        adapters: config.adapters,
+        diagnostics: config.diagnostics,
+        purchase: purchaseTrackingGate(c.env as never)
       })
     )
   })

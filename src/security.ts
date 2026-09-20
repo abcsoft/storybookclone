@@ -19,6 +19,7 @@
 import { getCookie, setCookie, deleteCookie } from 'hono/cookie'
 import type { Context, MiddlewareHandler } from 'hono'
 import { sha256Hex, timingSafeEqual } from './secrets'
+import { buildContentSecurityPolicy, type MarketingEnv } from './marketing/index'
 
 export const CSRF_COOKIE = 'ww_csrf'
 export const CSRF_FORM_FIELD = 'csrf_token'
@@ -267,23 +268,11 @@ export function corsGuard(): MiddlewareHandler<{ Bindings: { ALLOWED_ORIGINS?: s
 // S-05: central security headers.
 // ---------------------------------------------------------------------------
 
-const CSP = [
-  "default-src 'self'",
-  // Inline scripts/styles are still used by the server-rendered pages; the
-  // nonce/hash-based CSP that removes them is an explicit Phase 8 item.
-  "script-src 'self' 'unsafe-inline'",
-  // No third-party style/font origin is allowed. The storefront and admin use
-  // the project's own stylesheets, its own masked SVG icons and a system font
-  // stack (V2 Phase 2, SF-01), so a page view makes no cross-origin request.
-  "style-src 'self' 'unsafe-inline'",
-  "font-src 'self' data:",
-  "img-src 'self' data: blob:",
-  "connect-src 'self'",
-  "frame-ancestors 'none'",
-  "base-uri 'self'",
-  "form-action 'self'",
-  "object-src 'none'"
-].join('; ')
+// The baseline CSP is built by src/marketing/csp.ts so the vendor host
+// allowlist lives in ONE place: the base directives are unchanged, and a
+// vendor host is appended ONLY when its adapter is configured AND the marketing
+// master switch is on. With no marketing configured this is byte-for-byte the
+// policy the application shipped with.
 
 /** Paths that carry a session/guest capability, a token, or private data. */
 const PRIVATE_PATH_PREFIXES = [
@@ -341,7 +330,9 @@ export function securityHeaders(): MiddlewareHandler {
     // request headers a browser sends, so a stricter per-response policy cannot
     // break the CSRF guard. The private attachment route uses that to sandbox its
     // response. Everything else gets the baseline below.
-    if (!c.res.headers.get('Content-Security-Policy')) c.header('Content-Security-Policy', CSP)
+    if (!c.res.headers.get('Content-Security-Policy')) {
+      c.header('Content-Security-Policy', buildContentSecurityPolicy(c.env as unknown as MarketingEnv | undefined))
+    }
     // HSTS only makes sense once the origin is HTTPS; a plaintext dev origin
     // must not be told to remember HTTPS-only.
     const proto = c.req.header('X-Forwarded-Proto') || 'http'

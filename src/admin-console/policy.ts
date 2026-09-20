@@ -189,6 +189,7 @@ export const ADMIN_POLICY: readonly AdminPolicyEntry[] = [
 
   // -------------------------------------------- integrations, flags, events
   { method: G, path: '/admin/integrations', permission: 'integrations.read', label: 'Integrations and health' },
+  { method: G, path: '/admin/marketing', permission: 'integrations.read', label: 'Marketing and analytics diagnostics' },
   { method: P, path: '/admin/integrations/flags/:key', permission: 'integrations.flags', reauth: true, label: 'Change a feature flag' },
   { method: G, path: '/admin/ai-settings', permission: 'integrations.read', label: 'AI and provider settings' },
   // The AI-settings form stores NO credential (migration 0008: the key column is

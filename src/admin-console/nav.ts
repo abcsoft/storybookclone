@@ -49,6 +49,7 @@ export const ADMIN_NAV: readonly AdminNavItem[] = [
   { key: 'privacy', href: '/admin/privacy', icon: 'fa-user-shield', label: 'Privacy requests', permission: 'privacy.read', group: 'Trust & platform' },
   { key: 'retention', href: '/admin/retention', icon: 'fa-broom', label: 'Retention failures', permission: 'privacy.read', group: 'Trust & platform' },
   { key: 'integrations', href: '/admin/integrations', icon: 'fa-plug', label: 'Integrations & health', permission: 'integrations.read', group: 'Trust & platform' },
+  { key: 'marketing', href: '/admin/marketing', icon: 'fa-chart-line', label: 'Marketing & analytics', permission: 'integrations.read', group: 'Trust & platform' },
   { key: 'events', href: '/admin/events', icon: 'fa-stream', label: 'Events & webhooks', permission: 'events.read', group: 'Trust & platform' },
 
   { key: 'staff', href: '/admin/staff', icon: 'fa-user-tie', label: 'Staff & permissions', permission: 'staff.read', group: 'Administration' },
