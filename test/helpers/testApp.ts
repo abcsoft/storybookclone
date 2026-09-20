@@ -88,6 +88,15 @@ export type TestEnv = {
   BRAND_CONTACT_EMAIL?: string
   BRAND_LOGO_PATH?: string
   BRAND_COPYRIGHT_YEAR?: string
+  /** Consent-gated marketing analytics (src/marketing/*). Defaults to OFF. */
+  MARKETING_TRACKING_ENABLED?: string
+  META_PIXEL_ID?: string
+  TIKTOK_PIXEL_ID?: string
+  GA4_MEASUREMENT_ID?: string
+  GOOGLE_ADS_ID?: string
+  GOOGLE_ADS_PURCHASE_LABEL?: string
+  MARKETING_ALLOW_AUTOMATION?: string
+  MARKETING_PURCHASE_TRACKING?: string
 }
 
 export function freshEnv(overrides: Partial<TestEnv> = {}): TestEnv {
