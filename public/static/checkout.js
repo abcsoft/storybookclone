@@ -20,6 +20,7 @@
 // discount, shipping, total, the code prompt and the primary action. The
 // primary button lives inside that card but submits the form by id.
 import { readCart, clearCart } from './cart.js'
+import { trackOnce } from './analytics.js'
 import { quote as fetchQuote, placeOrder, reconcileCart, requestQuote, createCheckoutSession, paymentConfig } from './api.js'
 import { money as formatMoney } from './format.js'
 
@@ -40,6 +41,26 @@ function clearIdempotencyKey() {
 
 function money(minor) {
   return formatMoney(minor)
+}
+
+// ANALYTICS: BeginCheckout fires ONLY once a valid, server-priced quote (or
+// checkout session) exists — never on the mere view of the page and never from
+// a browser-supplied amount. The value comes straight from the server's quote.
+function markBeginCheckout(q) {
+  try {
+    const total = q && (q.totalMinor ?? Math.round((q.total || 0) * 100))
+    if (!Number.isFinite(Number(total))) return
+    const signature = readCart()
+      .map((i) => `${i.slug}:${i.coverType || ''}:${i.qty || 1}`)
+      .join(',')
+    trackOnce(
+      'begin_checkout',
+      { currency: q.currency || document.body?.dataset?.currency || undefined, valueMinor: Number(total) },
+      signature || String(total)
+    )
+  } catch {
+    /* tracking must never break checkout */
+  }
 }
 
 function esc(s) {
@@ -155,6 +176,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // finds usable for this order).
     if (appliedCode) codeNotice = result.data.discountMinor > 0 ? { ok: true, message: 'Code applied.' } : { ok: false, message: 'That code does not apply to this order.' }
     summaryEl.innerHTML = summaryHtml(result.data, cart, appliedCode, codeNotice)
+    markBeginCheckout(result.data)
   }
 
   async function refreshPaidQuote() {
@@ -172,6 +194,7 @@ document.addEventListener('DOMContentLoaded', () => {
     quoteId = result.data.quoteId || null
     if (appliedCode) codeNotice = result.data.discountMinor > 0 ? { ok: true, message: 'Code applied.' } : { ok: false, message: 'That code does not apply to this order.' }
     summaryEl.innerHTML = summaryHtml(result.data, cart, appliedCode, codeNotice)
+    if (quoteId) markBeginCheckout(result.data)
   }
 
   async function reprice() {

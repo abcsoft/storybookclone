@@ -17,6 +17,9 @@
 import { brand, type BrandConfig } from './brand'
 import type { StoreShell } from './cms'
 import type { StoreContext } from './locale'
+import type { MarketingBootstrap } from './marketing/config'
+
+export type ConsentSnapshot = { analytics: boolean; marketing: boolean }
 
 export function esc(s: unknown) {
   return String(s ?? '')
@@ -76,6 +79,13 @@ export type PageOptions = {
   bodyClass?: string
   /** True when the page renders `.sticky-cta`; reserves the space it occupies. */
   stickyCta?: boolean
+  /**
+   * The consent-gated marketing bootstrap, or null when tracking is off / not
+   * configured / not allowed on this route. Only PUBLIC vendor ids are present.
+   */
+  marketing?: MarketingBootstrap | null
+  /** The visitor's stored consent decision, if any (drives the initial UI state). */
+  consent?: ConsentSnapshot | null
 }
 
 function jsonLdScript(nodes: JsonLd[] | undefined): string {
@@ -88,6 +98,47 @@ function jsonLdScript(nodes: JsonLd[] | undefined): string {
 
 function icon(name: string): string {
   return `<i class="fa-${esc(name)}" aria-hidden="true"></i>`
+}
+
+/**
+ * The accessible cookie/privacy preference panel. It is rendered in the normal
+ * document flow at the end of the page (never a fixed overlay), so it can NEVER
+ * obscure a control or break keyboard/pointer interaction with the page. It is
+ * server-rendered in its correct initial state: visible when a decision is
+ * still required, hidden once one exists (the footer button reopens it).
+ */
+function consentPanel(visible: boolean, consent: ConsentSnapshot | null): string {
+  const analytics = consent?.analytics === true
+  const marketing = consent?.marketing === true
+  return `
+  <section id="cookie-consent" class="cookie-consent"${visible ? '' : ' hidden'} aria-labelledby="cookie-consent-title">
+    <div class="cookie-card">
+      <h2 id="cookie-consent-title">Your privacy choices</h2>
+      <p class="cookie-intro">We use only what is needed to run the store. You choose whether to allow optional analytics and marketing. Nothing optional is switched on until you say so.</p>
+      <form id="cookie-consent-form" class="cookie-form" data-consent-version="1">
+        <fieldset>
+          <legend>Cookie categories</legend>
+          <label class="cookie-cat">
+            <input type="checkbox" checked disabled aria-describedby="cookie-necessary-desc">
+            <span><strong>Necessary</strong> — always on. <span id="cookie-necessary-desc">Keeps your cart, your session and your security working.</span></span>
+          </label>
+          <label class="cookie-cat">
+            <input type="checkbox" name="analytics" id="consent-analytics"${analytics ? ' checked' : ''}>
+            <span><strong>Analytics</strong> — anonymous, aggregate store usage (Google Analytics).</span>
+          </label>
+          <label class="cookie-cat">
+            <input type="checkbox" name="marketing" id="consent-marketing"${marketing ? ' checked' : ''}>
+            <span><strong>Marketing</strong> — measure which ads bring people here (Meta, TikTok, Google Ads).</span>
+          </label>
+        </fieldset>
+        <div class="cookie-actions">
+          <button type="button" class="btn btn-primary btn-sm" id="cookie-accept-all">Accept all</button>
+          <button type="button" class="btn btn-outline btn-sm" id="cookie-reject">Reject non-essential</button>
+          <button type="submit" class="btn btn-outline btn-sm" id="cookie-save">Save preferences</button>
+        </div>
+      </form>
+    </div>
+  </section>`
 }
 
 function announcementBar(shell: StoreShell | undefined): string {
@@ -237,6 +288,7 @@ function footer(shell: StoreShell | undefined, b: BrandConfig): string {
     }
     <div class="footer-bottom">
       <p class="footer-copy">${esc(b.name)} © ${esc(String(b.copyrightYear))} All rights reserved</p>
+      <button type="button" class="footer-link-btn" id="cookie-preferences-open">Cookie preferences</button>
       <p class="footer-contact">Contact: <a href="mailto:${esc(b.contactEmail)}">${esc(b.contactEmail)}</a></p>
     </div>
   </footer>`
@@ -330,6 +382,13 @@ export function page(opts: PageOptions): string {
   ${searchOverlay()}
   <main id="main"${opts.active ? ` data-active="${esc(opts.active)}"` : ''}>${opts.body}</main>
   ${footer(shell, b)}
+  ${consentPanel(!!opts.marketing && !opts.consent, opts.consent ?? null)}
+  ${
+    opts.marketing
+      ? `<script type="application/json" id="ww-marketing-config">${JSON.stringify(opts.marketing).replace(/</g, '\\u003c')}</script>`
+      : ''
+  }
+  <script type="module" src="/static/analytics.js"></script>
   <script type="module" src="/static/app.js"></script>
 </body>
 </html>`

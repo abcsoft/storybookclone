@@ -2,6 +2,7 @@
 // ES module — imports the canonical cart store and the centralized API client
 // instead of touching localStorage / fetch directly.
 import { addItem, onChange, syncCartToServer } from './cart.js'
+import { trackOnce } from './analytics.js'
 
 // COM-01/COM-13: mirror every offline cart change into the durable server cart.
 // The PDP is the main add-to-cart entry point, so it is one of the two places
@@ -582,6 +583,25 @@ function rotateDraftKey(slug) {
     }
 
     addItem(item)
+    // ANALYTICS: fire ONLY now that the cart mutation has succeeded — never on
+    // the click. The dedupe key is the opaque userBookId, used LOCALLY to avoid
+    // a duplicate on a double-click; it is never placed in a vendor payload.
+    trackOnce(
+      'add_to_cart',
+      {
+        slug: productSlug,
+        variantCode: selectedCover,
+        category: form?.dataset?.kind || 'book',
+        quantity: 1,
+        currency: document.body?.dataset?.currency || undefined
+      },
+      userBookId
+    )
+    trackOnce(
+      'customize_product',
+      { slug: productSlug, category: form?.dataset?.kind || 'book' },
+      userBookId
+    )
     // A new draft key for the NEXT purchase of this product — the book just
     // added is identified by its own userBookId.
     rotateDraftKey(productSlug)

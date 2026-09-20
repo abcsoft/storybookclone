@@ -17,6 +17,7 @@
 // a display hint, and the customer has to tick a box before anything is added.
 // Nothing is ever added automatically.
 import { readCart, addItem, removeItem, setQty, cartCount } from './cart.js'
+import { trackOnce } from './analytics.js'
 import { quote as fetchQuote, cartAddOns, setCartCoupon } from './api.js'
 import { money as formatMoney } from './format.js'
 
@@ -286,6 +287,13 @@ export async function renderCart() {
         languageLabel: primaryBook?.languageLabel,
         qty: 1
       })
+      // ANALYTICS: after the successful mutation. The dedupe key is a local,
+      // opaque identity — it is never sent to a vendor.
+      trackOnce(
+        'add_to_cart',
+        { slug, variantCode: crossSell.dataset.variant || 'standard', category: 'sticker', quantity: 1, currency: document.body?.dataset?.currency || undefined },
+        `${bookId}:${slug}`
+      )
       renderCart()
     })
   }

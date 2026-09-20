@@ -1523,3 +1523,24 @@ summary:focus-visible,
     scroll-behavior: auto !important;
   }
 }
+
+/* --------------------------------------------------------------------------
+   30. CONSENT / PRIVACY PREFERENCES
+   --------------------------------------------------------------------------
+   The panel is rendered IN THE NORMAL DOCUMENT FLOW (never a fixed overlay),
+   so it can never cover a control or trap a keyboard user. It is server-
+   rendered visible only while a decision is still required. */
+.cookie-consent { border-top: 1px solid var(--line, #e3e3df); background: var(--surface-2, #f6f6f3); padding: 1.25rem 1rem; }
+.cookie-consent[hidden] { display: none; }
+.cookie-card { max-width: 60rem; margin: 0 auto; }
+.cookie-consent h2 { margin: 0 0 .5rem; font-size: 1.15rem; }
+.cookie-intro { margin: 0 0 .85rem; max-width: 48rem; }
+.cookie-form fieldset { border: 0; padding: 0; margin: 0 0 .85rem; }
+.cookie-form legend { font-weight: 600; padding: 0; margin-bottom: .5rem; }
+.cookie-cat { display: flex; gap: .6rem; align-items: flex-start; margin-bottom: .55rem; line-height: 1.4; }
+.cookie-cat input { margin-top: .2rem; flex: 0 0 auto; }
+.cookie-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
+.cookie-actions .btn { white-space: nowrap; }
+.footer-link-btn { background: none; border: 0; padding: 0; margin: 0; font: inherit; color: inherit; cursor: pointer; text-decoration: underline; }
+.footer-link-btn:hover { text-decoration: none; }
+.footer-link-btn:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }

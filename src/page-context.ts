@@ -12,6 +12,7 @@
 // success.
 
 import type { Context } from 'hono'
+import { getCookie } from 'hono/cookie'
 import { page, type PageMeta } from './layout'
 import { loadShell, loadSiteSettings, type StoreShell } from './cms'
 import {
@@ -21,6 +22,7 @@ import {
   type StoreContext
 } from './locale'
 import { configureBrand } from './brand'
+import { CONSENT_COOKIE, marketingBootstrap, parseConsent } from './marketing/index'
 import type { Money } from './pages'
 
 export type PageContextVars = {
@@ -123,6 +125,13 @@ export type RenderOptions = {
  */
 export function renderPage(c: Context<any>, title: string, body: string, opts: RenderOptions = {}) {
   const store = storeOf(c)
+  const pathname = new URL(c.req.url).pathname
+  // Consent is stored in a FIRST-PARTY cookie the server can already read, so
+  // the panel is rendered in its correct initial state (no flash, and it works
+  // without JavaScript). The marketing bootstrap (when present) carries only
+  // PUBLIC vendor ids and is emitted ONLY on an allowlisted public route.
+  const consentState = parseConsent(getCookie(c, CONSENT_COOKIE))
+  const marketing = marketingBootstrap(c.env as never, pathname)
   const html = page({
     title,
     body,
@@ -132,10 +141,12 @@ export function renderPage(c: Context<any>, title: string, body: string, opts: R
     shell: shellOf(c),
     store,
     meta: opts.meta,
-    path: new URL(c.req.url).pathname,
+    path: pathname,
     notFound: opts.notFound,
     bodyClass: opts.bodyClass,
-    stickyCta: opts.stickyCta
+    stickyCta: opts.stickyCta,
+    marketing,
+    consent: consentState ? { analytics: consentState.analytics, marketing: consentState.marketing } : null
   })
   return opts.status ? c.html(html, opts.status as any) : c.html(html)
 }
