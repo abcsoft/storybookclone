@@ -1111,7 +1111,7 @@ async function runCoverAgreementJourney(browser, photoPath) {
   const slug = `e2e-cover-${runLetters}`.toLowerCase()
   queryD1(
     `INSERT INTO products (slug, title, tagline, description, price, price_minor, image, gender, category, ages, age_min, age_max, pages, reviews, rating, active)
-     VALUES ('${slug}', 'Cover Agreement Book', 'A tagline', 'A description', 10.00, 1000, '/static/img/cover-dragon.webp', 'unisex', 'book', '4-8', 4, 8, 32, 0, 0, 1);`
+     VALUES ('${slug}', 'Cover Agreement Book', 'A tagline', 'A description', 10.00, 1000, '/static/img/art/cover-the-quiet-drum.svg', 'unisex', 'book', '4-8', 4, 8, 32, 0, 0, 1);`
   )
   const productId = queryD1(`SELECT id FROM products WHERE slug = '${slug}';`)[0].id
   // Two variants with DIFFERENT prices, so an agreement bug cannot hide.
