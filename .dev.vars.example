@@ -1,0 +1,54 @@
+# Local development environment bindings — EXAMPLE.
+#
+# Copy this file to `.dev.vars` at the project root (that file is gitignored and
+# never committed) and fill in what you need. See README "Local environment
+# setup" and docs/MARKETING_ANALYTICS.md.
+#
+# Nothing here is a secret. The vendor ids below are PUBLIC values (they appear
+# in any site's page source). Never put a token, API key or server-side
+# credential in this file or in the marketing bindings — they are not read by
+# the marketing layer.
+
+# Unlocks local-only fallbacks: the guest-order-token secret fallback, and the
+# console email adapter (which prints reset links to this terminal instead of
+# sending real email — no real provider is integrated yet). NEVER set this in a
+# deployed environment.
+ENVIRONMENT=development
+
+# Optional: override the local guest-order-token secret explicitly instead of
+# relying on the built-in dev fallback. Not required for local dev to work.
+# GUEST_ORDER_TOKEN_SECRET=
+
+# ---------------------------------------------------------------------------
+# Consent-aware marketing analytics (src/marketing/*, public/static/analytics.js)
+# ---------------------------------------------------------------------------
+# OFF unless you set MARKETING_TRACKING_ENABLED=1. With tracking on, each id
+# below is validated against a strict allowlisted shape; an invalid value
+# disables ONLY that adapter (fail closed) and shows a diagnostic at
+# /admin/marketing. Leave a line commented out to keep that integration off.
+
+# The master switch. Anything other than 1/true/yes/on (or absent) = off.
+# MARKETING_TRACKING_ENABLED=1
+
+# Meta Pixel id — 15–16 digits.
+# META_PIXEL_ID=
+
+# TikTok Pixel id — exactly 20 uppercase alphanumeric characters.
+# TIKTOK_PIXEL_ID=
+
+# GA4 measurement id — "G-" followed by 6–14 uppercase alphanumerics.
+# GA4_MEASUREMENT_ID=G-XXXXXXXXXX
+
+# Google Ads id — "AW-" followed by 6–12 digits.
+# GOOGLE_ADS_ID=AW-0000000000
+
+# Google Ads conversion label (Purchase only) — [A-Za-z0-9_-]{1,64}.
+# GOOGLE_ADS_PURCHASE_LABEL=
+
+# Development-only: lets the automated browser journey observe the
+# consent-gated request behaviour. Ignored unless ENVIRONMENT=development.
+# MARKETING_ALLOW_AUTOMATION=1
+
+# Verified-payment-phase switch for Purchase tracking. INERT on its own — do not
+# set it yet (see docs/MARKETING_ANALYTICS.md §6).
+# MARKETING_PURCHASE_TRACKING=1

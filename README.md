@@ -146,6 +146,21 @@ a fake result); the only other value, `deterministic-fake`, is set solely
 by `test/helpers/testApp.ts` and `scripts/test-e2e.mjs`'s spawned dev
 server, and must never be set in a real deployment.
 
+### Consent-aware marketing analytics (optional)
+
+A vendor-neutral, **consent-gated** tracking layer covers four integrations
+(Meta Pixel, TikTok Pixel, GA4, Google Ads) behind one typed API. It is **off by
+default**: no vendor library is loaded and no event is emitted until
+`MARKETING_TRACKING_ENABLED=1` is set. Every non-essential category is denied
+until the visitor chooses; nothing a vendor receives ever includes child
+name/age, photos, upload keys, face data, dedication text, contact details or any
+internal order/payment/user id. **Purchase tracking is deliberately disabled in
+this baseline** (no provider-verified capture exists yet). See
+`docs/MARKETING_ANALYTICS.md` for the full design, the event→vendor mapping, the
+privacy exclusions, production setup for all four integrations, and how to
+disable everything immediately. Bindings are documented as placeholders in
+`.dev.vars.example`.
+
 ## Local admin bootstrap
 There is **no default admin account**. To get one on your local D1:
 ```
@@ -217,6 +232,7 @@ security and truth recovery) result. As of the Phase 1
 - **Original artwork**: `node scripts/generate-original-art.mjs` regenerates the 50 illustrations in `public/static/img/art/`, and `node scripts/generate-icons.mjs` regenerates the 57 UI icons plus `public/static/icons.css`. Both are deterministic (`--check` verifies the committed files match) and are asserted by the unit suite.
 - **Reset local DB**: `npm run db:reset`
 - **Before any production deploy**: run `npm run check`, review `docs/SECURITY_INCIDENT_REMEDIATION.md`, configure real (non-placeholder) D1/R2 bindings in `wrangler.jsonc`, set `GUEST_ORDER_TOKEN_SECRET` (and rotate `GUEST_ORDER_TOKEN_SECRET_PREV` if applicable), leave `ENVIRONMENT` unset (absence means production rules apply), and have the legal pages reviewed and replaced (`S-14`).
+- **Marketing analytics are optional and off by default**: set `MARKETING_TRACKING_ENABLED=1` and the relevant ids (`META_PIXEL_ID`, `TIKTOK_PIXEL_ID`, `GA4_MEASUREMENT_ID`, `GOOGLE_ADS_ID`, `GOOGLE_ADS_PURCHASE_LABEL`) as non-secret `[vars]` to switch them on. Unset the master switch to disable every integration immediately (no redeploy of client caches needed). Purchase tracking stays disabled until the verified-payment phase. See `docs/MARKETING_ANALYTICS.md`.
 - **No scheduled work is deployed**: `wrangler.jsonc` has no `triggers.crons`, so the retention sweep never runs automatically (`S-11` — Phase 8).
 - **Last Updated**: 2026-09-15 (Phase 1)
 

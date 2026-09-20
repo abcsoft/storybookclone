@@ -21,6 +21,7 @@ node_modules/
 .env.production
 .dev.vars
 .dev.vars.*
+!.dev.vars.example
 
 # database dumps / local D1 state (may contain real credentials, sessions, API keys)
 *dump*.sql
