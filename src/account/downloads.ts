@@ -307,7 +307,7 @@ export async function buildEntitlementArtifact(
   db: D1Database,
   reader: AssetReader,
   row: DownloadEntitlementRow,
-  opts: { watermarkLabel?: string; now?: Date } = {}
+  opts: { watermarkLabel?: string; now?: Date; at?: Date } = {}
 ): Promise<BuiltArtifact | null> {
   const source = await resolveArtifactSource(db, row)
   if (!source.available) return null
@@ -331,7 +331,7 @@ export async function buildEntitlementArtifact(
   })
 
   return {
-    bytes: buildZip(entries, opts.now ?? new Date()),
+    bytes: buildZip(entries, opts.at ?? opts.now ?? new Date()),
     filename: `order-${row.order_id}-preview-r${source.previewVersion}.zip`,
     // A ZIP is served as an opaque download; the browser must never try to
     // render it, and no HTML can be smuggled through it as a page.

@@ -22,37 +22,42 @@
 
 /** Colour tokens. Every one is a plain hex value so the contrast pairs below stay checkable. */
 export const COLOR_TOKENS = {
-  /** Body text and headings. 13.4:1 on `--c-bg`. */
-  '--c-ink': '#231a35',
-  /** Secondary text: card meta, section sub-copy. 8.7:1 on `--c-bg`. */
-  '--c-ink-2': '#4b3c63',
-  /** Muted text: footnotes, disclaimers, captions. 5.4:1 on `--c-bg` (AA for body text). */
-  '--c-muted': '#6b5f80',
-  /** Warm page background. */
-  '--c-bg': '#fffaf4',
-  /** Cards, panels, the header. */
+  /** Body text and headings: Midnight. */
+  '--c-ink': '#11184b',
+  /** Secondary text: dark purple ink. */
+  '--c-ink-2': '#2a2050',
+  /** Muted text: sub-copy, helper text, footnotes. */
+  '--c-muted': '#5e647c',
+  /** Warm page background: Warm Ivory. */
+  '--c-bg': '#fff9f1',
+  /** Cards, panels, inputs: White. */
   '--c-surface': '#ffffff',
-  /** The alternating soft band behind every other section. */
-  '--c-surface-2': '#fbf2e7',
-  /** Warm hairline: borders and dividers. */
-  '--c-line': '#f1e3d3',
-  /** Primary action colour. White on it is 7.1:1. */
-  '--c-primary': '#6d28d9',
-  '--c-primary-strong': '#55189f',
-  /** Primary at wash strength, for chips and quiet fills. */
-  '--c-primary-soft': '#f4ecff',
-  /** Playful accent: the promo strip, highlight badges, the logo mark. Ink on it is 8.2:1. */
-  '--c-accent': '#f2a63b',
+  /** Soft alternating band: Soft Peach. */
+  '--c-surface-2': '#fff0e2',
+  /** Sky tint section band. */
+  '--c-sky': '#eaf6ff',
+  /** Borders and dividers: Border. */
+  '--c-line': '#e8e2db',
+  /** Primary action colour: Royal Purple. */
+  '--c-primary': '#6c2cf1',
+  '--c-primary-strong': '#5620d8',
+  '--c-primary-pressed': '#4317b5',
+  /** Primary at wash strength: Purple Mist. */
+  '--c-primary-soft': '#f1eaff',
+  /** Playful accent: Golden Gold. */
+  '--c-accent': '#ffb823',
   '--c-accent-ink': '#7a4a06',
-  '--c-accent-soft': '#fdf1dd',
-  /** Discount / attention. White on it is 5.4:1. */
-  '--c-berry': '#c9245c',
-  '--c-berry-soft': '#fdeaef',
-  /** Positive state (a tip that works, a saved record). */
-  '--c-success': '#0f6b4f',
-  '--c-success-soft': '#e6f5ef',
-  /** The focus ring colour. Never the ONLY signal: it is always paired with an offset. */
-  '--c-ring': '#1d4ed8'
+  '--c-accent-soft': '#fff0e2',
+  /** Delight / attention: Coral. */
+  '--c-berry': '#ff6478',
+  '--c-berry-soft': '#fff0e2',
+  /** Positive state: Mint. */
+  '--c-success': '#39c992',
+  '--c-success-soft': '#eaf8f2',
+  /** Error state. */
+  '--c-error': '#c9364f',
+  /** The focus ring colour: Gold. */
+  '--c-ring': '#ffb823'
 } as const
 
 /** Type scale. Display sizes are fluid so 360px and 1920px need no extra rules. */
@@ -66,9 +71,9 @@ export const TYPE_TOKENS = {
   '--fs-3xl': 'clamp(1.85rem, 1.35rem + 2.2vw, 2.6rem)',
   '--fs-4xl': 'clamp(2.1rem, 1.45rem + 3vw, 3rem)',
   '--fs-display': 'clamp(2.3rem, 1.4rem + 4.2vw, 3.75rem)',
-  '--lh-tight': '1.08',
+  '--lh-tight': '1.12',
   '--lh-snug': '1.3',
-  '--lh-body': '1.65'
+  '--lh-body': '1.55'
 } as const
 
 /** Spacing scale, 4px base, plus the vertical rhythm a section uses. */
@@ -77,46 +82,52 @@ export const SPACE_TOKENS = {
   '--sp-2': '0.5rem',
   '--sp-3': '0.75rem',
   '--sp-4': '1rem',
-  '--sp-5': '1.5rem',
-  '--sp-6': '2rem',
-  '--sp-7': '3rem',
-  '--sp-8': '4rem',
-  '--sp-9': '5rem',
-  '--sp-10': '6.5rem',
-  '--section-y': 'clamp(2.75rem, 5vw, 5rem)',
-  '--content-max': '1280px',
+  '--sp-5': '1.25rem',
+  '--sp-6': '1.5rem',
+  '--sp-7': '2rem',
+  '--sp-8': '3rem',
+  '--sp-9': '4rem',
+  '--sp-10': '6rem',
+  '--section-y': 'clamp(2.5rem, 5vw, 4rem)',
+  '--content-max': '1180px',
   '--content-narrow': '760px'
 } as const
 
-/** Corner radii. Cards and covers are deliberately softer than form controls. */
+/** Corner radii matching the design pack scale. */
 export const RADIUS_TOKENS = {
   '--radius-xs': '6px',
-  '--radius-sm': '10px',
-  '--radius-md': '16px',
-  '--radius-lg': '24px',
-  '--radius-xl': '32px',
+  '--radius-sm': '8px',
+  '--radius-md': '12px',
+  '--radius-control': '12px',
+  '--radius-card': '16px',
+  '--radius-lg': '16px',
+  '--radius-feature': '24px',
+  '--radius-xl': '24px',
   '--radius-pill': '999px'
 } as const
 
-/** Elevation. Warm-tinted, so a shadow never reads as a grey smudge on the cream background. */
+/** Elevation: soft, warm-tinted shadows from design pack. */
 export const SHADOW_TOKENS = {
-  '--shadow-xs': '0 1px 2px rgba(35, 26, 53, 0.06)',
-  '--shadow-sm': '0 2px 10px rgba(35, 26, 53, 0.06)',
-  '--shadow-md': '0 14px 32px -14px rgba(53, 29, 92, 0.22)',
-  '--shadow-lg': '0 30px 64px -26px rgba(53, 29, 92, 0.32)'
+  '--shadow-xs': '0 1px 2px rgb(17 24 75 / 0.05)',
+  '--shadow-sm': '0 2px 10px rgb(17 24 75 / 0.07)',
+  '--shadow-card': '0 2px 10px rgb(17 24 75 / 0.07)',
+  '--shadow-md': '0 10px 24px -10px rgb(17 24 75 / 0.10)',
+  '--shadow-raised': '0 14px 36px rgb(17 24 75 / 0.12)',
+  '--shadow-lg': '0 14px 36px rgb(17 24 75 / 0.12)'
 } as const
 
 /** Motion. Every duration is zeroed by the `prefers-reduced-motion` block in the stylesheet. */
 export const MOTION_TOKENS = {
   '--dur-1': '120ms',
-  '--dur-2': '220ms',
-  '--dur-3': '420ms',
-  '--ease-1': 'cubic-bezier(0.22, 0.8, 0.25, 1)'
+  '--dur-2': '180ms',
+  '--dur-3': '320ms',
+  '--ease-1': 'ease'
 } as const
 
 export const FONT_TOKENS = {
-  '--font': "ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif",
-  '--font-display': "ui-serif, Georgia, Cambria, 'Times New Roman', serif",
+  '--font': '"Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+  '--font-ui': '"Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+  '--font-display': '"Fraunces", Georgia, Cambria, "Times New Roman", serif',
   '--focus-ring': '3px solid var(--c-ring)'
 } as const
 
@@ -191,7 +202,7 @@ export function cardBadges(p: {
  * The homepage order is operator-editable, so the tone is derived from the
  * section's POSITION among the visible sections, not from its kind.
  */
-export const SECTION_TONES = ['plain', 'soft'] as const
+export const SECTION_TONES = ['plain', 'soft', 'sky', 'plain', 'soft', 'mist'] as const
 export type SectionTone = (typeof SECTION_TONES)[number]
 
 export function sectionTone(index: number): SectionTone {
@@ -200,5 +211,13 @@ export function sectionTone(index: number): SectionTone {
 
 /** The class list for a section band. `plain` is the page background itself. */
 export function sectionClass(tone: SectionTone, extra = ''): string {
-  return ['section', tone === 'soft' ? 'section-soft' : '', extra].filter(Boolean).join(' ')
+  const toneClass =
+    tone === 'soft'
+      ? 'section-soft'
+      : tone === 'sky'
+        ? 'section-sky'
+        : tone === 'mist'
+          ? 'section-mist'
+          : ''
+  return ['section', toneClass, extra].filter(Boolean).join(' ')
 }

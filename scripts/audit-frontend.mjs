@@ -544,11 +544,18 @@ async function main() {
   log(`starting wrangler pages dev on :${port}`)
   const server = spawn(
     'npx',
-    ['wrangler', 'pages', 'dev', 'dist', '--d1=webapp-production', '--r2=webapp-photos', '--local', '--ip', '127.0.0.1', '--port', String(port)],
+    ['wrangler', 'pages', 'dev', 'dist', '--d1=webapp-production', '--r2=webapp-photos', '--local', '--ip', '127.0.0.1', '--port', String(port), '--binding', 'ENVIRONMENT=development'],
     { cwd: root, shell: true, stdio: ['ignore', 'pipe', 'pipe'] }
   )
-  server.stdout.on('data', () => {})
-  server.stderr.on('data', () => {})
+  const serverLogs = []
+  server.stdout.on('data', (d) => serverLogs.push(d.toString()))
+  server.stderr.on('data', (d) => serverLogs.push(d.toString()))
+  server.on('exit', (code) => {
+    if (code !== 0 && code !== null) {
+      console.error(`[wrangler exited with code ${code}]`)
+      console.error(serverLogs.slice(-30).join(''))
+    }
+  })
 
   if (!(await waitFor(base + '/'))) {
     killServerTree(server.pid)

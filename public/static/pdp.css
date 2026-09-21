@@ -516,8 +516,8 @@ body.pdp-page {
 }
 .pdp-input:focus {
   outline: none;
-  border-color: #a855f7;
-  box-shadow: 0 0 0 3px rgba(168, 85, 247, 0.15);
+  border-color: var(--c-primary);
+  box-shadow: 0 0 0 3px rgba(108, 44, 241, 0.15);
 }
 .pdp-select {
   appearance: none;

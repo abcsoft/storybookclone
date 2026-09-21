@@ -549,6 +549,7 @@ export function registerGenerationRoutes(app: Hono<any>) {
     const headers = new Headers()
     headers.set('Content-Type', object.contentType)
     headers.set('Cache-Control', 'private, no-store')
+    headers.set('Content-Length', String(object.bytes.byteLength))
     // A private preview must never be indexed. Referrer leakage is handled by the
     // ONE application-wide policy (src/security.ts), which sends only the origin
     // cross-origin — so this URL's key never travels; a route-level `no-referrer`

@@ -44,7 +44,7 @@ async function findFreePort(start) {
 function startServer(port) {
   const server = spawn(
     'npx',
-    ['wrangler', 'pages', 'dev', 'dist', '--d1=webapp-production', '--r2=webapp-photos', '--local', '--ip', '127.0.0.1', '--port', String(port), '--binding', 'FACE_ANALYSIS_PROVIDER=deterministic-fake', '--binding', 'GENERATION_INLINE_DISPATCH=1'],
+    ['wrangler', 'pages', 'dev', 'dist', '--d1=webapp-production', '--r2=webapp-photos', '--local', '--ip', '127.0.0.1', '--port', String(port), '--binding', 'ENVIRONMENT=development', '--binding', 'FACE_ANALYSIS_PROVIDER=deterministic-fake', '--binding', 'GENERATION_INLINE_DISPATCH=1'],
     { cwd: root, shell: true, stdio: ['ignore', 'pipe', 'pipe'] }
   )
   const logs = { value: '' }

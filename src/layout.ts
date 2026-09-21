@@ -114,7 +114,7 @@ function desktopNav(shell: StoreShell | undefined, active: string | undefined): 
         { label: 'Stickers', href: '/stickers' },
         { label: 'Support', href: '/support' }
       ]
-  return `<nav class="desktop-nav" aria-label="Primary">${items.map((i) => navLink(i, active)).join('')}</nav>`
+  return `<nav class="desktop-nav" aria-label="Primary">${items.map((i) => navLink(i, active)).join('')}<a class="nav-cta" href="/books">Create your book</a></nav>`
 }
 
 function mobileDrawer(shell: StoreShell | undefined, store: StoreContext | undefined, path: string, loggedIn: boolean): string {
@@ -129,6 +129,7 @@ function mobileDrawer(shell: StoreShell | undefined, store: StoreContext | undef
       ${items.map((i) => navLink(i, path)).join('')}
       <a href="/cart">Cart</a>
       ${loggedIn ? `<a href="/my-books">My Books</a><a href="/account">My account</a>` : '<a href="/login">Login</a>'}
+      <div class="mobile-drawer-cta"><a class="btn btn-primary" href="/books">Create your book</a></div>
     </nav>
     ${store && store.countries.length ? `<div class="drawer-locale">${localeSelector(store, path, '-drawer')}</div>` : ''}
   </div>`

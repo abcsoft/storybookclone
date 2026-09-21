@@ -152,6 +152,7 @@ function startServer(port, extraBindings = []) {
       'wrangler', 'pages', 'dev', 'dist',
       '--d1=webapp-production', '--r2=webapp-photos', '--local',
       '--ip', '127.0.0.1', '--port', String(port),
+      '--binding', 'ENVIRONMENT=development',
       // Deterministic fake face detection ONLY — this e2e run makes zero
       // real calls to any external face-analysis provider (Phase 2 requires
       // this). Never set in a real/deployed environment.
@@ -201,22 +202,29 @@ async function verifyServerFingerprint() {
 }
 
 /** Direct local-D1 query, sidestepping shell-quoting entirely via a temp .sql file (see scripts/create-admin.mjs for why --command is unsafe). */
-function queryD1(sql) {
+function queryD1(sql, retries = 2) {
   const sqlFile = join(tmpdir(), `ww-e2e-query-${Date.now()}-${Math.random().toString(36).slice(2)}.sql`)
   writeFileSync(sqlFile, sql, 'utf8')
   try {
-    const out = execFileSync('npx', ['wrangler', 'd1', 'execute', 'webapp-production', '--local', '--json', '--file', sqlFile], {
-      cwd: root,
-      shell: true,
-      encoding: 'utf8'
-    })
-    const parsed = JSON.parse(out)
-    return parsed[0]?.results || []
-  } catch (err) {
-    // execFileSync swallows wrangler's own message; surface it so a broken
-    // fixture query is never reported as an opaque "Command failed".
-    const detail = [err?.stdout?.toString?.(), err?.stderr?.toString?.()].filter(Boolean).join('\n')
-    throw new Error(`queryD1 failed for SQL:\n${sql}\n${detail || err.message}`)
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        const out = execFileSync('npx', ['wrangler', 'd1', 'execute', 'webapp-production', '--local', '--json', '--file', sqlFile], {
+          cwd: root,
+          shell: true,
+          encoding: 'utf8'
+        })
+        const parsed = JSON.parse(out)
+        return parsed[0]?.results || []
+      } catch (err) {
+        if (attempt < retries) {
+          try { execFileSync('powershell', ['-Command', 'Start-Sleep -Milliseconds 600'], { stdio: 'ignore' }) } catch {}
+          continue
+        }
+        const detail = [err?.stdout?.toString?.(), err?.stderr?.toString?.()].filter(Boolean).join('\n')
+        throw new Error(`queryD1 failed for SQL:\n${sql}\n${detail || err.message}`)
+      }
+    }
+    return []
   } finally {
     try {
       rmSync(sqlFile)
@@ -1111,7 +1119,7 @@ async function runCoverAgreementJourney(browser, photoPath) {
   const slug = `e2e-cover-${runLetters}`.toLowerCase()
   queryD1(
     `INSERT INTO products (slug, title, tagline, description, price, price_minor, image, gender, category, ages, age_min, age_max, pages, reviews, rating, active)
-     VALUES ('${slug}', 'Cover Agreement Book', 'A tagline', 'A description', 10.00, 1000, '/static/img/cover-dragon.webp', 'unisex', 'book', '4-8', 4, 8, 32, 0, 0, 1);`
+     VALUES ('${slug}', 'Cover Agreement Book', 'A tagline', 'A description', 10.00, 1000, '/static/img/art/cover-the-lantern-and-the-long-night.svg', 'unisex', 'book', '4-8', 4, 8, 32, 0, 0, 1);`
   )
   const productId = queryD1(`SELECT id FROM products WHERE slug = '${slug}';`)[0].id
   // Two variants with DIFFERENT prices, so an agreement bug cannot hide.
@@ -1555,6 +1563,11 @@ async function main() {
       queryD1
     })
 
+    // Stop the main server before Phase 5/6 start their own payment-enabled instances.
+    // On Windows, two concurrent wrangler instances accessing the same local SQLite
+    // state causes file-locking crashes in the Workers runtime.
+    killServerTree(server.pid)
+
   // V2 Phase 5 runs against its OWN payment-enabled server too: the guest
   // purchase -> verified claim -> entitled download journey needs a REAL paid
   // order, and with a provider configured the paid path is the only checkout
@@ -1664,15 +1677,25 @@ async function main() {
   // assert GLOBAL preview and template counts, so a group that generates one
   // must not run before them.
   if (!onlyGroup || onlyGroup === 'round2') {
-    await runRound2Journeys({
-      browser,
-      base: BASE,
-      log,
-      fail,
-      attachDiagnostics,
-      assertClean,
-      helpers: { personalizeAndAddToCart, photoPath }
-    })
+    const round2Started = startServer(PORT)
+    const round2Server = round2Started.server
+    try {
+      if (!(await waitFor(BASE + '/', 45000))) {
+        console.error(round2Started.logs.value)
+        fail('setup', 'the round2 server did not become ready in time')
+      }
+      await runRound2Journeys({
+        browser,
+        base: BASE,
+        log,
+        fail,
+        attachDiagnostics,
+        assertClean,
+        helpers: { personalizeAndAddToCart, photoPath }
+      })
+    } finally {
+      killServerTree(round2Server.pid)
+    }
   }
 
     console.log(

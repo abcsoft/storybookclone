@@ -33,25 +33,45 @@
    1. TOKENS — the single source of truth (mirrored in src/theme.ts)
    -------------------------------------------------------------------------- */
 :root {
-  /* Colour. */
-  --c-ink: #231a35;
-  --c-ink-2: #4b3c63;
-  --c-muted: #6b5f80;
-  --c-bg: #fffaf4;
+  /* Colour tokens from the approved Cream–Purple design system */
+  --c-ink: #11184b;
+  --c-ink-2: #2a2050;
+  --c-muted: #5e647c;
+  --c-bg: #fff9f1;
   --c-surface: #ffffff;
-  --c-surface-2: #fbf2e7;
-  --c-line: #f1e3d3;
-  --c-primary: #6d28d9;
-  --c-primary-strong: #55189f;
-  --c-primary-soft: #f4ecff;
-  --c-accent: #f2a63b;
+  --c-surface-2: #fff0e2;
+  --c-sky: #eaf6ff;
+  --c-line: #e8e2db;
+  --c-primary: #6c2cf1;
+  --c-primary-strong: #5620d8;
+  --c-primary-pressed: #4317b5;
+  --c-primary-soft: #f1eaff;
+  --c-accent: #ffb823;
   --c-accent-ink: #7a4a06;
-  --c-accent-soft: #fdf1dd;
-  --c-berry: #c9245c;
-  --c-berry-soft: #fdeaef;
-  --c-success: #0f6b4f;
-  --c-success-soft: #e6f5ef;
-  --c-ring: #1d4ed8;
+  --c-accent-soft: #fff0e2;
+  --c-berry: #ff6478;
+  --c-berry-soft: #fff0e2;
+  --c-success: #39c992;
+  --c-success-soft: #eaf8f2;
+  --c-error: #c9364f;
+  --c-ring: #ffb823;
+
+  /* Aliases matching design pack tokens.css */
+  --color-midnight: var(--c-ink);
+  --color-purple: var(--c-primary);
+  --color-purple-hover: var(--c-primary-strong);
+  --color-purple-pressed: var(--c-primary-pressed);
+  --color-purple-mist: var(--c-primary-soft);
+  --color-ivory: var(--c-bg);
+  --color-peach: var(--c-surface-2);
+  --color-sky: var(--c-sky);
+  --color-white: var(--c-surface);
+  --color-coral: var(--c-berry);
+  --color-mint: var(--c-success);
+  --color-gold: var(--c-accent);
+  --color-muted: var(--c-muted);
+  --color-border: var(--c-line);
+  --color-error: var(--c-error);
 
   /* Type scale (fluid display sizes: 360px and 1920px need no extra rules). */
   --fs-xs: 0.78rem;
@@ -63,51 +83,71 @@
   --fs-3xl: clamp(1.85rem, 1.35rem + 2.2vw, 2.6rem);
   --fs-4xl: clamp(2.1rem, 1.45rem + 3vw, 3rem);
   --fs-display: clamp(2.3rem, 1.4rem + 4.2vw, 3.75rem);
-  --lh-tight: 1.08;
+  --lh-tight: 1.12;
   --lh-snug: 1.3;
-  --lh-body: 1.65;
+  --lh-body: 1.55;
 
   /* Spacing scale, 4px base. */
   --sp-1: 0.25rem;
   --sp-2: 0.5rem;
   --sp-3: 0.75rem;
   --sp-4: 1rem;
-  --sp-5: 1.5rem;
-  --sp-6: 2rem;
-  --sp-7: 3rem;
-  --sp-8: 4rem;
-  --sp-9: 5rem;
-  --sp-10: 6.5rem;
+  --sp-5: 1.25rem;
+  --sp-6: 1.5rem;
+  --sp-7: 2rem;
+  --sp-8: 3rem;
+  --sp-9: 4rem;
+  --sp-10: 6rem;
+
+  --space-1: var(--sp-1);
+  --space-2: var(--sp-2);
+  --space-3: var(--sp-3);
+  --space-4: var(--sp-4);
+  --space-5: var(--sp-5);
+  --space-6: var(--sp-6);
+  --space-8: var(--sp-7);
+  --space-10: 2.5rem;
+  --space-12: var(--sp-8);
+  --space-16: var(--sp-9);
+  --space-24: var(--sp-10);
 
   /* Layout. */
-  --content-max: 1280px;
+  --content-max: 1180px;
   --content-narrow: 760px;
-  --section-y: clamp(2.75rem, 5vw, 5rem);
+  --container: 80rem;
+  --section-y: clamp(2.5rem, 5vw, 4rem);
 
   /* Radii. */
   --radius-xs: 6px;
-  --radius-sm: 10px;
-  --radius-md: 16px;
-  --radius-lg: 24px;
-  --radius-xl: 32px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-control: 12px;
+  --radius-card: 16px;
+  --radius-lg: 16px;
+  --radius-feature: 24px;
+  --radius-xl: 24px;
   --radius-pill: 999px;
 
   /* Elevation (warm-tinted, so a shadow never reads as a grey smudge). */
-  --shadow-xs: 0 1px 2px rgba(35, 26, 53, 0.06);
-  --shadow-sm: 0 2px 10px rgba(35, 26, 53, 0.06);
-  --shadow-md: 0 14px 32px -14px rgba(53, 29, 92, 0.22);
-  --shadow-lg: 0 30px 64px -26px rgba(53, 29, 92, 0.32);
+  --shadow-xs: 0 1px 2px rgb(17 24 75 / 0.05);
+  --shadow-sm: 0 2px 10px rgb(17 24 75 / 0.07);
+  --shadow-card: 0 2px 10px rgb(17 24 75 / 0.07);
+  --shadow-md: 0 10px 24px -10px rgb(17 24 75 / 0.10);
+  --shadow-raised: 0 14px 36px rgb(17 24 75 / 0.12);
+  --shadow-lg: 0 14px 36px rgb(17 24 75 / 0.12);
 
   /* Motion. */
   --dur-1: 120ms;
-  --dur-2: 220ms;
-  --dur-3: 420ms;
-  --ease-1: cubic-bezier(0.22, 0.8, 0.25, 1);
+  --dur-2: 180ms;
+  --dur-3: 320ms;
+  --ease-1: ease;
+  --transition-ui: 180ms ease;
 
   /* Type families + the focus ring (a solid ring PLUS an offset, so it stays
      visible on a light card and on the dark footer). */
-  --font: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif;
-  --font-display: ui-serif, Georgia, Cambria, 'Times New Roman', serif;
+  --font: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-ui: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-display: "Fraunces", Georgia, Cambria, "Times New Roman", serif;
   --focus-ring: 3px solid var(--c-ring);
 }
 
@@ -311,7 +351,12 @@ summary:focus-visible,
    the page into a zero-height band (SF-10). */
 .section { padding: var(--section-y) 0; min-height: 120px; }
 .section-soft,
-.bg-soft { background: var(--c-surface-2); }
+.bg-soft,
+.band.peach { background: var(--c-surface-2); }
+.section-sky,
+.band.sky { background: var(--c-sky); }
+.section-mist,
+.band.mist { background: var(--c-primary-soft); }
 .section-foot { margin-top: var(--sp-6); }
 .section-foot.centered { text-align: center; }
 
@@ -474,6 +519,22 @@ summary:focus-visible,
 .desktop-nav a:hover { color: var(--c-primary); }
 .desktop-nav a.active,
 .desktop-nav a[aria-current='page'] { color: var(--c-ink); border-bottom-color: var(--c-accent); }
+.desktop-nav a.nav-cta {
+  padding: var(--sp-2) var(--sp-4);
+  color: #ffffff;
+  background: var(--c-primary);
+  border-radius: var(--radius-pill);
+  border-bottom: none;
+  font-weight: 700;
+  text-decoration: none;
+  align-self: center;
+  margin-left: var(--sp-2);
+  transition: background-color var(--dur-1) linear;
+}
+.desktop-nav a.nav-cta:hover {
+  background: var(--c-primary-strong);
+  color: #ffffff;
+}
 
 .nav-actions { display: flex; align-items: center; gap: var(--sp-1); justify-self: end; min-width: 0; }
 .icon-btn {
@@ -565,6 +626,15 @@ summary:focus-visible,
   align-items: center;
 }
 .mobile-drawer nav a:hover { background: var(--c-primary-soft); color: var(--c-primary-strong); }
+.mobile-drawer-cta {
+  padding: var(--sp-3) var(--sp-5);
+}
+.mobile-drawer-cta .btn {
+  width: 100%;
+  text-align: center;
+  justify-content: center;
+  min-height: 48px;
+}
 .drawer-locale { padding: var(--sp-4) var(--sp-5) var(--sp-5); border-top: 1px solid var(--c-line); }
 .drawer-locale .locale-form { flex-wrap: wrap; }
 .drawer-locale .locale-form select { max-width: none; flex: 1 1 auto; }
@@ -763,6 +833,12 @@ summary:focus-visible,
 }
 .hero-secondary:hover { color: var(--c-primary-strong); }
 .hero-secondary i { font-size: 0.85em; }
+.hero-note {
+  margin: var(--sp-3) 0 0;
+  color: var(--c-muted);
+  font-size: var(--fs-sm);
+  letter-spacing: 0.02em;
+}
 /* The proof line under the hero actions: the real lowest price the server holds
    for this currency, plus the one reassurance the shop can actually keep. */
 .hero-proof { display: flex; flex-wrap: wrap; gap: var(--sp-2) var(--sp-4); align-items: center; margin: var(--sp-5) 0 0; }
@@ -931,12 +1007,48 @@ summary:focus-visible,
 }
 .step h3 { margin: 0 0 var(--sp-2); font-size: var(--fs-lg); }
 .step p { margin: 0; color: var(--c-muted); font-size: var(--fs-sm); line-height: 1.6; }
+.step-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--sp-3);
+}
+.step-icon {
+  width: 32px;
+  height: 32px;
+  object-fit: contain;
+}
 .steps-media { margin-top: var(--sp-6); }
 .steps-media img { width: 100%; height: auto; aspect-ratio: 21 / 9; object-fit: cover; border-radius: var(--radius-lg); }
 
 /* --------------------------------------------------------------------------
    11. PHOTO GUIDANCE
    -------------------------------------------------------------------------- */
+.photo-pair-container {
+  display: flex;
+  justify-content: center;
+  margin-bottom: var(--sp-6);
+}
+.photo-pair {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-4);
+  background: var(--c-surface);
+  padding: var(--sp-4) var(--sp-6);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--c-line);
+  box-shadow: var(--shadow-sm);
+}
+.photo-pair img {
+  border-radius: var(--radius-md);
+  object-fit: cover;
+}
+.photo-pair-arrow {
+  font-size: var(--fs-xl);
+  color: var(--c-primary);
+  font-weight: 700;
+  user-select: none;
+}
 .tips-grid { display: grid; gap: var(--sp-5); grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
 .tips-col { background: var(--c-surface); border: 1px solid var(--c-line); border-radius: var(--radius-lg); padding: var(--sp-5); }
 .tips-heading { font-family: var(--font); font-size: var(--fs-base); font-weight: 800; margin: 0 0 var(--sp-4); display: flex; align-items: center; gap: var(--sp-2); }

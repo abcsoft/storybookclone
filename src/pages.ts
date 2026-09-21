@@ -217,7 +217,10 @@ function renderBlock(
   const tone = sectionTone(index)
 
   switch (block.kind) {
-    case 'hero':
+    case 'hero': {
+      const heroImg = block.imagePath && block.imagePath !== '/static/img/art/hero.svg' ? block.imagePath : '/static/assets/hero/open-book-boy.webp'
+      const heroAlt = block.imagePath && block.imagePath !== '/static/img/art/hero.svg' && block.imageAlt ? block.imageAlt : 'Boy and dog emerging from an illustrated open book'
+      const heroMedia = `<div class="hero-media"><img src="${esc(heroImg)}" alt="${esc(heroAlt)}" loading="eager" fetchpriority="high" decoding="async" width="399" height="258"></div>`
       return `
   <section class="hero" aria-labelledby="hero-title">
     <div class="wrap hero-grid">
@@ -226,6 +229,7 @@ function renderBlock(
         <h1 id="hero-title">${esc(block.title)}</h1>
         <p class="hero-sub">${esc(block.subtitle)}</p>
         <div class="hero-actions">${cta}${secondary}</div>
+        <p class="hero-note note">Meaningful gifts · Personal stories · Shared storytime</p>
         ${
           /* A price and one reassurance, above the fold, next to the actions.
              The price is the real lowest storybook price for the visitor's
@@ -240,9 +244,10 @@ function renderBlock(
             : ''
         }
       </div>
-      ${media}
+      ${heroMedia}
     </div>
   </section>`
+    }
 
     case 'product-grid':
       if (!products.length) {
@@ -288,10 +293,26 @@ function renderBlock(
     <div class="wrap">
       ${sectionHead({ eyebrow: block.eyebrow, title: block.title, centered: true })}
       <ol class="steps">
-        <li class="step"><span class="num">1</span><h3>Choose a story</h3><p>Every title lists the reading age and the format, and collections group them by theme.</p></li>
-        <li class="step"><span class="num">2</span><h3>Upload one photo</h3><p>${esc(humanPhotoPolicy())}</p></li>
-        <li class="step"><span class="num">3</span><h3>Read every page</h3><p>Open the reader and check the personalisation. Each edit is saved as its own revision.</p></li>
-        <li class="step"><span class="num">4</span><h3>Add it to your cart</h3><p>Totals are calculated on the server. This version records the order without charging a payment.</p></li>
+        <li class="step">
+          <div class="step-header"><span class="num">1</span><img class="step-icon" src="/static/assets/icons/book.svg" alt="" width="32" height="32" loading="lazy"></div>
+          <h3>Choose a story</h3>
+          <p>Every title lists the reading age and the format, and collections group them by theme.</p>
+        </li>
+        <li class="step">
+          <div class="step-header"><span class="num">2</span><img class="step-icon" src="/static/assets/icons/user.svg" alt="" width="32" height="32" loading="lazy"></div>
+          <h3>Upload one photo</h3>
+          <p>${esc(humanPhotoPolicy())}</p>
+        </li>
+        <li class="step">
+          <div class="step-header"><span class="num">3</span><img class="step-icon" src="/static/assets/icons/edit.svg" alt="" width="32" height="32" loading="lazy"></div>
+          <h3>Read every page</h3>
+          <p>Open the reader and check the personalisation. Each edit is saved as its own revision.</p>
+        </li>
+        <li class="step">
+          <div class="step-header"><span class="num">4</span><img class="step-icon" src="/static/assets/icons/gift.svg" alt="" width="32" height="32" loading="lazy"></div>
+          <h3>Add it to your cart</h3>
+          <p>Totals are calculated on the server. This version records the order without charging a payment.</p>
+        </li>
       </ol>
     </div>
   </section>`
@@ -303,6 +324,13 @@ function renderBlock(
   <section class="${sectionClass(tone)}">
     <div class="wrap">
       ${sectionHead({ eyebrow: block.eyebrow, title: block.title })}
+      <div class="photo-pair-container">
+        <div class="photo-pair">
+          <img src="/static/assets/personalization/child-photo.webp" alt="Sample child portrait" width="93" height="91" loading="lazy">
+          <span class="photo-pair-arrow" aria-hidden="true">→</span>
+          <img src="/static/assets/personalization/child-illustrated.webp" alt="Illustrated character sample" width="100" height="99" loading="lazy">
+        </div>
+      </div>
       <div class="tips-grid">
         <div class="tips-col">
           <h3 class="tips-heading tips-bad">${icon('eye-slash')} Photos to avoid</h3>
