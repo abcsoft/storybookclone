@@ -255,7 +255,7 @@ export function productDetailPage(d: PdpData, pathPrefix: string) {
   }))
   if (isBook && galleryViews.length === 1) {
     galleryViews.push({
-      image_url: '/static/img/art/personalised-cover.svg',
+      image_url: '/static/assets/personalization/large-cover-preview.webp',
       alt: 'Illustration of a personalised cover with a child’s name printed on it',
       caption: 'An illustration of the personalisation: your child’s name on the cover.'
     })
@@ -330,9 +330,7 @@ export function productDetailPage(d: PdpData, pathPrefix: string) {
                   <i class="fas fa-arrow-up-from-bracket"></i>
                 </div>
                 <div class="pdp-step-avatar">
-                  <!-- S-12/S-13: no real-person photo is shipped as UI artwork;
-                       this is the app's own illustration. -->
-                  <img src="/static/img/art/step-2.svg" alt="Upload your child's picture" class="pdp-step-img step-img-1" width="120" height="120" loading="lazy" decoding="async">
+                  <img src="/static/assets/personalization/child-photo.webp" alt="Upload your child's picture" class="pdp-step-img step-img-1" width="120" height="120" loading="lazy" decoding="async">
                 </div>
               </div>
               <div class="pdp-step-label">
@@ -350,7 +348,7 @@ export function productDetailPage(d: PdpData, pathPrefix: string) {
                   <i class="fas fa-check"></i>
                 </div>
                 <div class="pdp-step-avatar book-thumb">
-                  <img src="${gallery[0]?.image_url || '/static/img/art/step-3.svg'}" alt="Review the personalised book" class="pdp-step-img step-img-2" width="120" height="120" loading="lazy" decoding="async">
+                  <img src="${gallery[0]?.image_url || '/static/assets/personalization/large-cover-preview.webp'}" alt="Review the personalised book" class="pdp-step-img step-img-2" width="120" height="120" loading="lazy" decoding="async">
                 </div>
               </div>
               <div class="pdp-step-label">
@@ -368,7 +366,7 @@ export function productDetailPage(d: PdpData, pathPrefix: string) {
                   <i class="fas fa-cart-shopping"></i>
                 </div>
                 <div class="pdp-step-avatar">
-                  <img src="/static/img/art/step-4.svg" alt="Saved to your cart" class="pdp-step-img step-img-3" width="120" height="120" loading="lazy" decoding="async">
+                  <img src="/static/assets/extras/sticker-pack.webp" alt="Saved to your cart" class="pdp-step-img step-img-3" width="120" height="120" loading="lazy" decoding="async">
                 </div>
               </div>
               <div class="pdp-step-label">

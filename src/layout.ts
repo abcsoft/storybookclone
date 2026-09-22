@@ -291,7 +291,7 @@ export function page(opts: PageOptions): string {
   <link href="/static/icons.css" rel="stylesheet">
   ${jsonLdScript(opts.meta?.jsonLd)}
 </head>
-<body class="${esc(['store', opts.stickyCta ? 'has-sticky-cta' : '', opts.bodyClass || ''].filter(Boolean).join(' '))}" data-currency="${esc(store?.currency || 'USD')}" data-currency-symbol="${esc(store?.currencySettings.symbol || '$')}" data-country="${esc(store?.country || 'US')}">
+<body class="${esc(['store', opts.stickyCta ? 'has-sticky-cta' : '', opts.bodyClass || ''].filter(Boolean).join(' '))}" data-design-version="cream-purple-v2" data-currency="${esc(store?.currency || 'USD')}" data-currency-symbol="${esc(store?.currencySettings.symbol || '$')}" data-country="${esc(store?.country || 'US')}">
   <a class="skip-link" href="#main">Skip to content</a>
   ${announcementBar(shell)}
   <header class="site-header" id="site-header">

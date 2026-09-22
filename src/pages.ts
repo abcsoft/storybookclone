@@ -88,22 +88,26 @@ export function productCard(p: Product, fmt: Money): string {
     compareAtMinor: compareMinor
   })
   const compareShown = available && compareMinor != null && compareMinor > (minor as number) ? compareMinor : null
-  const action = isSticker ? 'Personalise this sticker pack' : 'Personalise this story'
+  const action = isSticker ? 'Personalise pack' : 'Personalise this story'
   return `
-  <article class="product-card">
-    <a class="card-cover-wrap" href="${esc(link)}" tabindex="-1" aria-hidden="true">
-      <img src="${esc(p.image)}" alt="" loading="lazy" decoding="async" width="600" height="600">
+  <article class="product-card book-card" data-slug="${esc(p.slug)}">
+    <a class="card-cover-wrap" href="${esc(link)}" aria-label="${esc(p.title)}">
+      <div class="card-spine-accent" aria-hidden="true"></div>
+      <img src="${esc(p.image)}" alt="${esc(p.title)}" loading="lazy" decoding="async" width="600" height="600">
       ${badges.map((b) => `<span class="badge ${esc(b.className)} card-badge-${esc(b.slot)}">${esc(b.label)}</span>`).join('')}
     </a>
     <div class="card-body">
-      <p class="card-meta"><span class="card-ages">${icon('child')} Ages ${esc(p.ages)}</span></p>
+      <div class="card-meta">
+        <span class="card-ages"><img src="/static/assets/icons/book.svg" alt="" width="14" height="14" class="inline-icon"> Ages ${esc(p.ages)}</span>
+        ${p.career ? `<span class="card-career-tag">Career story</span>` : ''}
+      </div>
       <h3 class="card-title"><a href="${esc(link)}">${esc(p.title)}</a></h3>
       <p class="card-tagline">${esc(p.tagline || p.description.slice(0, 90))}</p>
       <div class="card-foot">
         <p class="card-price">
           ${available ? `<strong>${esc(fmt(minor as number))}</strong>${compareShown ? ` <s>${esc(fmt(compareShown))}</s>` : ''}` : '<span class="unavailable">Not available in your currency</span>'}
         </p>
-        <a class="btn btn-primary btn-sm card-cta" href="${esc(link)}">${esc(action)}</a>
+        <a class="btn btn-primary btn-sm card-cta" href="${esc(link)}">${esc(action)} <span aria-hidden="true">→</span></a>
       </div>
     </div>
   </article>`
@@ -218,29 +222,35 @@ function renderBlock(
 
   switch (block.kind) {
     case 'hero': {
-      const heroImg = block.imagePath && block.imagePath !== '/static/img/art/hero.svg' ? block.imagePath : '/static/assets/hero/open-book-boy.webp'
-      const heroAlt = block.imagePath && block.imagePath !== '/static/img/art/hero.svg' && block.imageAlt ? block.imageAlt : 'Boy and dog emerging from an illustrated open book'
-      const heroMedia = `<div class="hero-media"><img src="${esc(heroImg)}" alt="${esc(heroAlt)}" loading="eager" fetchpriority="high" decoding="async" width="399" height="258"></div>`
+      const heroImg = block.imagePath && !block.imagePath.includes('/static/img/art/') ? block.imagePath : '/static/assets/hero/open-book-boy.webp'
+      const heroAlt = block.imagePath && !block.imagePath.includes('/static/img/art/') && block.imageAlt ? block.imageAlt : 'Boy and dog emerging from an illustrated open book'
+      const heroMedia = `
+        <div class="hero-media-wrapper">
+          <div class="hero-aura" aria-hidden="true"></div>
+          <div class="hero-media">
+            <img src="${esc(heroImg)}" alt="${esc(heroAlt)}" loading="eager" fetchpriority="high" decoding="async" width="399" height="258">
+          </div>
+          <div class="hero-badge-floating" aria-hidden="true">
+            <img src="/static/assets/icons/star.svg" alt="" width="20" height="20">
+            <span>Keepsake Quality</span>
+          </div>
+        </div>`
       return `
-  <section class="hero" aria-labelledby="hero-title">
+  <section class="hero hero-redesigned" aria-labelledby="hero-title">
     <div class="wrap hero-grid">
       <div class="hero-copy">
-        ${block.eyebrow ? `<p class="eyebrow">${esc(block.eyebrow)}</p>` : ''}
+        ${block.eyebrow ? `<div class="hero-eyebrow-pill"><img src="/static/assets/icons/book.svg" alt="" width="16" height="16"> <span>${esc(block.eyebrow)}</span></div>` : ''}
         <h1 id="hero-title">${esc(block.title)}</h1>
         <p class="hero-sub">${esc(block.subtitle)}</p>
         <div class="hero-actions">${cta}${secondary}</div>
         <p class="hero-note note">Meaningful gifts · Personal stories · Shared storytime</p>
         ${
-          /* A price and one reassurance, above the fold, next to the actions.
-             The price is the real lowest storybook price for the visitor's
-             currency (src/db.ts::minPriceMinor) and is omitted entirely when
-             that currency has no price rows; the second half states the one
-             thing this build can promise today. */
           hero.fromMinor != null
-            ? `<p class="hero-proof">
-          <span class="hero-from">Storybooks from ${esc(fmt(hero.fromMinor))}</span>
-          <span class="hero-assurance">${icon('circle-info')} <span>Nothing is charged in this version.</span></span>
-        </p>`
+            ? `<div class="hero-proof-box">
+          <span class="hero-from">Storybooks from <strong>${esc(fmt(hero.fromMinor))}</strong></span>
+          <span class="hero-separator" aria-hidden="true">·</span>
+          <span class="hero-assurance"><img src="/static/assets/icons/shield.svg" alt="" width="16" height="16"> <span>Nothing is charged in this version</span></span>
+        </div>`
             : ''
         }
       </div>
@@ -252,7 +262,7 @@ function renderBlock(
     case 'product-grid':
       if (!products.length) {
         return `
-  <section class="${sectionClass(tone)}">
+  <section class="${sectionClass(tone, 'shelf-section-redesigned')}">
     <div class="wrap">
       ${sectionHead({ eyebrow: block.eyebrow, title: block.title })}
       ${emptyState({ title: 'Nothing in this section yet', body: 'No titles are linked to this section. An administrator can add them in the catalogue.', actionLabel: 'Browse everything', actionHref: '/books' })}
@@ -260,7 +270,7 @@ function renderBlock(
   </section>`
       }
       return `
-  <section class="${sectionClass(tone)}">
+  <section class="${sectionClass(tone, 'shelf-section-redesigned')}">
     <div class="wrap">
       ${sectionHead({ eyebrow: block.eyebrow, title: block.title, linkLabel: block.ctaLabel, linkHref: block.ctaHref })}
       ${productGrid(products, fmt)}
@@ -270,7 +280,7 @@ function renderBlock(
     case 'collection-grid':
       if (!collections.length) {
         return `
-  <section class="${sectionClass(tone)}">
+  <section class="${sectionClass(tone, 'collection-grid-redesigned')}">
     <div class="wrap">
       ${sectionHead({ eyebrow: block.eyebrow, title: block.title, centered: true })}
       ${emptyState({ title: 'No collections here yet', body: 'No collections of this kind are published. An administrator can create one in the catalogue.', actionLabel: 'Browse everything', actionHref: '/books' })}
@@ -278,7 +288,7 @@ function renderBlock(
   </section>`
       }
       return `
-  <section class="${sectionClass(tone)}">
+  <section class="${sectionClass(tone, 'collection-grid-redesigned')}">
     <div class="wrap">
       ${sectionHead({ eyebrow: block.eyebrow, title: block.title, centered: true, linkLabel: block.ctaLabel, linkHref: block.ctaHref })}
       <div class="grid-3 collection-list">
@@ -289,125 +299,247 @@ function renderBlock(
 
     case 'steps':
       return `
-  <section class="${sectionClass(tone)}">
+  <section class="${sectionClass(tone, 'steps-section-redesigned')}">
     <div class="wrap">
       ${sectionHead({ eyebrow: block.eyebrow, title: block.title, centered: true })}
-      <ol class="steps">
-        <li class="step">
-          <div class="step-header"><span class="num">1</span><img class="step-icon" src="/static/assets/icons/book.svg" alt="" width="32" height="32" loading="lazy"></div>
-          <h3>Choose a story</h3>
-          <p>Every title lists the reading age and the format, and collections group them by theme.</p>
-        </li>
-        <li class="step">
-          <div class="step-header"><span class="num">2</span><img class="step-icon" src="/static/assets/icons/user.svg" alt="" width="32" height="32" loading="lazy"></div>
-          <h3>Upload one photo</h3>
-          <p>${esc(humanPhotoPolicy())}</p>
-        </li>
-        <li class="step">
-          <div class="step-header"><span class="num">3</span><img class="step-icon" src="/static/assets/icons/edit.svg" alt="" width="32" height="32" loading="lazy"></div>
-          <h3>Read every page</h3>
-          <p>Open the reader and check the personalisation. Each edit is saved as its own revision.</p>
-        </li>
-        <li class="step">
-          <div class="step-header"><span class="num">4</span><img class="step-icon" src="/static/assets/icons/gift.svg" alt="" width="32" height="32" loading="lazy"></div>
-          <h3>Add it to your cart</h3>
-          <p>Totals are calculated on the server. This version records the order without charging a payment.</p>
-        </li>
-      </ol>
+      <div class="steps-container">
+        <div class="steps-track" aria-hidden="true"></div>
+        <ol class="steps steps-modern">
+          <li class="step step-card">
+            <div class="step-card-header">
+              <span class="step-num-pill">01</span>
+              <div class="step-icon-bubble">
+                <img class="step-icon" src="/static/assets/icons/book.svg" alt="" width="28" height="28" loading="lazy">
+              </div>
+            </div>
+            <h3>Choose a story</h3>
+            <p>Every title lists the reading age and format, and collections group them by theme.</p>
+            <div class="step-badge-mini">Curated catalogue</div>
+          </li>
+          <li class="step step-card">
+            <div class="step-card-header">
+              <span class="step-num-pill">02</span>
+              <div class="step-icon-bubble">
+                <img class="step-icon" src="/static/assets/icons/upload.svg" alt="" width="28" height="28" loading="lazy">
+              </div>
+            </div>
+            <h3>Upload one photo</h3>
+            <p>${esc(humanPhotoPolicy())}</p>
+            <div class="step-badge-mini">Private & secure</div>
+          </li>
+          <li class="step step-card">
+            <div class="step-card-header">
+              <span class="step-num-pill">03</span>
+              <div class="step-icon-bubble">
+                <img class="step-icon" src="/static/assets/icons/edit.svg" alt="" width="28" height="28" loading="lazy">
+              </div>
+            </div>
+            <h3>Read every page</h3>
+            <p>Open the reader and check the personalisation. Each edit is saved as its own revision.</p>
+            <div class="step-badge-mini">Full preview</div>
+          </li>
+          <li class="step step-card">
+            <div class="step-card-header">
+              <span class="step-num-pill">04</span>
+              <div class="step-icon-bubble">
+                <img class="step-icon" src="/static/assets/icons/gift.svg" alt="" width="28" height="28" loading="lazy">
+              </div>
+            </div>
+            <h3>Add to cart & enjoy</h3>
+            <p>Totals are calculated on the server. This version records the order without charging a payment.</p>
+            <div class="step-badge-mini">Zero risk</div>
+          </li>
+        </ol>
+      </div>
     </div>
   </section>`
 
     case 'photo-guidance': {
-      const bad = photos.tips.filter((t) => t.kind === 'bad')
-      const good = photos.tips.filter((t) => t.kind === 'good')
       return `
-  <section class="${sectionClass(tone)}">
+  <section class="${sectionClass(tone, 'photo-guidance-redesigned')}">
     <div class="wrap">
-      ${sectionHead({ eyebrow: block.eyebrow, title: block.title })}
-      <div class="photo-pair-container">
-        <div class="photo-pair">
-          <img src="/static/assets/personalization/child-photo.webp" alt="Sample child portrait" width="93" height="91" loading="lazy">
-          <span class="photo-pair-arrow" aria-hidden="true">→</span>
-          <img src="/static/assets/personalization/child-illustrated.webp" alt="Illustrated character sample" width="100" height="99" loading="lazy">
+      ${sectionHead({ eyebrow: block.eyebrow, title: block.title, centered: true })}
+      
+      <!-- Interactive Visual Showcase: Photo to Illustration -->
+      <div class="photo-transformation-showcase">
+        <div class="photo-side photo-side-original">
+          <div class="photo-img-wrap">
+            <img src="/static/assets/personalization/child-photo.webp" alt="Real photograph of child" width="160" height="160" loading="lazy">
+          </div>
+          <span class="photo-tag tag-original"><img src="/static/assets/icons/user.svg" alt="" width="14" height="14"> 1. Real photo upload</span>
+        </div>
+        <div class="photo-transform-connector" aria-hidden="true">
+          <div class="connector-sparkle"><img src="/static/assets/icons/star.svg" alt="" width="24" height="24"></div>
+          <span class="connector-arrow">→</span>
+          <span class="connector-label">Personalised</span>
+        </div>
+        <div class="photo-side photo-side-illustrated">
+          <div class="photo-img-wrap">
+            <img src="/static/assets/personalization/child-illustrated.webp" alt="Hand-illustrated book character" width="160" height="160" loading="lazy">
+          </div>
+          <span class="photo-tag tag-illustrated"><img src="/static/assets/icons/book.svg" alt="" width="14" height="14"> 2. Custom illustration</span>
         </div>
       </div>
-      <div class="tips-grid">
-        <div class="tips-col">
-          <h3 class="tips-heading tips-bad">${icon('eye-slash')} Photos to avoid</h3>
-          <ul class="tips-list">${bad.map((t) => `<li><img src="${esc(t.imageUrl)}" alt="" width="240" height="240" loading="lazy"><span>${esc(t.label)}</span></li>`).join('')}</ul>
+
+      <div class="tips-cards-grid">
+        <div class="tips-card tips-card-good">
+          <div class="tips-card-head">
+            <div class="head-icon icon-success"><img src="/static/assets/icons/check.svg" alt="" width="20" height="20"></div>
+            <h3>Recommended photos</h3>
+          </div>
+          <ul class="tips-checklist">
+            <li><img src="/static/assets/icons/check.svg" alt="" width="16" height="16"> <span><strong>Bright natural light:</strong> Even lighting with clear face details.</span></li>
+            <li><img src="/static/assets/icons/check.svg" alt="" width="16" height="16"> <span><strong>Front-facing portrait:</strong> Looking directly at the camera.</span></li>
+            <li><img src="/static/assets/icons/check.svg" alt="" width="16" height="16"> <span><strong>Neutral or plain background:</strong> Keeps the focus on their smile.</span></li>
+          </ul>
         </div>
-        <div class="tips-col">
-          <h3 class="tips-heading tips-good">${icon('check-circle')} Photos that work</h3>
-          <ul class="tips-list">${good.map((t) => `<li><img src="${esc(t.imageUrl)}" alt="" width="240" height="240" loading="lazy"><span>${esc(t.label)}</span></li>`).join('')}</ul>
+        <div class="tips-card tips-card-avoid">
+          <div class="tips-card-head">
+            <div class="head-icon icon-avoid"><img src="/static/assets/icons/close.svg" alt="" width="20" height="20"></div>
+            <h3>Photos to avoid</h3>
+          </div>
+          <ul class="tips-checklist">
+            <li><img src="/static/assets/icons/close.svg" alt="" width="16" height="16"> <span><strong>Blurry or low resolution:</strong> Obscures fine facial characteristics.</span></li>
+            <li><img src="/static/assets/icons/close.svg" alt="" width="16" height="16"> <span><strong>Heavy shadows or backlighting:</strong> Makes color matching difficult.</span></li>
+            <li><img src="/static/assets/icons/close.svg" alt="" width="16" height="16"> <span><strong>Hats, sunglasses, or covered faces:</strong> Masks facial landmarks.</span></li>
+          </ul>
         </div>
       </div>
-      ${/* The accepted formats and limits, in the shopper's own words. The
-           numbers are the server's own PHOTO_POLICY, so the shop never
-           advertises a limit it would not accept. */ ''}
-      <p class="photo-policy-note">${icon('camera-retro')} <span>Accepted photos: ${esc(humanPhotoPolicy())}.</span></p>
+      
+      <div class="photo-policy-banner">
+        <img src="/static/assets/icons/shield.svg" alt="" width="20" height="20">
+        <p><strong>Accepted formats & limits:</strong> ${esc(humanPhotoPolicy())}</p>
+      </div>
     </div>
   </section>`
     }
 
     case 'age-grid':
       return `
-  <section class="${sectionClass(tone, 'age-section')}">
+  <section class="${sectionClass(tone, 'age-section-redesigned')}">
     <div class="wrap">
       ${sectionHead({ eyebrow: block.eyebrow, title: block.title, centered: true })}
-      <div class="age-grid">
-        ${AGE_BUCKETS.slice(0, 3)
-          .map(
-            (b) => `
-        <a class="age-card" href="/books?age=${esc(b.value)}">
-          <img src="/static/img/art/age-${esc(b.value)}.svg" alt="" width="640" height="420" loading="lazy">
-          <span class="age-info"><h3>${esc(b.label)}</h3><span class="btn btn-sm">See titles ${icon('chevron-right')}</span></span>
-        </a>`
-          )
-          .join('')}
+      <div class="age-discovery-grid">
+        <a class="age-tile age-tile-early" href="/books?age=2-4">
+          <div class="age-tile-header">
+            <span class="age-badge-large">Ages 2–4</span>
+            <span class="age-stage">Early Words & Rhythm</span>
+          </div>
+          <div class="age-tile-body">
+            <p>Short, rhythmic sentences with repetition and clear, vibrant single-focus illustrations.</p>
+          </div>
+          <div class="age-tile-foot">
+            <span class="btn btn-outline btn-sm">Explore ages 2–4 ${icon('arrow-right')}</span>
+          </div>
+        </a>
+        <a class="age-tile age-tile-mid" href="/books?age=4-6">
+          <div class="age-tile-header">
+            <span class="age-badge-large">Ages 4–6</span>
+            <span class="age-stage">Picture Adventures</span>
+          </div>
+          <div class="age-tile-body">
+            <p>Engaging problem-solving journeys, teamwork, and bedtime arcs where they find their way.</p>
+          </div>
+          <div class="age-tile-foot">
+            <span class="btn btn-outline btn-sm">Explore ages 4–6 ${icon('arrow-right')}</span>
+          </div>
+        </a>
+        <a class="age-tile age-tile-older" href="/books?age=6-8">
+          <div class="age-tile-header">
+            <span class="age-badge-large">Ages 6–8</span>
+            <span class="age-stage">Young Readers</span>
+          </div>
+          <div class="age-tile-body">
+            <p>Longer story arcs, curious explorations, and rich storytelling designed for shared or solo reading.</p>
+          </div>
+          <div class="age-tile-foot">
+            <span class="btn btn-outline btn-sm">Explore ages 6–8 ${icon('arrow-right')}</span>
+          </div>
+        </a>
       </div>
     </div>
   </section>`
 
-    case 'sticker-cross-sell':
+    case 'sticker-cross-sell': {
+      const stickerImg = block.imagePath && !block.imagePath.includes('/static/img/art/') ? block.imagePath : '/static/assets/extras/sticker-pack.webp'
       return `
-  <section class="${sectionClass(tone)}">
+  <section class="${sectionClass(tone, 'sticker-cross-sell-redesigned')}">
     <div class="wrap">
-      <div class="cta-banner">
-        <div class="cta-copy">
-          ${block.eyebrow ? `<span class="badge">${esc(block.eyebrow)}</span>` : ''}
+      <div class="sticker-feature-card">
+        <div class="sticker-copy">
+          <div class="sticker-tag"><img src="/static/assets/icons/gift.svg" alt="" width="16" height="16"> <span>${esc(block.eyebrow || 'Keepsake Add-on')}</span></div>
           <h2>${esc(block.title)}</h2>
-          <p>${esc(block.subtitle)}</p>
-          ${cta}
+          <p class="sticker-sub">${esc(block.subtitle)}</p>
+          <ul class="sticker-perks">
+            <li><img src="/static/assets/icons/check.svg" alt="" width="16" height="16"> <span>Features the same photo and name as their story</span></li>
+            <li><img src="/static/assets/icons/check.svg" alt="" width="16" height="16"> <span>Premium durable matte-finish vinyl stickers</span></li>
+            <li><img src="/static/assets/icons/check.svg" alt="" width="16" height="16"> <span>Great for water bottles, lunchboxes and notebooks</span></li>
+          </ul>
+          <div class="sticker-actions">
+            ${cta}
+          </div>
         </div>
-        ${block.imagePath ? `<div class="cta-image"><img src="${esc(block.imagePath)}" alt="${esc(block.imageAlt || '')}" width="960" height="540" loading="lazy"></div>` : ''}
+        <div class="sticker-visual">
+          <div class="sticker-img-frame">
+            <img src="${esc(stickerImg)}" alt="${esc(block.imageAlt || 'Personalised illustrated sticker sheet')}" width="500" height="500" loading="lazy">
+          </div>
+        </div>
       </div>
     </div>
   </section>`
+    }
 
     case 'faq-preview':
       return `
-  <section class="${sectionClass(tone)}">
+  <section class="${sectionClass(tone, 'faq-preview-redesigned')}">
     <div class="wrap wrap-narrow">
       ${sectionHead({ eyebrow: block.eyebrow, title: block.title, centered: true })}
-      ${faqAccordion(faqs.slice(0, block.maxItems || 5))}
-      ${block.ctaLabel && block.ctaHref ? `<p class="section-foot centered"><a class="link" href="${esc(block.ctaHref)}">${esc(block.ctaLabel)} ${icon('arrow-right')}</a></p>` : ''}
+      <div class="faq-accordion-container">
+        ${faqAccordion(faqs.slice(0, block.maxItems || 5))}
+      </div>
+      ${block.ctaLabel && block.ctaHref ? `<div class="faq-foot-action"><a class="btn btn-outline" href="${esc(block.ctaHref)}">${esc(block.ctaLabel)} ${icon('arrow-right')}</a></div>` : ''}
     </div>
   </section>`
 
-    case 'final-cta':
+    case 'final-cta': {
+      const featureImg = block.imagePath && !block.imagePath.includes('/static/img/art/') ? block.imagePath : '/static/assets/features/open-book-girl.webp'
       return `
-  <section class="${sectionClass(tone)}">
+  <section class="${sectionClass(tone, 'editorial-feature-redesigned')}">
     <div class="wrap">
-      <div class="cta-banner">
-        <div class="cta-copy">
-          <h2>${esc(block.title)}</h2>
-          <p>${esc(block.subtitle)}</p>
-          ${cta}
+      <div class="editorial-feature-card">
+        <div class="editorial-copy">
+          <div class="editorial-badge"><img src="/static/assets/icons/star.svg" alt="" width="16" height="16"> <span>Editorial Feature</span></div>
+          <h2>${esc(block.title || 'Start with one photo, create a lifelong memory')}</h2>
+          <p class="editorial-sub">${esc(block.subtitle || 'Pick a story, add their name and age, and read the pages before you decide.')}</p>
+          <div class="editorial-points">
+            <div class="editorial-point">
+              <div class="point-icon"><img src="/static/assets/icons/book.svg" alt="" width="20" height="20"></div>
+              <div>
+                <strong>Archival Quality Keepsake</strong>
+                <p>Heavyweight paper and sturdy square binding made for little hands.</p>
+              </div>
+            </div>
+            <div class="editorial-point">
+              <div class="point-icon"><img src="/static/assets/icons/user.svg" alt="" width="20" height="20"></div>
+              <div>
+                <strong>Private & Secure Creation</strong>
+                <p>Your uploaded photo is used solely to generate your preview.</p>
+              </div>
+            </div>
+          </div>
+          <div class="editorial-actions">
+            ${cta}
+          </div>
         </div>
-      ${block.imagePath ? `<div class="cta-image"><img src="${esc(block.imagePath)}" alt="${esc(block.imageAlt || '')}" width="640" height="420" loading="lazy"></div>` : ''}
+        <div class="editorial-media">
+          <div class="editorial-frame">
+            <img src="${esc(featureImg)}" alt="${esc(block.imageAlt || 'Child reading personalised storybook with magical glow')}" width="600" height="400" loading="lazy">
+          </div>
+        </div>
       </div>
     </div>
   </section>`
+    }
 
     case 'newsletter':
       return `
@@ -449,17 +581,17 @@ function renderBlock(
  */
 function collectionCard(c: Collection): string {
   return `
-        <a class="collection-card" href="/collections/${esc(c.slug)}">
+        <a class="collection-card collection-card-redesigned" href="/collections/${esc(c.slug)}">
           ${
             c.heroImage
-              ? `<span class="collection-cover"><img src="${esc(c.heroImage)}" alt="${esc(c.heroAlt || '')}" width="640" height="480" loading="lazy"></span>`
+              ? `<div class="collection-cover-wrap"><img src="${esc(c.heroImage)}" alt="${esc(c.heroAlt || c.title)}" width="640" height="480" loading="lazy"><span class="collection-kind-badge">${esc(c.kind === 'theme' ? 'Theme' : c.kind === 'audience' ? 'Audience' : c.kind === 'career' ? 'Career' : 'Collection')}</span></div>`
               : ''
           }
-          <span class="collection-body">
+          <div class="collection-body">
             <h3>${esc(c.title)}</h3>
-            <p>${esc(c.subtitle || c.description)}</p>
-            <span class="link">Open collection ${icon('arrow-right')}</span>
-          </span>
+            <p class="collection-desc">${esc(c.subtitle || c.description)}</p>
+            <span class="collection-action">Explore collection <span aria-hidden="true">→</span></span>
+          </div>
         </a>`
 }
 
@@ -986,7 +1118,7 @@ export function authPage(kind: 'login' | 'register' | 'forgot', msg?: string) {
     <aside class="auth-art">
       <h2>${esc(brand().tagline)}</h2>
       <p>Personalised storybooks built from the photo and details you provide. Nothing is charged or printed in this version.</p>
-      <img src="/static/img/art/login-art.svg" alt="Illustrated night-time pines with a lantern" width="640" height="420" loading="lazy">
+      <img src="/static/assets/books/lantern.webp" alt="Illustrated night-time pines with a lantern" width="600" height="600" loading="lazy">
     </aside>
   </section>`
 }
@@ -1012,7 +1144,7 @@ export function resetPasswordPage(token: string, msg?: string) {
     <aside class="auth-art">
       <h2>${esc(brand().tagline)}</h2>
       <p>Personalised storybooks built from the photo and details you provide.</p>
-      <img src="/static/img/art/login-art.svg" alt="Illustrated night-time pines with a lantern" width="640" height="420" loading="lazy">
+      <img src="/static/assets/books/lantern.webp" alt="Illustrated night-time pines with a lantern" width="600" height="600" loading="lazy">
     </aside>
   </section>`
 }
