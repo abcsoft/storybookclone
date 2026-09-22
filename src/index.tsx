@@ -517,6 +517,61 @@ export async function bootstrapLocalDefaults(db: D1Database, bootstrap?: { email
        SELECT id, 'softcover', 'Softcover', CAST(ROUND(price * 100) AS INTEGER), NULL, 'USD', 0, 1 FROM products WHERE category = 'book'`
     )
     .run()
+
+  // V2 Cream-Purple asset mappings (mirrors migration 0034; idempotent).
+  // Ensures fresh installations where products are inserted from fixture
+  // receive approved assets, while preserving any custom operator edits.
+  await db.prepare("UPDATE products SET image = '/static/assets/books/lantern.webp' WHERE slug = 'the-lantern-and-the-long-night' AND image = '/static/img/art/cover-the-lantern-and-the-long-night.svg'").run()
+  await db.prepare("UPDATE products SET image = '/static/assets/books/moon-garden.webp' WHERE slug = 'the-moon-garden' AND image = '/static/img/art/cover-the-moon-garden.svg'").run()
+  await db.prepare("UPDATE products SET image = '/static/assets/books/snowy-friend.webp' WHERE slug = 'the-snow-fox' AND image = '/static/img/art/cover-the-snow-fox.svg'").run()
+  await db.prepare("UPDATE products SET image = '/static/assets/books/quiet-dream.webp' WHERE slug = 'the-quiet-drum' AND image = '/static/img/art/cover-the-quiet-drum.svg'").run()
+  await db.prepare("UPDATE products SET image = '/static/assets/books/forest.webp' WHERE slug = 'the-forest-that-sang' AND image = '/static/img/art/cover-the-forest-that-sang.svg'").run()
+  await db.prepare("UPDATE products SET image = '/static/assets/books/sunbeam-sea.webp' WHERE slug = 'the-puddle-who-met-the-sea' AND image = '/static/img/art/cover-the-puddle-who-met-the-sea.svg'").run()
+  await db.prepare("UPDATE products SET image = '/static/assets/books/vet.webp' WHERE slug = 'the-kind-vet' AND image = '/static/img/art/cover-the-kind-vet.svg'").run()
+  await db.prepare("UPDATE products SET image = '/static/assets/books/firefighter.webp' WHERE slug = 'the-little-fire-crew' AND image = '/static/img/art/cover-the-little-fire-crew.svg'").run()
+  await db.prepare("UPDATE products SET image = '/static/assets/books/pilot.webp' WHERE slug = 'up-in-the-clouds' AND image = '/static/img/art/cover-up-in-the-clouds.svg'").run()
+  await db.prepare("UPDATE products SET image = '/static/assets/books/chef.webp' WHERE slug = 'the-brave-little-baker' AND image = '/static/img/art/cover-the-brave-little-baker.svg'").run()
+
+  await db.prepare("UPDATE collections SET hero_image = '/static/assets/categories/adventure.webp' WHERE slug = 'adventure-and-discovery' AND hero_image = '/static/img/art/cover-the-little-explorer.svg'").run()
+  await db.prepare("UPDATE collections SET hero_image = '/static/assets/categories/bedtime.webp' WHERE slug = 'bedtime-and-calm' AND hero_image = '/static/img/art/cover-the-lantern-and-the-long-night.svg'").run()
+  await db.prepare("UPDATE collections SET hero_image = '/static/assets/categories/animals.webp' WHERE slug = 'animals-and-nature' AND hero_image = '/static/img/art/cover-the-snow-fox.svg'").run()
+  await db.prepare("UPDATE collections SET hero_image = '/static/assets/categories/friendship.webp' WHERE slug = 'kindness-and-feelings' AND hero_image = '/static/img/art/cover-the-forest-that-sang.svg'").run()
+  await db.prepare("UPDATE collections SET hero_image = '/static/assets/extras/sticker-pack.webp' WHERE slug IN ('all-stickers', 'sticker-packs') AND hero_image IN ('/static/img/art/stickers-header.svg', '/static/img/art/cover-meadow-sticker-sheet.svg')").run()
+
+  await db.prepare("UPDATE cms_blocks SET image_path = '/static/assets/hero/open-book-boy.webp', image_alt = 'Illustrated child and dog reading a magical glowing storybook' WHERE key = 'home.hero' AND image_path = '/static/img/art/hero.svg'").run()
+  await db.prepare("UPDATE cms_blocks SET image_path = '/static/assets/extras/sticker-pack.webp', image_alt = 'Personalised illustrated sticker sheet' WHERE key = 'home.stickers' AND image_path = '/static/img/art/stickers-header.svg'").run()
+  await db.prepare("UPDATE cms_blocks SET image_path = '/static/assets/features/open-book-girl.webp', image_alt = 'Child reading personalised storybook with magical glow' WHERE key = 'home.cta' AND image_path = '/static/img/art/cta-reading.svg'").run()
+
+  await db.prepare(`
+    INSERT INTO pdp_gallery (product_id, image_url, alt, sort_order, active)
+    SELECT p.id, '/static/assets/product/lantern-cover.webp', 'Cover of The Lantern and the Long Night', 1, 1
+      FROM products p WHERE p.slug = 'the-lantern-and-the-long-night'
+       AND NOT EXISTS (SELECT 1 FROM pdp_gallery pg WHERE pg.product_id = p.id AND pg.image_url = '/static/assets/product/lantern-cover.webp')
+  `).run()
+  await db.prepare(`
+    INSERT INTO pdp_gallery (product_id, image_url, alt, sort_order, active)
+    SELECT p.id, '/static/assets/product/open-book-feature.webp', 'Open book spread with glowing lantern', 2, 1
+      FROM products p WHERE p.slug = 'the-lantern-and-the-long-night'
+       AND NOT EXISTS (SELECT 1 FROM pdp_gallery pg WHERE pg.product_id = p.id AND pg.image_url = '/static/assets/product/open-book-feature.webp')
+  `).run()
+  await db.prepare(`
+    INSERT INTO pdp_gallery (product_id, image_url, alt, sort_order, active)
+    SELECT p.id, '/static/assets/product/gallery-01.webp', 'Inside page detail showing lantern light', 3, 1
+      FROM products p WHERE p.slug = 'the-lantern-and-the-long-night'
+       AND NOT EXISTS (SELECT 1 FROM pdp_gallery pg WHERE pg.product_id = p.id AND pg.image_url = '/static/assets/product/gallery-01.webp')
+  `).run()
+  await db.prepare(`
+    INSERT INTO pdp_gallery (product_id, image_url, alt, sort_order, active)
+    SELECT p.id, '/static/assets/product/gallery-02.webp', 'Inside page detail showing the snowy path', 4, 1
+      FROM products p WHERE p.slug = 'the-lantern-and-the-long-night'
+       AND NOT EXISTS (SELECT 1 FROM pdp_gallery pg WHERE pg.product_id = p.id AND pg.image_url = '/static/assets/product/gallery-02.webp')
+  `).run()
+  await db.prepare(`
+    INSERT INTO pdp_gallery (product_id, image_url, alt, sort_order, active)
+    SELECT p.id, '/static/assets/product/gallery-03.webp', 'Inside page detail showing sunrise over the hills', 5, 1
+      FROM products p WHERE p.slug = 'the-lantern-and-the-long-night'
+       AND NOT EXISTS (SELECT 1 FROM pdp_gallery pg WHERE pg.product_id = p.id AND pg.image_url = '/static/assets/product/gallery-03.webp')
+  `).run()
 }
 
 /**
