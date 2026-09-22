@@ -69,7 +69,7 @@ function rotateDraftKey(slug) {
       return { src: img?.src || '', alt: img?.alt || '', caption: t.dataset.caption || '' }
     })
     let i = 0
-    const set = (idx) => {
+    const set = (idx, shouldFocus = false) => {
       i = (idx + items.length) % items.length
       const wrap = document.getElementById('pdp-main-img')
       if (wrap) wrap.classList.add('is-loading')
@@ -82,13 +82,39 @@ function rotateDraftKey(slug) {
         caption.hidden = !items[i].caption
       }
       setTimeout(() => wrap?.classList.remove('is-loading'), 50)
-      thumbs.forEach((t, k) => t.classList.toggle('active', k === i))
+      thumbs.forEach((t, k) => {
+        const isActive = k === i
+        t.classList.toggle('active', isActive)
+        t.setAttribute('aria-selected', isActive ? 'true' : 'false')
+        if (isActive) {
+          t.setAttribute('aria-current', 'true')
+          t.tabIndex = 0
+          if (shouldFocus) t.focus()
+        } else {
+          t.removeAttribute('aria-current')
+          t.tabIndex = -1
+        }
+      })
       dots.forEach((d, k) => d.classList.toggle('active', k === i))
     }
     thumbs.forEach((t, k) => t.addEventListener('click', () => set(k)))
     dots.forEach((d, k) => d.addEventListener('click', () => set(k)))
     next?.addEventListener('click', () => set(i + 1))
     prev?.addEventListener('click', () => set(i - 1))
+
+    // Support keyboard arrow navigation across thumbnails
+    const thumbsContainer = document.querySelector('.pdp-thumbs')
+    if (thumbsContainer) {
+      thumbsContainer.addEventListener('keydown', (e) => {
+        if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+          e.preventDefault()
+          set(i - 1, true)
+        } else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+          e.preventDefault()
+          set(i + 1, true)
+        }
+      })
+    }
     // basic touch swipe
     let touchX = null
     const wrap = document.getElementById('pdp-main-img')

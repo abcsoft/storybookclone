@@ -42,12 +42,22 @@ async function run() {
     })
     const page = await context.newPage()
 
-    // Listen for console errors & failed requests
+    // Listen for console errors, page errors & failed requests
     page.on('console', msg => {
       if (msg.type() === 'error') {
         console.error(`[CONSOLE ERROR] [${vp.name}] ${msg.text()}`)
         totalErrors++
       }
+    })
+
+    page.on('pageerror', err => {
+      console.error(`[PAGE ERROR] [${vp.name}] ${err.message}`)
+      totalErrors++
+    })
+
+    page.on('requestfailed', req => {
+      console.error(`[REQUEST FAILED] [${vp.name}] ${req.url()}: ${req.failure()?.errorText || 'failed'}`)
+      totalErrors++
     })
 
     page.on('response', resp => {
@@ -75,6 +85,45 @@ async function run() {
       if (!hasMarker) {
         console.error(`[MARKER MISSING] ${url} does not have data-design-version="cream-purple-v2"`)
         totalErrors++
+      }
+
+      // Trigger eager loading on all images and wait for complete decoding
+      const imgIssues = await page.evaluate(async () => {
+        const imgs = Array.from(document.querySelectorAll('img'))
+        for (const img of imgs) {
+          if (img.loading === 'lazy') {
+            img.loading = 'eager'
+          }
+        }
+        await Promise.all(
+          imgs.map(img => {
+            if (img.complete) return Promise.resolve()
+            return new Promise(resolve => {
+              img.addEventListener('load', () => resolve(), { once: true })
+              img.addEventListener('error', () => resolve(), { once: true })
+              setTimeout(resolve, 4000)
+            })
+          })
+        )
+
+        const broken = []
+        for (const img of imgs) {
+          if (!img.complete) {
+            broken.push({ src: img.src, reason: 'complete === false' })
+            continue
+          }
+          const isDecorative = img.getAttribute('aria-hidden') === 'true' || img.getAttribute('role') === 'presentation'
+          if (!isDecorative && (img.naturalWidth === 0 || img.naturalHeight === 0)) {
+            broken.push({ src: img.src, reason: 'naturalWidth/height === 0' })
+          }
+        }
+        return broken
+      })
+      if (imgIssues.length > 0) {
+        for (const issue of imgIssues) {
+          console.error(`[BROKEN IMAGE] [${vp.name}] ${p.name}: ${issue.src} (${issue.reason})`)
+        }
+        totalFailedImages += imgIssues.length
       }
 
       // Check horizontal overflow
@@ -121,7 +170,8 @@ async function run() {
           await el.screenshot({ path: sPath })
           console.log(`Saved section screenshot: ${sPath}`)
         } else {
-          console.warn(`[SECTION MISSING] Selector not found: ${s.selector}`)
+          console.error(`[SECTION MISSING] Required section selector not found: ${s.selector}`)
+          totalErrors++
         }
       }
     }

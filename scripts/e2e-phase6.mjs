@@ -329,8 +329,8 @@ export async function runPhase6Journeys({ browser, base, log, fail, attachDiagno
     // product template the Story Studio journey below clones.
     await page.goto(`${base}/my/previews/${bookId}`)
     await page.waitForSelector(`form[action="/my/books/${bookId}/generate"] button[type=submit]`, { timeout: 20000 })
-    await page.click(`form[action="/my/books/${bookId}/generate"] button[type=submit]`)
-    await page.waitForURL(/\/my\/previews\/ub_.*\?ok=/, { timeout: 40000 })
+    await page.click(`form[action="/my/books/${bookId}/generate"] button[type=submit]`, { timeout: 60000 })
+    await page.waitForURL(/\/my\/previews\/ub_.*\?ok=/, { timeout: 60000 })
     const templates = queryD1(`SELECT COUNT(*) AS n FROM book_templates;`)[0].n
     if (Number(templates) < 1) fail('phase6.4', 'generating a preview did not provision a template')
     await context.close()

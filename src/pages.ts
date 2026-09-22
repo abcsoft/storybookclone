@@ -232,7 +232,7 @@ function renderBlock(
           </div>
           <div class="hero-badge-floating" aria-hidden="true">
             <img src="/static/assets/icons/star.svg" alt="" width="20" height="20">
-            <span>Keepsake Quality</span>
+            <span>Personalised Stories</span>
           </div>
         </div>`
       return `
@@ -314,7 +314,7 @@ function renderBlock(
             </div>
             <h3>Choose a story</h3>
             <p>Every title lists the reading age and format, and collections group them by theme.</p>
-            <div class="step-badge-mini">Curated catalogue</div>
+            <div class="step-badge-mini">Story catalogue</div>
           </li>
           <li class="step step-card">
             <div class="step-card-header">
@@ -325,7 +325,7 @@ function renderBlock(
             </div>
             <h3>Upload one photo</h3>
             <p>${esc(humanPhotoPolicy())}</p>
-            <div class="step-badge-mini">Private & secure</div>
+            <div class="step-badge-mini">Photo upload</div>
           </li>
           <li class="step step-card">
             <div class="step-card-header">
@@ -467,13 +467,13 @@ function renderBlock(
     <div class="wrap">
       <div class="sticker-feature-card">
         <div class="sticker-copy">
-          <div class="sticker-tag"><img src="/static/assets/icons/gift.svg" alt="" width="16" height="16"> <span>${esc(block.eyebrow || 'Keepsake Add-on')}</span></div>
+          <div class="sticker-tag"><img src="/static/assets/icons/gift.svg" alt="" width="16" height="16"> <span>${esc(block.eyebrow || 'Sticker Add-on')}</span></div>
           <h2>${esc(block.title)}</h2>
           <p class="sticker-sub">${esc(block.subtitle)}</p>
           <ul class="sticker-perks">
-            <li><img src="/static/assets/icons/check.svg" alt="" width="16" height="16"> <span>Features the same photo and name as their story</span></li>
-            <li><img src="/static/assets/icons/check.svg" alt="" width="16" height="16"> <span>Premium durable matte-finish vinyl stickers</span></li>
-            <li><img src="/static/assets/icons/check.svg" alt="" width="16" height="16"> <span>Great for water bottles, lunchboxes and notebooks</span></li>
+            <li><img src="/static/assets/icons/check.svg" alt="" width="16" height="16"> <span>Personalised with your child's name and character</span></li>
+            <li><img src="/static/assets/icons/check.svg" alt="" width="16" height="16"> <span>Sheet of illustrated character stickers</span></li>
+            <li><img src="/static/assets/icons/check.svg" alt="" width="16" height="16"> <span>Pairs with any storybook in your cart</span></li>
           </ul>
           <div class="sticker-actions">
             ${cta}
@@ -515,15 +515,15 @@ function renderBlock(
             <div class="editorial-point">
               <div class="point-icon"><img src="/static/assets/icons/book.svg" alt="" width="20" height="20"></div>
               <div>
-                <strong>Archival Quality Keepsake</strong>
-                <p>Heavyweight paper and sturdy square binding made for little hands.</p>
+                <strong>Square Picture Book Format</strong>
+                <p>210 × 210 mm format with illustrated full-colour story pages.</p>
               </div>
             </div>
             <div class="editorial-point">
               <div class="point-icon"><img src="/static/assets/icons/user.svg" alt="" width="20" height="20"></div>
               <div>
-                <strong>Private & Secure Creation</strong>
-                <p>Your uploaded photo is used solely to generate your preview.</p>
+                <strong>Personalised Preview Process</strong>
+                <p>Upload a clear photo to preview your book before adding it to your cart.</p>
               </div>
             </div>
           </div>

@@ -85,7 +85,7 @@ function defaultPdp(product: Product): PdpBlockData {
     accordions: [
       { id: 1, title: 'How is the book personalised for my child?', body: `Creating ${product.title} is quick: upload a clear front-facing photo, enter their name and age, then choose the style. The photo is used to place your child's face across the story so they truly feel like the hero.`, sort_order: 1, active: 1 },
       { id: 2, title: 'What if I need to make changes after personalising?', body: 'You can edit your book from the cart at any time before ordering — each edit is saved as a new, immutable revision. After ordering, the details are fixed for that order.', sort_order: 2, active: 1 },
-      { id: 3, title: 'Size & Quality', body: isBook ? 'Premium hardcover, large square format, 30+ beautifully illustrated pages. Designed to feel like a keepsake — sturdy, vibrant, and made to last.' : 'Six glossy vinyl sheets (40+ stickers) on premium self-adhesive vinyl. Water-resistant and built for kid hands.', sort_order: 3, active: 1 }
+      { id: 3, title: 'Size & Quality', body: isBook ? 'Square picture book format with illustrated pages. Format details are listed in the Product Facts section below.' : 'Personalised sticker sheets. Format details are listed in the Product Facts section below.', sort_order: 3, active: 1 }
     ],
     steps: defaultSteps,
     tips: [
@@ -270,8 +270,8 @@ export function productDetailPage(d: PdpData, pathPrefix: string) {
   <section class="pdp-hero">
     <div class="pdp-hero-inner">
       <div class="pdp-gallery">
-        <div class="pdp-thumbs"${galleryViews.length === 1 ? ' data-single="1"' : ''}>
-          ${galleryViews.map((g, i) => `<button class="pdp-thumb ${i === 0 ? 'active' : ''}" data-idx="${i}"${g.caption ? ` data-caption="${esc(g.caption)}"` : ''} aria-label="${g.caption ? esc(g.caption) : `View image ${i + 1}`}"><img src="${esc(g.image_url)}" alt="${esc(g.alt)}" width="72" height="72" loading="lazy" decoding="async"></button>`).join('')}
+        <div class="pdp-thumbs"${galleryViews.length === 1 ? ' data-single="1"' : ''} role="tablist" aria-label="Image gallery thumbnails">
+          ${galleryViews.map((g, i) => `<button type="button" role="tab" class="pdp-thumb ${i === 0 ? 'active' : ''}" data-idx="${i}"${g.caption ? ` data-caption="${esc(g.caption)}"` : ''} aria-label="${g.caption ? esc(g.caption) : `View image ${i + 1}`}" aria-selected="${i === 0 ? 'true' : 'false'}"${i === 0 ? ' aria-current="true"' : ''} tabindex="${i === 0 ? '0' : '-1'}"><img src="${esc(g.image_url)}" alt="${esc(g.alt)}" width="72" height="72" loading="lazy" decoding="async"></button>`).join('')}
         </div>
         <div class="pdp-main-img" id="pdp-main-img">
           <img id="pdp-main-image" src="${esc(galleryViews[0]?.image_url || p.image)}" alt="${esc(galleryViews[0]?.alt || p.title)}" data-count="${galleryViews.length}" width="720" height="720" fetchpriority="high" decoding="async">

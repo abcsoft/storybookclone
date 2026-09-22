@@ -542,35 +542,56 @@ export async function bootstrapLocalDefaults(db: D1Database, bootstrap?: { email
   await db.prepare("UPDATE cms_blocks SET image_path = '/static/assets/extras/sticker-pack.webp', image_alt = 'Personalised illustrated sticker sheet' WHERE key = 'home.stickers' AND image_path = '/static/img/art/stickers-header.svg'").run()
   await db.prepare("UPDATE cms_blocks SET image_path = '/static/assets/features/open-book-girl.webp', image_alt = 'Child reading personalised storybook with magical glow' WHERE key = 'home.cta' AND image_path = '/static/img/art/cta-reading.svg'").run()
 
+  // PDP Gallery for The Lantern and the Long Night:
+  // 1. Safe upgrade for known legacy generated SVG gallery (if all rows are legacy).
   await db.prepare(`
-    INSERT INTO pdp_gallery (product_id, image_url, alt, sort_order, active)
-    SELECT p.id, '/static/assets/product/lantern-cover.webp', 'Cover of The Lantern and the Long Night', 1, 1
-      FROM products p WHERE p.slug = 'the-lantern-and-the-long-night'
-       AND NOT EXISTS (SELECT 1 FROM pdp_gallery pg WHERE pg.product_id = p.id AND pg.image_url = '/static/assets/product/lantern-cover.webp')
+    DELETE FROM pdp_gallery
+     WHERE product_id = (SELECT id FROM products WHERE slug = 'the-lantern-and-the-long-night')
+       AND image_url IN ('/static/img/art/cover-the-lantern-and-the-long-night.svg', '/static/img/art/hero.svg')
+       AND NOT EXISTS (
+         SELECT 1 FROM pdp_gallery pg
+          WHERE pg.product_id = (SELECT id FROM products WHERE slug = 'the-lantern-and-the-long-night')
+            AND pg.image_url NOT IN ('/static/img/art/cover-the-lantern-and-the-long-night.svg', '/static/img/art/hero.svg')
+       )
   `).run()
+
+  // 2. Install approved Lantern gallery ONLY if gallery is currently empty (untouched seed or after legacy upgrade).
+  // Never append to custom/mixed galleries, and never resurrect admin-deleted items.
   await db.prepare(`
     INSERT INTO pdp_gallery (product_id, image_url, alt, sort_order, active)
-    SELECT p.id, '/static/assets/product/open-book-feature.webp', 'Open book spread with glowing lantern', 2, 1
-      FROM products p WHERE p.slug = 'the-lantern-and-the-long-night'
-       AND NOT EXISTS (SELECT 1 FROM pdp_gallery pg WHERE pg.product_id = p.id AND pg.image_url = '/static/assets/product/open-book-feature.webp')
+    SELECT p.id, v.image_url, v.alt, v.sort_order, 1
+      FROM products p
+      JOIN (
+        SELECT '/static/assets/product/lantern-cover.webp' AS image_url, 'Cover of The Lantern and the Long Night' AS alt, 1 AS sort_order
+        UNION ALL SELECT '/static/assets/product/open-book-feature.webp', 'Open book spread with glowing lantern', 2
+        UNION ALL SELECT '/static/assets/product/gallery-01.webp', 'Inside page detail showing lantern light', 3
+        UNION ALL SELECT '/static/assets/product/gallery-02.webp', 'Inside page detail showing the snowy path', 4
+        UNION ALL SELECT '/static/assets/product/gallery-03.webp', 'Inside page detail showing sunrise over the hills', 5
+      ) v
+     WHERE p.slug = 'the-lantern-and-the-long-night'
+       AND NOT EXISTS (SELECT 1 FROM pdp_gallery pg WHERE pg.product_id = p.id)
   `).run()
+
+  // Ensure Lantern cover and gallery rows in product_media if not already present or admin-customized.
   await db.prepare(`
-    INSERT INTO pdp_gallery (product_id, image_url, alt, sort_order, active)
-    SELECT p.id, '/static/assets/product/gallery-01.webp', 'Inside page detail showing lantern light', 3, 1
+    INSERT OR IGNORE INTO product_media (product_id, media_id, role, sort_order)
+    SELECT p.id, (SELECT id FROM media_assets WHERE public_path = '/static/assets/books/lantern.webp'), 'cover', 0
       FROM products p WHERE p.slug = 'the-lantern-and-the-long-night'
-       AND NOT EXISTS (SELECT 1 FROM pdp_gallery pg WHERE pg.product_id = p.id AND pg.image_url = '/static/assets/product/gallery-01.webp')
   `).run()
+
   await db.prepare(`
-    INSERT INTO pdp_gallery (product_id, image_url, alt, sort_order, active)
-    SELECT p.id, '/static/assets/product/gallery-02.webp', 'Inside page detail showing the snowy path', 4, 1
-      FROM products p WHERE p.slug = 'the-lantern-and-the-long-night'
-       AND NOT EXISTS (SELECT 1 FROM pdp_gallery pg WHERE pg.product_id = p.id AND pg.image_url = '/static/assets/product/gallery-02.webp')
-  `).run()
-  await db.prepare(`
-    INSERT INTO pdp_gallery (product_id, image_url, alt, sort_order, active)
-    SELECT p.id, '/static/assets/product/gallery-03.webp', 'Inside page detail showing sunrise over the hills', 5, 1
-      FROM products p WHERE p.slug = 'the-lantern-and-the-long-night'
-       AND NOT EXISTS (SELECT 1 FROM pdp_gallery pg WHERE pg.product_id = p.id AND pg.image_url = '/static/assets/product/gallery-03.webp')
+    INSERT OR IGNORE INTO product_media (product_id, media_id, role, sort_order)
+    SELECT p.id, m.id, 'gallery', v.sort_order
+      FROM products p
+      JOIN (
+        SELECT '/static/assets/product/open-book-feature.webp' AS public_path, 1 AS sort_order
+        UNION ALL SELECT '/static/assets/product/gallery-01.webp', 2
+        UNION ALL SELECT '/static/assets/product/gallery-02.webp', 3
+        UNION ALL SELECT '/static/assets/product/gallery-03.webp', 4
+      ) v
+      JOIN media_assets m ON m.public_path = v.public_path
+     WHERE p.slug = 'the-lantern-and-the-long-night'
+       AND NOT EXISTS (SELECT 1 FROM product_media pm WHERE pm.product_id = p.id AND pm.role = 'gallery')
   `).run()
 }
 

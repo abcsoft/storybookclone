@@ -137,44 +137,31 @@ INSERT OR IGNORE INTO media_assets (public_path, alt_text, width, height, mime_t
   ('/static/assets/product/gallery-03.webp', 'Inside page detail: morning dawn over the mountain', 600, 400, 'image/webp', 'generated');
 
 -- 5. PDP Gallery for The Lantern and the Long Night
-INSERT INTO pdp_gallery (product_id, image_url, alt, sort_order, active)
-SELECT p.id, '/static/assets/product/lantern-cover.webp', 'Cover of The Lantern and the Long Night', 1, 1
-  FROM products p
- WHERE p.slug = 'the-lantern-and-the-long-night'
+-- Upgrade known legacy generated SVG gallery items (if and only if the gallery contains solely legacy SVGs)
+DELETE FROM pdp_gallery
+ WHERE product_id = (SELECT id FROM products WHERE slug = 'the-lantern-and-the-long-night')
+   AND image_url IN ('/static/img/art/cover-the-lantern-and-the-long-night.svg', '/static/img/art/hero.svg')
    AND NOT EXISTS (
-     SELECT 1 FROM pdp_gallery pg WHERE pg.product_id = p.id AND pg.image_url = '/static/assets/product/lantern-cover.webp'
+     SELECT 1 FROM pdp_gallery pg
+      WHERE pg.product_id = (SELECT id FROM products WHERE slug = 'the-lantern-and-the-long-night')
+        AND pg.image_url NOT IN ('/static/img/art/cover-the-lantern-and-the-long-night.svg', '/static/img/art/hero.svg')
    );
 
+-- Install approved Lantern gallery ONLY when the gallery is currently empty (untouched seed or after legacy upgrade).
+-- If an administrator has customized or deleted items, preserve their choices and never append.
 INSERT INTO pdp_gallery (product_id, image_url, alt, sort_order, active)
-SELECT p.id, '/static/assets/product/open-book-feature.webp', 'Open book spread with glowing lantern', 2, 1
+SELECT p.id, v.image_url, v.alt, v.sort_order, 1
   FROM products p
+  JOIN (
+    SELECT '/static/assets/product/lantern-cover.webp' AS image_url, 'Cover of The Lantern and the Long Night' AS alt, 1 AS sort_order
+    UNION ALL SELECT '/static/assets/product/open-book-feature.webp', 'Open book spread with glowing lantern', 2
+    UNION ALL SELECT '/static/assets/product/gallery-01.webp', 'Inside page detail showing lantern light', 3
+    UNION ALL SELECT '/static/assets/product/gallery-02.webp', 'Inside page detail showing the snowy path', 4
+    UNION ALL SELECT '/static/assets/product/gallery-03.webp', 'Inside page detail showing sunrise over the hills', 5
+  ) v
  WHERE p.slug = 'the-lantern-and-the-long-night'
    AND NOT EXISTS (
-     SELECT 1 FROM pdp_gallery pg WHERE pg.product_id = p.id AND pg.image_url = '/static/assets/product/open-book-feature.webp'
-   );
-
-INSERT INTO pdp_gallery (product_id, image_url, alt, sort_order, active)
-SELECT p.id, '/static/assets/product/gallery-01.webp', 'Inside page detail showing lantern light', 3, 1
-  FROM products p
- WHERE p.slug = 'the-lantern-and-the-long-night'
-   AND NOT EXISTS (
-     SELECT 1 FROM pdp_gallery pg WHERE pg.product_id = p.id AND pg.image_url = '/static/assets/product/gallery-01.webp'
-   );
-
-INSERT INTO pdp_gallery (product_id, image_url, alt, sort_order, active)
-SELECT p.id, '/static/assets/product/gallery-02.webp', 'Inside page detail showing the snowy path', 4, 1
-  FROM products p
- WHERE p.slug = 'the-lantern-and-the-long-night'
-   AND NOT EXISTS (
-     SELECT 1 FROM pdp_gallery pg WHERE pg.product_id = p.id AND pg.image_url = '/static/assets/product/gallery-02.webp'
-   );
-
-INSERT INTO pdp_gallery (product_id, image_url, alt, sort_order, active)
-SELECT p.id, '/static/assets/product/gallery-03.webp', 'Inside page detail showing sunrise over the hills', 5, 1
-  FROM products p
- WHERE p.slug = 'the-lantern-and-the-long-night'
-   AND NOT EXISTS (
-     SELECT 1 FROM pdp_gallery pg WHERE pg.product_id = p.id AND pg.image_url = '/static/assets/product/gallery-03.webp'
+     SELECT 1 FROM pdp_gallery pg WHERE pg.product_id = p.id
    );
 
 -- 6. Product Media associations
@@ -185,25 +172,23 @@ UPDATE product_media
    AND media_id = (SELECT id FROM media_assets WHERE public_path = '/static/img/art/cover-the-lantern-and-the-long-night.svg');
 
 INSERT OR IGNORE INTO product_media (product_id, media_id, role, sort_order)
-SELECT p.id, m.id, 'spread', 1
+SELECT p.id, (SELECT id FROM media_assets WHERE public_path = '/static/assets/books/lantern.webp'), 'cover', 0
   FROM products p
-  JOIN media_assets m ON m.public_path = '/static/assets/product/open-book-feature.webp'
  WHERE p.slug = 'the-lantern-and-the-long-night';
 
+-- Install approved gallery items ONLY if product_media has no existing gallery rows for this product,
+-- ensuring administrator-customized gallery associations are never overwritten or appended to.
 INSERT OR IGNORE INTO product_media (product_id, media_id, role, sort_order)
-SELECT p.id, m.id, 'detail', 2
+SELECT p.id, m.id, 'gallery', v.sort_order
   FROM products p
-  JOIN media_assets m ON m.public_path = '/static/assets/product/gallery-01.webp'
- WHERE p.slug = 'the-lantern-and-the-long-night';
-
-INSERT OR IGNORE INTO product_media (product_id, media_id, role, sort_order)
-SELECT p.id, m.id, 'detail', 3
-  FROM products p
-  JOIN media_assets m ON m.public_path = '/static/assets/product/gallery-02.webp'
- WHERE p.slug = 'the-lantern-and-the-long-night';
-
-INSERT OR IGNORE INTO product_media (product_id, media_id, role, sort_order)
-SELECT p.id, m.id, 'detail', 4
-  FROM products p
-  JOIN media_assets m ON m.public_path = '/static/assets/product/gallery-03.webp'
- WHERE p.slug = 'the-lantern-and-the-long-night';
+  JOIN (
+    SELECT '/static/assets/product/open-book-feature.webp' AS public_path, 1 AS sort_order
+    UNION ALL SELECT '/static/assets/product/gallery-01.webp', 2
+    UNION ALL SELECT '/static/assets/product/gallery-02.webp', 3
+    UNION ALL SELECT '/static/assets/product/gallery-03.webp', 4
+  ) v
+  JOIN media_assets m ON m.public_path = v.public_path
+ WHERE p.slug = 'the-lantern-and-the-long-night'
+   AND NOT EXISTS (
+     SELECT 1 FROM product_media pm WHERE pm.product_id = p.id AND pm.role = 'gallery'
+   );
