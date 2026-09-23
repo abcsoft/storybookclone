@@ -93,7 +93,7 @@ export function productCard(p: Product, fmt: Money): string {
   <article class="product-card book-card" data-slug="${esc(p.slug)}">
     <a class="card-cover-wrap" href="${esc(link)}" aria-label="${esc(p.title)}">
       <div class="card-spine-accent" aria-hidden="true"></div>
-      <img src="${esc(p.image)}" alt="${esc(p.title)}" loading="lazy" decoding="async" width="600" height="600">
+      <img src="${esc(p.image)}" alt="${esc(p.title)}" loading="lazy" decoding="async" width="600" height="338">
       ${badges.map((b) => `<span class="badge ${esc(b.className)} card-badge-${esc(b.slot)}">${esc(b.label)}</span>`).join('')}
     </a>
     <div class="card-body">
@@ -102,7 +102,6 @@ export function productCard(p: Product, fmt: Money): string {
         ${p.career ? `<span class="card-career-tag">Career story</span>` : ''}
       </div>
       <h3 class="card-title"><a href="${esc(link)}">${esc(p.title)}</a></h3>
-      <p class="card-tagline">${esc(p.tagline || p.description.slice(0, 90))}</p>
       <div class="card-foot">
         <p class="card-price">
           ${available ? `<strong>${esc(fmt(minor as number))}</strong>${compareShown ? ` <s>${esc(fmt(compareShown))}</s>` : ''}` : '<span class="unavailable">Not available in your currency</span>'}
@@ -119,24 +118,17 @@ export function productGrid(items: Product[], fmt: Money): string {
 }
 
 /**
- * The heading of a section: a small label and the shelf title.
- *
- * The heading carries the shelf title and nothing else. It deliberately does
- * NOT render the block's `subtitle`: those subtitles were written as notes about
- * how the store is built (which server enforces what, which claim is not being
- * made), and rendering them as storefront copy made the shop read like a test
- * harness. The honest, customer-facing statements now live where a shopper looks
- * for them — the promotional band, the footer's "How this store works"
- * disclosure, the product page's own notes and the FAQs.
+ * The heading of a section: eyebrow, title, optional subtitle, and optional link.
  */
-function sectionHead(opts: { eyebrow?: string; title: string; linkLabel?: string; linkHref?: string; centered?: boolean }): string {
+function sectionHead(opts: { eyebrow?: string; title: string; subtitle?: string; linkLabel?: string; linkHref?: string; centered?: boolean }): string {
   return `
       <div class="section-head${opts.centered ? ' centered' : ''}">
-        <div>
+        <div class="section-head-copy">
           ${opts.eyebrow ? `<p class="eyebrow">${esc(opts.eyebrow)}</p>` : ''}
           <h2>${esc(opts.title)}</h2>
+          ${opts.subtitle ? `<p class="section-sub">${esc(opts.subtitle)}</p>` : ''}
         </div>
-        ${opts.linkLabel && opts.linkHref ? `<a class="link" href="${esc(opts.linkHref)}">${esc(opts.linkLabel)} ${icon('arrow-right')}</a>` : ''}
+        ${opts.linkLabel && opts.linkHref ? `<a class="link section-head-link" href="${esc(opts.linkHref)}">${esc(opts.linkLabel)} ${icon('arrow-right')}</a>` : ''}
       </div>`
 }
 
@@ -264,7 +256,7 @@ function renderBlock(
         return `
   <section class="${sectionClass(tone, 'shelf-section-redesigned')}">
     <div class="wrap">
-      ${sectionHead({ eyebrow: block.eyebrow, title: block.title })}
+      ${sectionHead({ eyebrow: block.eyebrow, title: block.title, subtitle: block.subtitle })}
       ${emptyState({ title: 'Nothing in this section yet', body: 'No titles are linked to this section. An administrator can add them in the catalogue.', actionLabel: 'Browse everything', actionHref: '/books' })}
     </div>
   </section>`
@@ -272,7 +264,7 @@ function renderBlock(
       return `
   <section class="${sectionClass(tone, 'shelf-section-redesigned')}">
     <div class="wrap">
-      ${sectionHead({ eyebrow: block.eyebrow, title: block.title, linkLabel: block.ctaLabel, linkHref: block.ctaHref })}
+      ${sectionHead({ eyebrow: block.eyebrow, title: block.title, subtitle: block.subtitle, linkLabel: block.ctaLabel, linkHref: block.ctaHref })}
       ${productGrid(products, fmt)}
     </div>
   </section>`
@@ -282,7 +274,7 @@ function renderBlock(
         return `
   <section class="${sectionClass(tone, 'collection-grid-redesigned')}">
     <div class="wrap">
-      ${sectionHead({ eyebrow: block.eyebrow, title: block.title, centered: true })}
+      ${sectionHead({ eyebrow: block.eyebrow, title: block.title, subtitle: block.subtitle, centered: true })}
       ${emptyState({ title: 'No collections here yet', body: 'No collections of this kind are published. An administrator can create one in the catalogue.', actionLabel: 'Browse everything', actionHref: '/books' })}
     </div>
   </section>`
@@ -290,7 +282,7 @@ function renderBlock(
       return `
   <section class="${sectionClass(tone, 'collection-grid-redesigned')}">
     <div class="wrap">
-      ${sectionHead({ eyebrow: block.eyebrow, title: block.title, centered: true, linkLabel: block.ctaLabel, linkHref: block.ctaHref })}
+      ${sectionHead({ eyebrow: block.eyebrow, title: block.title, subtitle: block.subtitle, centered: true, linkLabel: block.ctaLabel, linkHref: block.ctaHref })}
       <div class="grid-3 collection-list">
         ${collections.map((c) => collectionCard(c)).join('')}
       </div>
@@ -301,7 +293,7 @@ function renderBlock(
       return `
   <section class="${sectionClass(tone, 'steps-section-redesigned')}">
     <div class="wrap">
-      ${sectionHead({ eyebrow: block.eyebrow, title: block.title, centered: true })}
+      ${sectionHead({ eyebrow: block.eyebrow, title: block.title, subtitle: block.subtitle, centered: true })}
       <div class="steps-container">
         <div class="steps-track" aria-hidden="true"></div>
         <ol class="steps steps-modern">
@@ -358,7 +350,7 @@ function renderBlock(
       return `
   <section class="${sectionClass(tone, 'photo-guidance-redesigned')}">
     <div class="wrap">
-      ${sectionHead({ eyebrow: block.eyebrow, title: block.title, centered: true })}
+      ${sectionHead({ eyebrow: block.eyebrow, title: block.title, subtitle: block.subtitle, centered: true })}
       
       <!-- Interactive Visual Showcase: Photo to Illustration -->
       <div class="photo-transformation-showcase">
@@ -418,7 +410,7 @@ function renderBlock(
       return `
   <section class="${sectionClass(tone, 'age-section-redesigned')}">
     <div class="wrap">
-      ${sectionHead({ eyebrow: block.eyebrow, title: block.title, centered: true })}
+      ${sectionHead({ eyebrow: block.eyebrow, title: block.title, subtitle: block.subtitle, centered: true })}
       <div class="age-discovery-grid">
         <a class="age-tile age-tile-early" href="/books?age=2-4">
           <div class="age-tile-header">
@@ -493,7 +485,7 @@ function renderBlock(
       return `
   <section class="${sectionClass(tone, 'faq-preview-redesigned')}">
     <div class="wrap wrap-narrow">
-      ${sectionHead({ eyebrow: block.eyebrow, title: block.title, centered: true })}
+      ${sectionHead({ eyebrow: block.eyebrow, title: block.title, subtitle: block.subtitle, centered: true })}
       <div class="faq-accordion-container">
         ${faqAccordion(faqs.slice(0, block.maxItems || 5))}
       </div>

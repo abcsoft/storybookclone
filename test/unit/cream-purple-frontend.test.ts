@@ -111,15 +111,22 @@ describe('Data-to-Asset Layer & Migration 0034 Invariants', () => {
     // Apply migration 0034
     db.exec(readFileSync(join(migrationsDir, '0034_cream_purple_assets.sql'), 'utf8'))
 
-    // After migration 0034, untouched seeded products point to approved assets
+    // After migration 0034, untouched seeded products pointed to reference thumbnails
+    const product34 = db.prepare("SELECT image FROM products WHERE slug = 'the-lantern-and-the-long-night'").get() as { image: string }
+    expect(product34.image).toBe('/static/assets/books/lantern.webp')
+
+    // Apply forward migration 0036 to restore authoritative vector production artwork
+    db.exec(readFileSync(join(migrationsDir, '0036_restore_production_artwork.sql'), 'utf8'))
+
+    // After migration 0036, untouched seeded products point to authoritative SVG artwork
     const product = db.prepare("SELECT image FROM products WHERE slug = 'the-lantern-and-the-long-night'").get() as { image: string }
-    expect(product.image).toBe('/static/assets/books/lantern.webp')
+    expect(product.image).toBe('/static/img/art/cover-the-lantern-and-the-long-night.svg')
 
     const collection = db.prepare("SELECT hero_image FROM collections WHERE slug = 'adventure-and-discovery'").get() as { hero_image: string }
-    expect(collection.hero_image).toBe('/static/assets/categories/adventure.webp')
+    expect(collection.hero_image).toBe('/static/img/art/cover-the-little-explorer.svg')
   })
 
-  it('preserves an administrator-customized media path', () => {
+  it('preserves an administrator-customized media path across migrations 0034 and 0036', () => {
     const db = new DatabaseSync(':memory:')
     const migrationsDir = join(root, 'migrations')
     const files = readdirSync(migrationsDir).filter((f) => f.endsWith('.sql')).sort()
@@ -137,8 +144,15 @@ describe('Data-to-Asset Layer & Migration 0034 Invariants', () => {
     db.exec(readFileSync(join(migrationsDir, '0034_cream_purple_assets.sql'), 'utf8'))
 
     // The admin's customized image must be preserved without overwrite
-    const p = db.prepare("SELECT image FROM products WHERE slug = 'the-lantern-and-the-long-night'").get() as { image: string }
-    expect(p.image).toBe('/uploads/custom-art-by-admin.webp')
+    const p34 = db.prepare("SELECT image FROM products WHERE slug = 'the-lantern-and-the-long-night'").get() as { image: string }
+    expect(p34.image).toBe('/uploads/custom-art-by-admin.webp')
+
+    // Apply forward migration 0036
+    db.exec(readFileSync(join(migrationsDir, '0036_restore_production_artwork.sql'), 'utf8'))
+
+    // The admin's customized image must still be preserved without overwrite
+    const p36 = db.prepare("SELECT image FROM products WHERE slug = 'the-lantern-and-the-long-night'").get() as { image: string }
+    expect(p36.image).toBe('/uploads/custom-art-by-admin.webp')
   })
 
   it('is idempotent: re-applying migration 0034 causes zero duplicate rows or unwanted mutations', () => {
@@ -236,11 +250,13 @@ describe('Storefront Structural Redesign (Homepage & PDP)', () => {
     // Extras
     expect(html).toContain('/static/assets/extras/sticker-pack.webp')
 
-    // Category banners
-    expect(html).toContain('/static/assets/categories/adventure.webp')
+    // Category banners point to authoritative vector art
+    expect(html).toContain('/static/img/art/cover-the-little-explorer.svg')
+    expect(html).not.toContain('/static/assets/categories/adventure.webp')
 
-    // Book covers from approved assets
-    expect(html).toContain('/static/assets/books/lantern.webp')
+    // Book covers point to authoritative vector art
+    expect(html).toContain('/static/img/art/cover-the-lantern-and-the-long-night.svg')
+    expect(html).not.toContain('/static/assets/books/lantern.webp')
 
     // Clean icons
     expect(html).toContain('/static/assets/icons/book.svg')

@@ -518,25 +518,26 @@ export async function bootstrapLocalDefaults(db: D1Database, bootstrap?: { email
     )
     .run()
 
-  // V2 Cream-Purple asset mappings (mirrors migration 0034; idempotent).
-  // Ensures fresh installations where products are inserted from fixture
-  // receive approved assets, while preserving any custom operator edits.
-  await db.prepare("UPDATE products SET image = '/static/assets/books/lantern.webp' WHERE slug = 'the-lantern-and-the-long-night' AND image = '/static/img/art/cover-the-lantern-and-the-long-night.svg'").run()
-  await db.prepare("UPDATE products SET image = '/static/assets/books/moon-garden.webp' WHERE slug = 'the-moon-garden' AND image = '/static/img/art/cover-the-moon-garden.svg'").run()
-  await db.prepare("UPDATE products SET image = '/static/assets/books/snowy-friend.webp' WHERE slug = 'the-snow-fox' AND image = '/static/img/art/cover-the-snow-fox.svg'").run()
-  await db.prepare("UPDATE products SET image = '/static/assets/books/quiet-dream.webp' WHERE slug = 'the-quiet-drum' AND image = '/static/img/art/cover-the-quiet-drum.svg'").run()
-  await db.prepare("UPDATE products SET image = '/static/assets/books/forest.webp' WHERE slug = 'the-forest-that-sang' AND image = '/static/img/art/cover-the-forest-that-sang.svg'").run()
-  await db.prepare("UPDATE products SET image = '/static/assets/books/sunbeam-sea.webp' WHERE slug = 'the-puddle-who-met-the-sea' AND image = '/static/img/art/cover-the-puddle-who-met-the-sea.svg'").run()
-  await db.prepare("UPDATE products SET image = '/static/assets/books/vet.webp' WHERE slug = 'the-kind-vet' AND image = '/static/img/art/cover-the-kind-vet.svg'").run()
-  await db.prepare("UPDATE products SET image = '/static/assets/books/firefighter.webp' WHERE slug = 'the-little-fire-crew' AND image = '/static/img/art/cover-the-little-fire-crew.svg'").run()
-  await db.prepare("UPDATE products SET image = '/static/assets/books/pilot.webp' WHERE slug = 'up-in-the-clouds' AND image = '/static/img/art/cover-up-in-the-clouds.svg'").run()
-  await db.prepare("UPDATE products SET image = '/static/assets/books/chef.webp' WHERE slug = 'the-brave-little-baker' AND image = '/static/img/art/cover-the-brave-little-baker.svg'").run()
+  // V2 Cream-Purple production artwork restoration (mirrors migration 0036; idempotent).
+  // Ensures fresh installations and local dev use authoritative, sharp vector artwork.
+  await db.prepare("UPDATE products SET image = '/static/img/art/cover-the-lantern-and-the-long-night.svg' WHERE slug = 'the-lantern-and-the-long-night' AND image = '/static/assets/books/lantern.webp'").run()
+  await db.prepare("UPDATE products SET image = '/static/img/art/cover-the-moon-garden.svg' WHERE slug = 'the-moon-garden' AND image = '/static/assets/books/moon-garden.webp'").run()
+  await db.prepare("UPDATE products SET image = '/static/img/art/cover-the-snow-fox.svg' WHERE slug = 'the-snow-fox' AND image = '/static/assets/books/snowy-friend.webp'").run()
+  await db.prepare("UPDATE products SET image = '/static/img/art/cover-the-quiet-drum.svg' WHERE slug = 'the-quiet-drum' AND image = '/static/assets/books/quiet-dream.webp'").run()
+  await db.prepare("UPDATE products SET image = '/static/img/art/cover-the-forest-that-sang.svg' WHERE slug = 'the-forest-that-sang' AND image = '/static/assets/books/forest.webp'").run()
+  await db.prepare("UPDATE products SET image = '/static/img/art/cover-the-puddle-who-met-the-sea.svg' WHERE slug = 'the-puddle-who-met-the-sea' AND image = '/static/assets/books/sunbeam-sea.webp'").run()
+  await db.prepare("UPDATE products SET image = '/static/img/art/cover-the-kind-vet.svg' WHERE slug = 'the-kind-vet' AND image = '/static/assets/books/vet.webp'").run()
+  await db.prepare("UPDATE products SET image = '/static/img/art/cover-the-little-fire-crew.svg' WHERE slug = 'the-little-fire-crew' AND image = '/static/assets/books/firefighter.webp'").run()
+  await db.prepare("UPDATE products SET image = '/static/img/art/cover-up-in-the-clouds.svg' WHERE slug = 'up-in-the-clouds' AND image = '/static/assets/books/pilot.webp'").run()
+  await db.prepare("UPDATE products SET image = '/static/img/art/cover-the-brave-little-baker.svg' WHERE slug = 'the-brave-little-baker' AND image = '/static/assets/books/chef.webp'").run()
 
-  await db.prepare("UPDATE collections SET hero_image = '/static/assets/categories/adventure.webp' WHERE slug = 'adventure-and-discovery' AND hero_image = '/static/img/art/cover-the-little-explorer.svg'").run()
-  await db.prepare("UPDATE collections SET hero_image = '/static/assets/categories/bedtime.webp' WHERE slug = 'bedtime-and-calm' AND hero_image = '/static/img/art/cover-the-lantern-and-the-long-night.svg'").run()
-  await db.prepare("UPDATE collections SET hero_image = '/static/assets/categories/animals.webp' WHERE slug = 'animals-and-nature' AND hero_image = '/static/img/art/cover-the-snow-fox.svg'").run()
-  await db.prepare("UPDATE collections SET hero_image = '/static/assets/categories/friendship.webp' WHERE slug = 'kindness-and-feelings' AND hero_image = '/static/img/art/cover-the-forest-that-sang.svg'").run()
-  await db.prepare("UPDATE collections SET hero_image = '/static/assets/extras/sticker-pack.webp' WHERE slug IN ('all-stickers', 'sticker-packs') AND hero_image IN ('/static/img/art/stickers-header.svg', '/static/img/art/cover-meadow-sticker-sheet.svg')").run()
+  await db.prepare("UPDATE collections SET hero_image = '/static/img/art/cover-the-little-explorer.svg' WHERE slug = 'adventure-and-discovery' AND hero_image = '/static/assets/categories/adventure.webp'").run()
+  await db.prepare("UPDATE collections SET hero_image = '/static/img/art/cover-the-lantern-and-the-long-night.svg' WHERE slug = 'bedtime-and-calm' AND hero_image = '/static/assets/categories/bedtime.webp'").run()
+  await db.prepare("UPDATE collections SET hero_image = '/static/img/art/cover-the-snow-fox.svg' WHERE slug = 'animals-and-nature' AND hero_image = '/static/assets/categories/animals.webp'").run()
+  await db.prepare("UPDATE collections SET hero_image = '/static/img/art/cover-the-forest-that-sang.svg' WHERE slug = 'kindness-and-feelings' AND hero_image = '/static/assets/categories/friendship.webp'").run()
+  await db.prepare("UPDATE collections SET hero_image = '/static/img/art/stickers-header.svg' WHERE slug IN ('all-stickers', 'sticker-packs') AND hero_image = '/static/assets/extras/sticker-pack.webp'").run()
+
+  await db.prepare("UPDATE product_media SET media_id = (SELECT id FROM media_assets WHERE public_path = '/static/img/art/cover-the-lantern-and-the-long-night.svg') WHERE product_id = (SELECT id FROM products WHERE slug = 'the-lantern-and-the-long-night') AND role = 'cover' AND media_id = (SELECT id FROM media_assets WHERE public_path = '/static/assets/books/lantern.webp')").run()
 
   await db.prepare("UPDATE cms_blocks SET image_path = '/static/assets/hero/open-book-boy.webp', image_alt = 'Illustrated child and dog reading a magical glowing storybook' WHERE key = 'home.hero' AND image_path = '/static/img/art/hero.svg'").run()
   await db.prepare("UPDATE cms_blocks SET image_path = '/static/assets/extras/sticker-pack.webp', image_alt = 'Personalised illustrated sticker sheet' WHERE key = 'home.stickers' AND image_path = '/static/img/art/stickers-header.svg'").run()
@@ -575,7 +576,7 @@ export async function bootstrapLocalDefaults(db: D1Database, bootstrap?: { email
   // Ensure Lantern cover and gallery rows in product_media if not already present or admin-customized.
   await db.prepare(`
     INSERT OR IGNORE INTO product_media (product_id, media_id, role, sort_order)
-    SELECT p.id, (SELECT id FROM media_assets WHERE public_path = '/static/assets/books/lantern.webp'), 'cover', 0
+    SELECT p.id, (SELECT id FROM media_assets WHERE public_path = '/static/img/art/cover-the-lantern-and-the-long-night.svg'), 'cover', 0
       FROM products p WHERE p.slug = 'the-lantern-and-the-long-night'
   `).run()
 

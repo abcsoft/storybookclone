@@ -112,7 +112,7 @@
   --space-24: var(--sp-10);
 
   /* Layout. */
-  --content-max: 1180px;
+  --content-max: 1240px;
   --content-narrow: 760px;
   --container: 80rem;
   --section-y: clamp(2.5rem, 5vw, 4rem);
@@ -368,10 +368,16 @@ summary:focus-visible,
   margin-bottom: var(--sp-6);
   flex-wrap: wrap;
 }
-.section-head h2 { font-size: var(--fs-3xl); margin: var(--sp-1) 0 0; max-width: 22ch; }
-.section-head .link { white-space: nowrap; }
+.section-head-copy { display: flex; flex-direction: column; gap: var(--sp-1); }
+.section-head h2 { font-size: clamp(1.6rem, 1.2rem + 1.2vw, 2.1rem); margin: 0; max-width: 26ch; line-height: var(--lh-snug); }
+.section-sub { margin: 0; color: var(--c-muted); font-size: var(--fs-base); max-width: 54ch; line-height: var(--lh-body); }
+.section-head .link,
+.section-head-link { white-space: nowrap; font-weight: 700; color: var(--c-primary); display: inline-flex; align-items: center; gap: var(--sp-1); text-decoration: none; }
+.section-head .link:hover,
+.section-head-link:hover { color: var(--c-primary-strong); text-decoration: underline; text-underline-offset: 3px; }
 .section-head.centered { flex-direction: column; align-items: center; text-align: center; }
-.section-head.centered h2 { max-width: 26ch; }
+.section-head.centered h2 { max-width: 32ch; }
+.section-head.centered .section-sub { max-width: 60ch; }
 
 /* The photo limits the shop accepts, in the shopper's own words. A footnote
    under the tips, never a second headline and never a note about which server
@@ -493,47 +499,58 @@ summary:focus-visible,
   align-items: center;
   gap: var(--sp-2);
   font-family: var(--font-display);
-  font-weight: 700;
-  font-size: var(--fs-xl);
+  font-weight: 800;
+  font-size: 1.35rem;
   letter-spacing: -0.02em;
   color: var(--c-ink);
   min-width: 0;
+  text-decoration: none;
 }
 .brand img { width: 36px; height: 36px; object-fit: contain; }
 .brand span { white-space: nowrap; }
 
 .desktop-nav {
   display: flex;
+  align-items: center;
   justify-content: center;
   flex-wrap: wrap;
-  gap: var(--sp-2) var(--sp-5);
+  gap: var(--sp-2) 24px;
   min-width: 0;
   font-weight: 700;
 }
 .desktop-nav a {
-  padding: var(--sp-2) 0;
+  padding: 8px 0;
   color: var(--c-ink-2);
   border-bottom: 2px solid transparent;
   transition: color var(--dur-1) linear, border-color var(--dur-1) linear;
+  text-decoration: none;
 }
 .desktop-nav a:hover { color: var(--c-primary); }
 .desktop-nav a.active,
 .desktop-nav a[aria-current='page'] { color: var(--c-ink); border-bottom-color: var(--c-accent); }
 .desktop-nav a.nav-cta {
-  padding: var(--sp-2) var(--sp-4);
+  height: 42px;
+  min-height: 42px;
+  padding: 0 20px;
   color: #ffffff;
   background: var(--c-primary);
   border-radius: var(--radius-pill);
   border-bottom: none;
   font-weight: 700;
+  font-size: var(--fs-sm);
   text-decoration: none;
   align-self: center;
-  margin-left: var(--sp-2);
-  transition: background-color var(--dur-1) linear;
+  margin-left: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color var(--dur-1) linear, transform var(--dur-1) linear;
+  box-shadow: var(--shadow-xs);
 }
 .desktop-nav a.nav-cta:hover {
   background: var(--c-primary-strong);
   color: #ffffff;
+  transform: translateY(-1px);
 }
 
 .nav-actions { display: flex; align-items: center; gap: var(--sp-1); justify-self: end; min-width: 0; }
@@ -882,18 +899,17 @@ summary:focus-visible,
 /* --------------------------------------------------------------------------
    9. PRODUCT CARDS + GRIDS
    -------------------------------------------------------------------------- */
-.grid-4 { display: grid; gap: var(--sp-4); grid-template-columns: repeat(4, minmax(0, 1fr)); }
-.grid-3 { display: grid; gap: var(--sp-5); grid-template-columns: repeat(3, minmax(0, 1fr)); }
-.grid-2 { display: grid; gap: var(--sp-5); grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.grid-4 { display: grid; gap: 24px; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.grid-3 { display: grid; gap: 24px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.grid-2 { display: grid; gap: 24px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 
-/* 4-up desktop -> 2-up tablet -> 2-up mobile (1-up only under 400px, where two
-   columns would squeeze the title below a readable measure). */
+/* 4-up desktop -> 2-up tablet -> 1-up mobile */
 @media (max-width: 1023px) {
-  .grid-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .grid-3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .grid-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+  .grid-3 { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
 }
-@media (max-width: 399px) {
-  .grid-4, .grid-3, .grid-2 { grid-template-columns: minmax(0, 1fr); }
+@media (max-width: 640px) {
+  .grid-4, .grid-3, .grid-2 { grid-template-columns: minmax(0, 1fr); gap: 16px; }
 }
 
 .product-card {
@@ -910,67 +926,125 @@ summary:focus-visible,
 .product-card:hover,
 .product-card:focus-within { transform: translateY(-4px); box-shadow: var(--shadow-md); border-color: #e6d3f7; }
 
-/* The image dominates the card. The aspect-ratio is a static guarantee: the
-   cover can never render at zero height, however the image fails to load. */
+/* The image dominates the card in a clean landscape aspect-ratio matching the reference. */
 .card-cover-wrap {
   position: relative;
   display: block;
-  aspect-ratio: 4 / 5;
+  aspect-ratio: 16 / 9;
   overflow: hidden;
   background: var(--c-surface-2);
 }
-.card-cover-wrap img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
-/* Badges ON a card are labels on the artwork, not the loudest thing in the
-   card: a saturated "Most ordered"/"New" pill used to out-shout the product
-   title. They carry the same words on a quiet surface instead, and the saving
-   keeps a berry tint because it is the one badge that states a number. */
+.card-cover-wrap img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+  display: block;
+}
+
 .card-cover-wrap .badge {
   position: absolute;
-  top: var(--sp-3);
+  top: 10px;
   z-index: 1;
-  box-shadow: var(--shadow-sm);
+  padding: 3px 10px;
+  font-size: var(--fs-xs);
+  box-shadow: var(--shadow-xs);
   background: rgba(255, 255, 255, 0.94);
   color: var(--c-ink);
   border: 1px solid var(--c-line);
+  border-radius: var(--radius-pill);
   font-weight: 700;
 }
 .card-cover-wrap .badge-sale { color: var(--c-berry); border-color: var(--c-berry-soft); }
-.card-badge-discount { left: var(--sp-3); }
-.card-badge-flag { right: var(--sp-3); }
+.card-badge-discount { left: 10px; }
+.card-badge-flag { right: 10px; }
 
-.card-body { padding: var(--sp-4) var(--sp-4) var(--sp-5); display: flex; flex-direction: column; gap: var(--sp-2); flex: 1; }
-.card-meta { display: flex; align-items: center; gap: var(--sp-2); margin: 0; font-size: var(--fs-sm); color: var(--c-muted); }
-.card-ages { display: inline-flex; align-items: center; gap: var(--sp-1); }
-/* The TITLE is the loudest thing in the card. It is one step above the badge
-   (which sits on the artwork) and above the meta/price lines, so the shelf reads
-   as a list of stories rather than a list of labels. */
-.card-body h3,
-.card-title { margin: 0; font-size: var(--fs-xl); line-height: var(--lh-snug); }
-.card-title a:hover { color: var(--c-primary-strong); text-decoration: underline; text-underline-offset: 3px; }
-.card-tagline {
+.card-body {
+  padding: 18px 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1;
+}
+.card-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
   margin: 0;
+  font-size: var(--fs-xs);
   color: var(--c-muted);
-  font-size: var(--fs-sm);
-  line-height: 1.55;
-  /* Two lines, so a long tagline cannot make one card taller than its row. */
+  font-weight: 600;
+}
+.card-ages { display: inline-flex; align-items: center; gap: var(--sp-1); }
+
+.card-body h3,
+.card-title {
+  margin: 0;
+  font-size: 1.15rem;
+  line-height: 1.35;
+  font-family: var(--font-display);
+  min-height: 2.8em;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
+.card-title a {
+  color: var(--c-ink);
+  text-decoration: none;
+}
+.card-title a:hover {
+  color: var(--c-primary-strong);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.card-tagline {
+  display: none;
+}
+
 .card-foot {
   margin-top: auto;
-  padding-top: var(--sp-2);
+  padding-top: 10px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: var(--sp-3);
+  gap: var(--sp-2);
   flex-wrap: wrap;
 }
-.card-price { margin: 0; display: flex; align-items: baseline; gap: var(--sp-2); flex-wrap: wrap; }
-.card-price strong { font-size: var(--fs-lg); font-weight: 800; letter-spacing: -0.01em; }
-.card-price s { color: var(--c-muted); font-weight: 600; font-size: var(--fs-sm); }
-.card-cta { flex: 1 1 100%; }
+.card-price {
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.card-price strong {
+  font-size: 1.1rem;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  color: var(--c-ink);
+}
+.card-price s {
+  color: var(--c-muted);
+  font-weight: 600;
+  font-size: var(--fs-xs);
+}
+
+.card-cta {
+  flex: 1 1 100%;
+  min-height: 42px;
+  height: 42px;
+  padding: 0 16px;
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  border-radius: var(--radius-pill);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+}
 
 /* --------------------------------------------------------------------------
    10. HOW IT WORKS (steps)
@@ -1580,8 +1654,8 @@ summary:focus-visible,
 /* --------------------------------------------------------------------------
    28. RESPONSIVE GUARDS (360 / 390 / 768 / 1024 / 1440 / 1920)
    -------------------------------------------------------------------------- */
-@media (min-width: 1440px) { :root { --content-max: 1360px; } }
-@media (min-width: 1920px) { :root { --content-max: 1480px; } }
+@media (min-width: 1440px) { :root { --content-max: 1240px; } }
+@media (min-width: 1920px) { :root { --content-max: 1240px; } }
 @media (max-width: 359px) {
   .wrap { padding-left: var(--sp-3); padding-right: var(--sp-3); }
   .nav-inner { padding: 0 var(--sp-3); }

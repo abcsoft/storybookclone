@@ -89,7 +89,7 @@ export const SPACE_TOKENS = {
   '--sp-9': '4rem',
   '--sp-10': '6rem',
   '--section-y': 'clamp(2.5rem, 5vw, 4rem)',
-  '--content-max': '1180px',
+  '--content-max': '1240px',
   '--content-narrow': '760px'
 } as const
 
